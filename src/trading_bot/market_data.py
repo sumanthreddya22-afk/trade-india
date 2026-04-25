@@ -4,8 +4,8 @@ from decimal import Decimal
 
 import numpy as np
 import pandas as pd
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.historical import CryptoHistoricalDataClient, StockHistoricalDataClient
+from alpaca.data.requests import CryptoBarsRequest, StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator, MACD
@@ -59,22 +59,40 @@ def compute_indicators(bars: pd.DataFrame) -> Indicators:
     )
 
 
+def _is_crypto(symbol: str) -> bool:
+    return "/" in symbol
+
+
 class MarketDataClient:
     def __init__(self, settings: Settings) -> None:
-        self._client = StockHistoricalDataClient(
+        self._stock_client = StockHistoricalDataClient(
+            api_key=settings.alpaca_api_key,
+            secret_key=settings.alpaca_api_secret,
+        )
+        self._crypto_client = CryptoHistoricalDataClient(
             api_key=settings.alpaca_api_key,
             secret_key=settings.alpaca_api_secret,
         )
 
     def get_daily_bars(self, symbol: str, lookback_days: int = 60) -> pd.DataFrame:
+        start = datetime.now(timezone.utc) - timedelta(days=lookback_days * 2)
         try:
-            req = StockBarsRequest(
-                symbol_or_symbols=symbol,
-                timeframe=TimeFrame.Day,
-                start=datetime.now(timezone.utc) - timedelta(days=lookback_days * 2),
-                limit=lookback_days,
-            )
-            resp = self._client.get_stock_bars(req)
+            if _is_crypto(symbol):
+                req = CryptoBarsRequest(
+                    symbol_or_symbols=symbol,
+                    timeframe=TimeFrame.Day,
+                    start=start,
+                    limit=lookback_days,
+                )
+                resp = self._crypto_client.get_crypto_bars(req)
+            else:
+                req = StockBarsRequest(
+                    symbol_or_symbols=symbol,
+                    timeframe=TimeFrame.Day,
+                    start=start,
+                    limit=lookback_days,
+                )
+                resp = self._stock_client.get_stock_bars(req)
         except Exception as e:
             raise AlpacaClientError(f"get_daily_bars({symbol}) failed: {e}") from e
         bars = resp.data.get(symbol, [])

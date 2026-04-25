@@ -30,11 +30,13 @@ class MomentumStrategy:
         rsi_upper: float = 70.0,
         per_trade_risk_pct: Decimal = Decimal("0.5"),
         stop_pct: Decimal = Decimal("0.05"),
+        max_concentration_pct: Decimal = Decimal("4.5"),
     ) -> None:
         self._rsi_lower = rsi_lower
         self._rsi_upper = rsi_upper
         self._risk_pct = per_trade_risk_pct
         self._stop_pct = stop_pct
+        self._max_concentration_pct = max_concentration_pct
 
     def evaluate(self, symbol: str, ind: Indicators, equity: Decimal) -> Signal:
         if not (self._rsi_lower <= ind.rsi_14 <= self._rsi_upper):
@@ -60,7 +62,12 @@ class MomentumStrategy:
                           "stop not below entry — anomaly")
 
         risk_budget = (equity * self._risk_pct / Decimal("100")).quantize(Decimal("0.01"))
-        raw_qty = risk_budget / per_share_risk
+        risk_qty = risk_budget / per_share_risk
+        # Also cap by concentration: max position notional / entry price
+        concentration_budget = (equity * self._max_concentration_pct / Decimal("100"))
+        concentration_qty = concentration_budget / entry
+        # Use whichever is smaller — both constraints must be respected
+        raw_qty = min(risk_qty, concentration_qty)
         qty = raw_qty.quantize(Decimal("1"), rounding=ROUND_DOWN)
         if qty < 1:
             return Signal(symbol, SignalAction.HOLD, Decimal("0"), Decimal("0"), Decimal("0"),
