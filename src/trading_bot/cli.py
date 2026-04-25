@@ -8,9 +8,15 @@ from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderRequest, Or
 from trading_bot.config import Settings, load_config
 from trading_bot.email_sender import EmailSender
 from trading_bot.exceptions import RiskRuleViolation
+from trading_bot.market_data import MarketDataClient
+from trading_bot.orchestrator import ScanResult, TradeOrchestrator
+from trading_bot.reports import build_daily_report_html
 from trading_bot.risk_manager import RiskManager, RiskState
+from trading_bot.state import load_watchlist
+from trading_bot.trade_journal import TradeJournal
 
 CONFIG_PATH = Path("strategy/config.yaml")
+WATCHLIST_PATH = Path("strategy/watchlist.yaml")
 
 
 def _build_risk_state() -> RiskState:
@@ -108,6 +114,65 @@ def dry_run(
         click.echo(f"REJECTED: {e}")
         raise SystemExit(1)
     click.echo(f"PASS: {symbol} {side} {qty} @ ${price} (stop ${stop}) — would be submitted.")
+
+
+@main.command()
+@click.option(
+    "--regime",
+    type=click.Choice(["trending_up", "trending_down", "sideways", "risk_off"]),
+    default="trending_up",
+)
+def scan(regime: str) -> None:
+    """Scan watchlist and place trades on signals (real paper orders)."""
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    alpaca = AlpacaClient(settings)
+    market = MarketDataClient(settings)
+    journal = TradeJournal(Path(cfg.storage.trade_journal_path))
+    watchlist = load_watchlist(WATCHLIST_PATH)
+
+    orch = TradeOrchestrator(
+        config=cfg, market_data=market, alpaca=alpaca,
+        journal=journal, regime=regime,
+    )
+    result = orch.scan(watchlist=watchlist)
+    click.echo(f"Scan complete — {len(result.decisions)} decisions:")
+    for d in result.decisions:
+        click.echo(f"  {d.symbol}: {d.action} ({d.reason})")
+
+
+@main.command("daily-report")
+def daily_report() -> None:
+    """Email the daily P&L summary."""
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    alpaca = AlpacaClient(settings)
+    market = MarketDataClient(settings)
+
+    account = alpaca.get_account()
+    positions = alpaca.get_positions()
+
+    try:
+        bars = market.get_daily_bars("SPY", lookback_days=2)
+        if len(bars) >= 2:
+            yesterday, today = bars["close"].iloc[-2], bars["close"].iloc[-1]
+            spy_change = Decimal(str((today / yesterday - 1.0) * 100)).quantize(Decimal("0.01"))
+        else:
+            spy_change = Decimal("0.00")
+    except Exception:
+        spy_change = Decimal("0.00")
+
+    empty_scan = ScanResult(decisions=[], timestamp=datetime.now())
+    html = build_daily_report_html(
+        account=account, positions=positions, scan=empty_scan,
+        spy_daily_change_pct=spy_change, regime="trending_up",
+    )
+
+    sender = EmailSender(
+        user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
+    )
+    sender.send(subject="Trading Bot — Daily Report", html_body=html)
+    click.echo(f"Sent daily report to {cfg.email.to}")
 
 
 if __name__ == "__main__":
