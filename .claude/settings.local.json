@@ -47,7 +47,9 @@
       "Bash(.venv/bin/pytest tests/test_alpaca_client.py -v)",
       "Bash(.venv/bin/python -c ' *)",
       "Bash(.venv/bin/pytest tests/test_regime.py -v)",
-      "Bash(.venv/bin/pytest tests/test_pnl_state.py -v)"
+      "Bash(.venv/bin/pytest tests/test_pnl_state.py -v)",
+      "Bash(.venv/bin/pytest tests/test_reconciliation.py -v)",
+      "Bash(.venv/bin/pytest tests/test_evolution.py -v)"
     ]
   }
 }

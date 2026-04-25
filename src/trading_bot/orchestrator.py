@@ -72,6 +72,10 @@ class TradeOrchestrator:
     def scan(self, *, watchlist: list[WatchlistEntry]) -> ScanResult:
         account = self._alpaca.get_account()
         positions = self._alpaca.get_positions()
+        try:
+            open_order_symbols = self._alpaca.get_open_order_symbols()
+        except AlpacaClientError:
+            open_order_symbols = set()
         state = self._build_state()
         decisions: list[Decision] = []
 
@@ -79,6 +83,10 @@ class TradeOrchestrator:
             symbol = entry.symbol
             if has_open_position(symbol, positions):
                 decisions.append(Decision(symbol=symbol, action="skipped_existing_position"))
+                continue
+            # Also skip if there's already a pending open order for this symbol
+            if symbol in open_order_symbols or symbol.replace("/", "") in open_order_symbols:
+                decisions.append(Decision(symbol=symbol, action="skipped_pending_order"))
                 continue
 
             try:

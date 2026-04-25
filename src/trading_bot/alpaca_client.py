@@ -120,6 +120,14 @@ class AlpacaClient:
             for p in raw
         ]
 
+    def get_open_order_symbols(self) -> set[str]:
+        """Symbols with non-terminal open orders (used to prevent duplicate entries)."""
+        try:
+            orders = self._client.get_orders()
+        except Exception as e:
+            raise AlpacaClientError(f"get_orders failed: {e}") from e
+        return {str(o.symbol) for o in orders}
+
     def place_order_with_stop_loss(self, req: OrderRequest) -> OrderResult:
         """Place atomic bracket order: entry + stop-loss together.
 
