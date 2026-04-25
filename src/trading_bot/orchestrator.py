@@ -17,7 +17,7 @@ from trading_bot.market_data import (
 )
 from trading_bot.risk_manager import RiskManager, RiskState
 from trading_bot.state import WatchlistEntry, has_open_position
-from trading_bot.strategy import MomentumStrategy, SignalAction
+from trading_bot.strategy import MomentumStrategy, SignalAction, strategy_for_regime
 from trading_bot.trade_journal import TradeJournal, TradeRecord
 
 
@@ -47,16 +47,21 @@ class TradeOrchestrator:
         regime: str = "trending_up",
         strategy: MomentumStrategy | None = None,
         risk_manager: RiskManager | None = None,
+        state_builder=None,  # callable returning RiskState; if None, uses safe defaults
     ) -> None:
         self._cfg = config
         self._market = market_data
         self._alpaca = alpaca
         self._journal = journal
         self._regime = regime
-        self._strategy = strategy or MomentumStrategy()
+        # Strategy is chosen by regime if not explicitly provided
+        self._strategy = strategy or strategy_for_regime(regime)
         self._risk = risk_manager or RiskManager(config)
+        self._state_builder = state_builder
 
     def _build_state(self) -> RiskState:
+        if self._state_builder is not None:
+            return self._state_builder()
         return RiskState(
             daily_pnl_pct=Decimal("0"),
             weekly_pnl_pct=Decimal("0"),

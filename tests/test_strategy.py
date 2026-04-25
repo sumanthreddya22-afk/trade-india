@@ -76,3 +76,38 @@ def test_momentum_skips_when_qty_zero():
     ind = _ind(rsi=60, macd=0.5, macd_sig=0.3, ema=190, ret5=0.02, close=195)
     sig = s.evaluate("AAPL", ind, equity=Decimal("15000"))
     assert sig.action == SignalAction.HOLD
+
+
+# Mean reversion tests
+from trading_bot.strategy import MeanReversionStrategy, strategy_for_regime
+
+
+def test_mean_reversion_emits_buy_when_oversold_and_bouncing():
+    s = MeanReversionStrategy()
+    # rsi 30 (oversold), close just below ema20, 5d slightly down
+    ind = _ind(rsi=30, macd=-0.1, macd_sig=-0.05, ema=200, ret5=-0.03, close=198)
+    sig = s.evaluate("AAPL", ind, equity=Decimal("15000"))
+    assert sig.action == SignalAction.BUY
+
+
+def test_mean_reversion_holds_when_rsi_too_high():
+    s = MeanReversionStrategy()
+    ind = _ind(rsi=50, macd=-0.1, macd_sig=-0.05, ema=200, ret5=-0.03, close=198)
+    sig = s.evaluate("AAPL", ind, equity=Decimal("15000"))
+    assert sig.action == SignalAction.HOLD
+
+
+def test_mean_reversion_holds_when_still_dropping():
+    s = MeanReversionStrategy()
+    # rsi in range but 5d return is still falling fast
+    ind = _ind(rsi=30, macd=-0.1, macd_sig=-0.05, ema=200, ret5=-0.10, close=198)
+    sig = s.evaluate("AAPL", ind, equity=Decimal("15000"))
+    assert sig.action == SignalAction.HOLD
+
+
+def test_strategy_router_picks_correct_strategy():
+    from trading_bot.strategy import MomentumStrategy
+    assert isinstance(strategy_for_regime("trending_up"), MomentumStrategy)
+    assert isinstance(strategy_for_regime("trending_down"), MeanReversionStrategy)
+    assert isinstance(strategy_for_regime("sideways"), MeanReversionStrategy)
+    assert isinstance(strategy_for_regime("risk_off"), MeanReversionStrategy)
