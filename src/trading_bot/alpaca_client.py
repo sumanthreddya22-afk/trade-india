@@ -11,6 +11,7 @@ from alpaca.trading.requests import (
     MarketOrderRequest,
     StopLossRequest,
     StopOrderRequest,
+    TakeProfitRequest,
 )
 from pydantic import BaseModel, model_validator
 
@@ -130,6 +131,12 @@ class AlpacaClient:
         return self._place_stock_bracket(req)
 
     def _place_stock_bracket(self, req: OrderRequest) -> OrderResult:
+        # Alpaca bracket orders require a take-profit leg. Use 2:1 reward:risk.
+        risk = abs(float(req.limit_price) - float(req.stop_loss_price))
+        if req.side == OrderSide.BUY:
+            take_profit_price = float(req.limit_price) + 2 * risk
+        else:
+            take_profit_price = float(req.limit_price) - 2 * risk
         try:
             entry_req = LimitOrderRequest(
                 symbol=req.symbol,
@@ -139,22 +146,23 @@ class AlpacaClient:
                 limit_price=float(req.limit_price),
                 order_class=OrderClass.BRACKET,
                 stop_loss=StopLossRequest(stop_price=float(req.stop_loss_price)),
+                take_profit=TakeProfitRequest(limit_price=round(take_profit_price, 2)),
             )
             entry = self._client.submit_order(entry_req)
         except Exception as e:
             raise AlpacaClientError(f"bracket order failed: {e}") from e
 
         # Bracket orders return the parent (entry) order with `legs` containing
-        # the stop-loss leg. Surface both ids.
+        # the stop-loss + take-profit legs. Find the stop leg.
         stop_id = ""
         legs = getattr(entry, "legs", None) or []
         for leg in legs:
             if str(getattr(leg, "type", "")).lower().endswith("stop"):
-                stop_id = leg.id
+                stop_id = str(leg.id)
                 break
         if not stop_id and legs:
-            stop_id = legs[0].id
-        return OrderResult(entry_order_id=entry.id, stop_loss_order_id=stop_id)
+            stop_id = str(legs[0].id)
+        return OrderResult(entry_order_id=str(entry.id), stop_loss_order_id=stop_id)
 
     def _place_crypto_with_stop(self, req: OrderRequest) -> OrderResult:
         try:
@@ -184,4 +192,4 @@ class AlpacaClient:
                 f"crypto stop-loss order failed (entry may already be filled — manually flatten): {e}"
             ) from e
 
-        return OrderResult(entry_order_id=entry.id, stop_loss_order_id=stop.id)
+        return OrderResult(entry_order_id=str(entry.id), stop_loss_order_id=str(stop.id))
