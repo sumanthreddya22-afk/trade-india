@@ -132,3 +132,99 @@ def test_risk_rejects_when_halted(cfg, acct):
     with pytest.raises(RiskRuleViolation) as e:
         rm.check(req, account=acct, positions=[], state=halted, regime="trending_up")
     assert e.value.rule == "halted"
+
+
+def test_risk_rejects_after_daily_loss_breach(cfg, acct):
+    rm = RiskManager(cfg)
+    breached = RiskState(
+        daily_pnl_pct=Decimal("-2.5"),
+        weekly_pnl_pct=Decimal("-1"),
+        consecutive_losing_days=0,
+        halted=False,
+    )
+    req = OrderRequest(
+        symbol="AAPL",
+        qty=Decimal("1"),
+        side=OrderSide.BUY,
+        asset_class=AssetClass.STOCK,
+        limit_price=Decimal("100"),
+        stop_loss_price=Decimal("98"),
+    )
+    with pytest.raises(RiskRuleViolation) as e:
+        rm.check(req, account=acct, positions=[], state=breached, regime="trending_up")
+    assert e.value.rule == "daily_loss_limit"
+
+
+def test_risk_rejects_after_weekly_loss_breach(cfg, acct):
+    rm = RiskManager(cfg)
+    breached = RiskState(
+        daily_pnl_pct=Decimal("0"),
+        weekly_pnl_pct=Decimal("-6"),
+        consecutive_losing_days=0,
+        halted=False,
+    )
+    req = OrderRequest(
+        symbol="AAPL",
+        qty=Decimal("1"),
+        side=OrderSide.BUY,
+        asset_class=AssetClass.STOCK,
+        limit_price=Decimal("100"),
+        stop_loss_price=Decimal("98"),
+    )
+    with pytest.raises(RiskRuleViolation) as e:
+        rm.check(req, account=acct, positions=[], state=breached, regime="trending_up")
+    assert e.value.rule == "weekly_loss_limit"
+
+
+def test_risk_rejects_concentration_breach(cfg, acct, state):
+    rm = RiskManager(cfg)
+    existing = Position(
+        symbol="AAPL",
+        qty=Decimal("20"),
+        market_value=Decimal("4500"),  # already 4.5%
+        avg_entry_price=Decimal("225"),
+        unrealized_pl=Decimal("0"),
+        asset_class="us_equity",
+    )
+    req = OrderRequest(
+        symbol="AAPL",
+        qty=Decimal("5"),
+        side=OrderSide.BUY,
+        asset_class=AssetClass.STOCK,
+        limit_price=Decimal("200"),  # +$1000 → 5.5% > 5% cap
+        stop_loss_price=Decimal("198"),
+    )
+    with pytest.raises(RiskRuleViolation) as e:
+        rm.check(req, account=acct, positions=[existing], state=state, regime="trending_up")
+    assert e.value.rule == "max_symbol_concentration_pct"
+
+
+def test_risk_rejects_asset_class_cap_in_risk_off(cfg, acct, state):
+    rm = RiskManager(cfg)
+    # risk_off: crypto cap is 5%
+    req = OrderRequest(
+        symbol="BTC/USD",
+        qty=Decimal("0.5"),
+        side=OrderSide.BUY,
+        asset_class=AssetClass.CRYPTO,
+        limit_price=Decimal("70000"),  # $35k = 35% — way over 5% cap
+        stop_loss_price=Decimal("68000"),
+    )
+    with pytest.raises(RiskRuleViolation) as e:
+        rm.check(req, account=acct, positions=[], state=state, regime="risk_off")
+    assert e.value.rule in {"asset_class_cap", "max_position_pct"}
+
+
+def test_risk_rejects_inverted_stop_loss(cfg, acct, state):
+    rm = RiskManager(cfg)
+    req = OrderRequest(
+        symbol="AAPL",
+        qty=Decimal("1"),
+        side=OrderSide.BUY,
+        asset_class=AssetClass.STOCK,
+        limit_price=Decimal("100"),
+        stop_loss_price=Decimal("102"),  # stop ABOVE entry on a buy = inverted
+    )
+    with pytest.raises(RiskRuleViolation) as e:
+        rm.check(req, account=acct, positions=[], state=state, regime="trending_up")
+    assert e.value.rule == "stop_loss_direction"
