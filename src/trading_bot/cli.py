@@ -16,12 +16,24 @@ from trading_bot.evolution import (
     save_params,
 )
 from trading_bot.exceptions import RiskRuleViolation
+from trading_bot.intelligence import IntelligenceAggregator
 from trading_bot.market_data import MarketDataClient
 from trading_bot.orchestrator import ScanResult, TradeOrchestrator
 from trading_bot.pnl_state import PnlStateBuilder
+from trading_bot.portfolio_monitor import (
+    diff_snapshots,
+    has_alerts,
+    load_snapshot,
+    save_snapshot,
+    take_snapshot,
+)
 from trading_bot.reconciliation import ClosedTradeStore, Reconciler
 from trading_bot.regime import detect_regime
-from trading_bot.reports import build_daily_report_html
+from trading_bot.reports import (
+    build_alert_email_html,
+    build_daily_report_html,
+    build_rich_report_html,
+)
 from trading_bot.risk_manager import RiskManager, RiskState
 from trading_bot.state import load_watchlist
 from trading_bot.trade_journal import TradeJournal
@@ -31,6 +43,7 @@ WATCHLIST_PATH = Path("strategy/watchlist.yaml")
 RULES_PATH = Path("strategy/rules.md")
 PARAMS_PATH = Path("strategy/params.yaml")
 CLOSED_DB_PATH = Path("data/closed_trades.db")
+SNAPSHOT_PATH = Path("data/portfolio_snapshot.json")
 
 
 def _build_risk_state() -> RiskState:
@@ -294,6 +307,139 @@ def full_run() -> None:
     )
     sender.send(subject=f"Trading Bot — Daily Report ({regime})", html_body=html)
     click.echo(f"[email] sent to {cfg.email.to}")
+
+
+@main.command("intel-scan")
+def intel_scan() -> None:
+    """Lightweight 15-min scan: regime + signals + place trades. Silent unless action taken."""
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    alpaca = AlpacaClient(settings)
+    market = MarketDataClient(settings)
+    journal = TradeJournal(Path(cfg.storage.trade_journal_path))
+    watchlist = load_watchlist(WATCHLIST_PATH)
+    pnl_builder = PnlStateBuilder(settings, cfg)
+
+    regime_reading = detect_regime(market)
+    regime = regime_reading.regime.value
+
+    orch = TradeOrchestrator(
+        config=cfg, market_data=market, alpaca=alpaca,
+        journal=journal, regime=regime,
+        state_builder=pnl_builder.to_risk_state,
+    )
+    result = orch.scan(watchlist=watchlist)
+    placed = [d for d in result.decisions if d.action == "placed_order"]
+    rejected = [d for d in result.decisions if d.action == "rejected_by_risk"]
+
+    click.echo(f"[intel-scan] regime={regime} placed={len(placed)} rejected={len(rejected)}")
+    for d in placed:
+        click.echo(f"  PLACED {d.symbol}: {d.reason} (entry={d.entry_order_id})")
+    for d in rejected:
+        click.echo(f"  REJECTED {d.symbol}: {d.reason}")
+
+    # Email only if action taken or risk-rejected (interesting events)
+    if placed or rejected:
+        account = alpaca.get_account()
+        positions = alpaca.get_positions()
+        try:
+            bars = market.get_daily_bars("SPY", lookback_days=2)
+            spy_change = (Decimal(str((bars["close"].iloc[-1] / bars["close"].iloc[-2] - 1) * 100))
+                          .quantize(Decimal("0.01")) if len(bars) >= 2 else Decimal("0"))
+        except Exception:
+            spy_change = Decimal("0")
+        html = build_daily_report_html(
+            account=account, positions=positions, scan=result,
+            spy_daily_change_pct=spy_change, regime=regime,
+        )
+        EmailSender(
+            user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
+        ).send(subject=f"Trading Bot — Intel Scan ({len(placed)} placed)", html_body=html)
+        click.echo(f"[email] sent (action taken)")
+
+
+@main.command("portfolio-watch")
+def portfolio_watch() -> None:
+    """Detect material portfolio changes since last snapshot. Email on alert."""
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    alpaca = AlpacaClient(settings)
+
+    prev = load_snapshot(SNAPSHOT_PATH)
+    curr = take_snapshot(alpaca)
+    events = diff_snapshots(prev, curr, big_move_pct_threshold=2.0)
+    save_snapshot(SNAPSHOT_PATH, curr)
+
+    click.echo(f"[portfolio-watch] {len(events)} events (alerts: {sum(1 for e in events if e.severity == 'alert')})")
+    for e in events:
+        click.echo(f"  [{e.severity}] {e.kind}: {e.message}")
+
+    if has_alerts(events):
+        html = build_alert_email_html(events, account_equity=curr.equity)
+        EmailSender(
+            user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
+        ).send(subject="Trading Bot — Portfolio Alert", html_body=html)
+        click.echo("[email] alert sent")
+
+
+@main.command("rich-report")
+@click.option("--period", type=click.Choice(["mid", "eod"]), default="mid",
+              help="mid = 12:30 ET intraday review; eod = 16:30 ET end-of-day.")
+def rich_report(period: str) -> None:
+    """Comprehensive HTML email report: regime + macro + news + positions + decisions."""
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    alpaca = AlpacaClient(settings)
+    market = MarketDataClient(settings)
+    journal = TradeJournal(Path(cfg.storage.trade_journal_path))
+    watchlist = load_watchlist(WATCHLIST_PATH)
+    pnl_builder = PnlStateBuilder(settings, cfg)
+    intel_agg = IntelligenceAggregator(settings)
+
+    # 1. Reconcile any new closed trades
+    closed = ClosedTradeStore(CLOSED_DB_PATH)
+    Reconciler(settings, journal, closed).reconcile(lookback_days=30)
+
+    # 2. Regime + scan (allows trades to be placed if signals appear)
+    regime_reading = detect_regime(market)
+    regime = regime_reading.regime.value
+    orch = TradeOrchestrator(
+        config=cfg, market_data=market, alpaca=alpaca,
+        journal=journal, regime=regime,
+        state_builder=pnl_builder.to_risk_state,
+    )
+    result = orch.scan(watchlist=watchlist)
+
+    # 3. Intelligence
+    symbols = [w.symbol for w in watchlist]
+    intel = intel_agg.gather(symbols)
+
+    # 4. Portfolio diff vs last snapshot
+    prev = load_snapshot(SNAPSHOT_PATH)
+    curr = take_snapshot(alpaca)
+    events = diff_snapshots(prev, curr, big_move_pct_threshold=2.0)
+    save_snapshot(SNAPSHOT_PATH, curr)
+
+    # 5. SPY daily change
+    try:
+        bars = market.get_daily_bars("SPY", lookback_days=2)
+        spy_change = (Decimal(str((bars["close"].iloc[-1] / bars["close"].iloc[-2] - 1) * 100))
+                      .quantize(Decimal("0.01")) if len(bars) >= 2 else Decimal("0"))
+    except Exception:
+        spy_change = Decimal("0")
+
+    account = alpaca.get_account()
+    positions = alpaca.get_positions()
+
+    html = build_rich_report_html(
+        period=period, account=account, positions=positions, scan=result,
+        spy_daily_change_pct=spy_change, regime=regime, intel=intel, events=events,
+    )
+    EmailSender(
+        user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
+    ).send(subject=f"Trading Bot — {period.upper()} Rich Report ({regime})", html_body=html)
+    click.echo(f"[rich-report:{period}] sent ({len(result.decisions)} decisions, "
+               f"VIX={intel.macro.vix}, {len(events)} events)")
 
 
 if __name__ == "__main__":

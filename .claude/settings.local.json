@@ -50,7 +50,14 @@
       "Bash(.venv/bin/pytest tests/test_pnl_state.py -v)",
       "Bash(.venv/bin/pytest tests/test_reconciliation.py -v)",
       "Bash(.venv/bin/pytest tests/test_evolution.py -v)",
-      "mcp__scheduled-tasks__create_scheduled_task"
+      "mcp__scheduled-tasks__create_scheduled_task",
+      "mcp__mcp-registry__search_mcp_registry",
+      "Bash(.venv/bin/pytest tests/test_portfolio_monitor.py -v)",
+      "Bash(.venv/bin/python -c \"import requests; print\\(requests.__version__\\)\")",
+      "Bash(.venv/bin/pytest tests/test_intelligence.py -v)",
+      "Bash(.venv/bin/bot intel-scan *)",
+      "Bash(.venv/bin/bot portfolio-watch *)",
+      "Bash(.venv/bin/bot rich-report *)"
     ]
   }
 }
