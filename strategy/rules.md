@@ -46,3 +46,7 @@
 (Claude updates this section when rules change. Each entry lists date + reason + rule diff.)
 
 - 2026-04-25 — initial rules authored.
+
+### 2026-04-25 — performance review
+- No strategy has accumulated enough closed trades yet.
+- No rule changes proposed.
