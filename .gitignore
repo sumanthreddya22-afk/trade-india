@@ -6,6 +6,7 @@ venv/
 *.db
 *.sqlite
 *.sqlite3
+data/
 .pytest_cache/
 .coverage
 htmlcov/
