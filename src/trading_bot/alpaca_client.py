@@ -5,8 +5,13 @@ from enum import Enum
 from typing import Any
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderSide as AlpacaSide, OrderType, TimeInForce
-from alpaca.trading.requests import LimitOrderRequest, StopOrderRequest
+from alpaca.trading.enums import OrderClass, OrderSide as AlpacaSide, OrderType, TimeInForce
+from alpaca.trading.requests import (
+    LimitOrderRequest,
+    MarketOrderRequest,
+    StopLossRequest,
+    StopOrderRequest,
+)
 from pydantic import BaseModel, model_validator
 
 from trading_bot.config import Settings
@@ -115,7 +120,16 @@ class AlpacaClient:
         ]
 
     def place_order_with_stop_loss(self, req: OrderRequest) -> OrderResult:
-        """Atomically place entry + stop-loss. If stop fails, cancel entry."""
+        """Place atomic bracket order: entry + stop-loss together.
+
+        Crypto doesn't support bracket orders on Alpaca, so for crypto we
+        fall back to a market entry then a stop-loss as a separate order.
+        """
+        if req.asset_class == AssetClass.CRYPTO:
+            return self._place_crypto_with_stop(req)
+        return self._place_stock_bracket(req)
+
+    def _place_stock_bracket(self, req: OrderRequest) -> OrderResult:
         try:
             entry_req = LimitOrderRequest(
                 symbol=req.symbol,
@@ -123,10 +137,36 @@ class AlpacaClient:
                 side=_to_alpaca_side(req.side),
                 time_in_force=TimeInForce.DAY,
                 limit_price=float(req.limit_price),
+                order_class=OrderClass.BRACKET,
+                stop_loss=StopLossRequest(stop_price=float(req.stop_loss_price)),
             )
             entry = self._client.submit_order(entry_req)
         except Exception as e:
-            raise AlpacaClientError(f"entry order failed: {e}") from e
+            raise AlpacaClientError(f"bracket order failed: {e}") from e
+
+        # Bracket orders return the parent (entry) order with `legs` containing
+        # the stop-loss leg. Surface both ids.
+        stop_id = ""
+        legs = getattr(entry, "legs", None) or []
+        for leg in legs:
+            if str(getattr(leg, "type", "")).lower().endswith("stop"):
+                stop_id = leg.id
+                break
+        if not stop_id and legs:
+            stop_id = legs[0].id
+        return OrderResult(entry_order_id=entry.id, stop_loss_order_id=stop_id)
+
+    def _place_crypto_with_stop(self, req: OrderRequest) -> OrderResult:
+        try:
+            entry_req = MarketOrderRequest(
+                symbol=req.symbol,
+                qty=float(req.qty),
+                side=_to_alpaca_side(req.side),
+                time_in_force=TimeInForce.GTC,
+            )
+            entry = self._client.submit_order(entry_req)
+        except Exception as e:
+            raise AlpacaClientError(f"crypto entry order failed: {e}") from e
 
         try:
             stop_req = StopOrderRequest(
@@ -138,12 +178,10 @@ class AlpacaClient:
             )
             stop = self._client.submit_order(stop_req)
         except Exception as e:
-            try:
-                self._client.cancel_order_by_id(entry.id)
-            except Exception:
-                pass
+            # Crypto market orders fill near-instantly; cancellation likely won't help.
+            # Surface the error so the operator can manually flatten.
             raise AlpacaClientError(
-                f"stop-loss order failed (entry rolled back): {e}"
+                f"crypto stop-loss order failed (entry may already be filled — manually flatten): {e}"
             ) from e
 
         return OrderResult(entry_order_id=entry.id, stop_loss_order_id=stop.id)

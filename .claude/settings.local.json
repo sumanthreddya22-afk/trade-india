@@ -43,7 +43,8 @@
       "Bash(.venv/bin/pytest tests/test_state.py -v)",
       "Bash(.venv/bin/pytest tests/test_orchestrator.py -v)",
       "Bash(.venv/bin/pytest tests/test_reports.py -v)",
-      "Bash(.venv/bin/pytest)"
+      "Bash(.venv/bin/pytest)",
+      "Bash(.venv/bin/pytest tests/test_alpaca_client.py -v)"
     ]
   }
 }

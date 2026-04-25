@@ -72,11 +72,12 @@ def test_get_account_wraps_api_error(fake_settings):
 from trading_bot.alpaca_client import OrderRequest, OrderResult, OrderSide, AssetClass
 
 
-def test_place_order_with_stop_loss(fake_settings):
+def test_place_stock_order_uses_bracket(fake_settings):
+    """Stock orders should use a single bracket submission with stop_loss leg."""
     with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
-        entry = MagicMock(id="entry-1", status="accepted", filled_qty="0", filled_avg_price=None)
-        stop = MagicMock(id="stop-1", status="accepted", filled_qty="0", filled_avg_price=None)
-        MockTC.return_value.submit_order.side_effect = [entry, stop]
+        leg = MagicMock(id="stop-1", type="stop")
+        entry = MagicMock(id="entry-1", legs=[leg])
+        MockTC.return_value.submit_order.return_value = entry
 
         client = AlpacaClient(fake_settings)
         req = OrderRequest(
@@ -91,7 +92,8 @@ def test_place_order_with_stop_loss(fake_settings):
         assert isinstance(result, OrderResult)
         assert result.entry_order_id == "entry-1"
         assert result.stop_loss_order_id == "stop-1"
-        assert MockTC.return_value.submit_order.call_count == 2
+        # Bracket = single submission, not two
+        assert MockTC.return_value.submit_order.call_count == 1
 
 
 def test_place_order_requires_stop_loss(fake_settings):
@@ -108,11 +110,10 @@ def test_place_order_requires_stop_loss(fake_settings):
             )
 
 
-def test_place_order_rolls_back_on_stop_failure(fake_settings):
+def test_place_stock_bracket_failure_raises(fake_settings):
+    """If the bracket submission itself fails, raise AlpacaClientError."""
     with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
-        entry = MagicMock(id="entry-1", status="accepted", filled_qty="0", filled_avg_price=None)
-        MockTC.return_value.submit_order.side_effect = [entry, RuntimeError("stop failed")]
-
+        MockTC.return_value.submit_order.side_effect = RuntimeError("rejected")
         client = AlpacaClient(fake_settings)
         req = OrderRequest(
             symbol="AAPL",
@@ -122,7 +123,26 @@ def test_place_order_rolls_back_on_stop_failure(fake_settings):
             limit_price=Decimal("195.00"),
             stop_loss_price=Decimal("190.00"),
         )
-        with pytest.raises(AlpacaClientError, match="stop-loss"):
+        with pytest.raises(AlpacaClientError, match="bracket"):
             client.place_order_with_stop_loss(req)
-        # entry was canceled
-        MockTC.return_value.cancel_order_by_id.assert_called_once_with("entry-1")
+
+
+def test_place_crypto_uses_market_then_stop(fake_settings):
+    """Crypto can't use bracket — uses market entry then separate stop."""
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        entry = MagicMock(id="entry-c", legs=[])
+        stop = MagicMock(id="stop-c")
+        MockTC.return_value.submit_order.side_effect = [entry, stop]
+        client = AlpacaClient(fake_settings)
+        req = OrderRequest(
+            symbol="BTC/USD",
+            qty=Decimal("0.001"),
+            side=OrderSide.BUY,
+            asset_class=AssetClass.CRYPTO,
+            limit_price=Decimal("70000"),
+            stop_loss_price=Decimal("68000"),
+        )
+        result = client.place_order_with_stop_loss(req)
+        assert result.entry_order_id == "entry-c"
+        assert result.stop_loss_order_id == "stop-c"
+        assert MockTC.return_value.submit_order.call_count == 2
