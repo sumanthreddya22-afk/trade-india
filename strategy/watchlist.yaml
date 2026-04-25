@@ -1,0 +1,25 @@
+# strategy/watchlist.yaml — symbols the bot may trade
+# Calibrated for ~$15k paper account, 5% concentration cap → ~$750 per symbol.
+
+symbols:
+  - symbol: SPY
+    asset_class: stock
+    notes: S&P 500 ETF, broad market exposure
+  - symbol: QQQ
+    asset_class: stock
+    notes: Nasdaq 100 ETF, tech-heavy growth
+  - symbol: AAPL
+    asset_class: stock
+    notes: Apple, large-cap, highly liquid
+  - symbol: MSFT
+    asset_class: stock
+    notes: Microsoft, large-cap, highly liquid
+  - symbol: AMD
+    asset_class: stock
+    notes: AMD, mid-priced, semiconductor exposure
+  - symbol: BTC/USD
+    asset_class: crypto
+    notes: Bitcoin, fractional shares
+  - symbol: ETH/USD
+    asset_class: crypto
+    notes: Ethereum, fractional shares
