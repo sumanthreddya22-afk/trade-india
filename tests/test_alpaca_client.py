@@ -146,3 +146,36 @@ def test_place_crypto_uses_market_then_stop(fake_settings):
         assert result.entry_order_id == "entry-c"
         assert result.stop_loss_order_id == "stop-c"
         assert MockTC.return_value.submit_order.call_count == 2
+
+
+def test_get_active_assets_returns_tradable(monkeypatch):
+    from trading_bot.alpaca_client import TradableAsset
+
+    mock_asset_a = MagicMock(
+        symbol="NVDA",
+        name="NVIDIA",
+        exchange="NASDAQ",
+        status="active",
+        tradable=True,
+        fractionable=True,
+        asset_class="us_equity",
+    )
+    mock_asset_b = MagicMock(
+        symbol="HALT",
+        name="Halted Inc",
+        exchange="NYSE",
+        status="inactive",
+        tradable=False,
+        fractionable=False,
+        asset_class="us_equity",
+    )
+    client = MagicMock()
+    client.get_all_assets.return_value = [mock_asset_a, mock_asset_b]
+
+    wrapper = AlpacaClient.__new__(AlpacaClient)
+    wrapper._client = client
+
+    result = wrapper.get_active_assets("us_equity")
+    assert len(result) == 1
+    assert result[0].symbol == "NVDA"
+    assert isinstance(result[0], TradableAsset)

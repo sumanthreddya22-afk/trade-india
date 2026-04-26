@@ -39,6 +39,16 @@ class Position:
     asset_class: str
 
 
+@dataclass(frozen=True)
+class TradableAsset:
+    symbol: str
+    name: str
+    exchange: str
+    asset_class: str
+    tradable: bool
+    fractionable: bool
+
+
 class OrderSide(str, Enum):
     BUY = "buy"
     SELL = "sell"
@@ -127,6 +137,31 @@ class AlpacaClient:
         except Exception as e:
             raise AlpacaClientError(f"get_orders failed: {e}") from e
         return {str(o.symbol) for o in orders}
+
+    def get_active_assets(self, asset_class: str) -> list[TradableAsset]:
+        """List all active+tradable assets for the given asset_class.
+
+        asset_class: "us_equity" or "crypto"
+        """
+        from alpaca.trading.requests import GetAssetsRequest
+        try:
+            raw = self._client.get_all_assets(
+                GetAssetsRequest(asset_class=asset_class, status="active")
+            )
+        except Exception as e:
+            raise AlpacaClientError(f"get_all_assets failed: {e}") from e
+        return [
+            TradableAsset(
+                symbol=str(a.symbol),
+                name=str(a.name or ""),
+                exchange=str(a.exchange or ""),
+                asset_class=str(a.asset_class),
+                tradable=bool(a.tradable),
+                fractionable=bool(getattr(a, "fractionable", False)),
+            )
+            for a in raw
+            if a.tradable
+        ]
 
     def place_order_with_stop_loss(self, req: OrderRequest) -> OrderResult:
         """Place atomic bracket order: entry + stop-loss together.
