@@ -70,3 +70,62 @@ def test_build_stage1_shortlist_handles_missing_bars():
 
     short = build_stage1_shortlist(universe, bar_loader=loader, top_n=10, benchmark_symbol="SPY")
     assert "EMPTY" not in {c.symbol for c in short}
+
+
+from datetime import datetime, timezone
+from pathlib import Path
+
+from trading_bot.screener import (
+    RankedCandidate,
+    Stage2Result,
+    run_stage2,
+    write_opportunities_snapshot,
+)
+from trading_bot.strategy_lanes import LaneCandidate
+
+
+class _FakeLane:
+    def __init__(self, name: str, accepted: list[str]) -> None:
+        self.name = name
+        self._accepted = set(accepted)
+
+    def evaluate(self, ranked, bar_loader):
+        return [
+            LaneCandidate(symbol=c.symbol, lane=self.name, conviction=0.6,
+                          reason=f"{self.name} pick", source_score=c.score)
+            for c in ranked if c.symbol in self._accepted
+        ]
+
+
+def _ranked2(symbol, score=10.0):
+    return RankedCandidate(
+        symbol=symbol, asset_class="us_equity", sector_tags=(),
+        last_price=Decimal("100"), one_day_return_pct=1.0,
+        five_day_return_pct=5.0, relative_5d_pct=4.0, volume_ratio=1.5,
+        score=score,
+    )
+
+
+def test_run_stage2_merges_lane_outputs_and_dedupes():
+    short = [_ranked2("AAA"), _ranked2("BBB"), _ranked2("CCC")]
+    lanes = [
+        _FakeLane("momentum", ["AAA", "BBB"]),
+        _FakeLane("breakout", ["BBB", "CCC"]),
+    ]
+    res: Stage2Result = run_stage2(short, lanes=lanes, bar_loader=lambda s: pd.DataFrame())
+    assert isinstance(res, Stage2Result)
+    syms = {c.symbol for c in res.candidates}
+    assert syms == {"AAA", "BBB", "CCC"}
+    bbb = next(c for c in res.candidates if c.symbol == "BBB")
+    assert set(bbb.lane_attribution) == {"momentum", "breakout"}
+
+
+def test_write_opportunities_snapshot_renders_lanes(tmp_path: Path):
+    short = [_ranked2("AAA")]
+    lanes = [_FakeLane("momentum", ["AAA"])]
+    res = run_stage2(short, lanes=lanes, bar_loader=lambda s: pd.DataFrame())
+    path = tmp_path / "opportunities.md"
+    write_opportunities_snapshot(res, path, generated_at=datetime(2026, 4, 25, tzinfo=timezone.utc))
+    text = path.read_text()
+    assert "AAA" in text
+    assert "momentum" in text

@@ -2,9 +2,12 @@
 stage-2 strategy-lane scoring on the shortlist (delegated to strategy_lanes.py)."""
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pandas as pd
 
@@ -97,3 +100,100 @@ def build_stage1_shortlist(
 
     candidates.sort(key=lambda c: c.score, reverse=True)
     return candidates[:top_n]
+
+
+from trading_bot.strategy_lanes import Lane, LaneCandidate  # noqa: E402
+
+
+@dataclass(frozen=True)
+class MergedCandidate:
+    symbol: str
+    asset_class: str
+    sector_tags: tuple[str, ...]
+    last_price: Decimal
+    score: float
+    conviction: float  # max conviction across lanes that endorsed it
+    lane_attribution: tuple[str, ...]
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Stage2Result:
+    candidates: list[MergedCandidate]
+    lane_counts: dict[str, int]
+
+
+def run_stage2(
+    shortlist: list[RankedCandidate],
+    *,
+    lanes: list[Lane],
+    bar_loader: Callable[[str], pd.DataFrame],
+) -> Stage2Result:
+    """Run all lanes in parallel over the shortlist, merge, dedupe by symbol.
+
+    Conviction takes the max across lanes; lane attribution preserves which lanes
+    endorsed each name; reasons concatenate.
+    """
+    with ThreadPoolExecutor(max_workers=max(1, len(lanes))) as ex:
+        results = list(ex.map(lambda lane: lane.evaluate(shortlist, bar_loader), lanes))
+
+    by_symbol: dict[str, list[LaneCandidate]] = {}
+    lane_counts: dict[str, int] = {}
+    for lane_out, lane in zip(results, lanes, strict=False):
+        lane_counts[lane.name] = len(lane_out)
+        for lc in lane_out:
+            by_symbol.setdefault(lc.symbol, []).append(lc)
+
+    short_by_sym = {c.symbol: c for c in shortlist}
+    merged: list[MergedCandidate] = []
+    for symbol, lane_cands in by_symbol.items():
+        ref = short_by_sym.get(symbol)
+        if ref is None:
+            continue
+        max_conviction = max(lc.conviction for lc in lane_cands)
+        merged.append(MergedCandidate(
+            symbol=symbol,
+            asset_class=ref.asset_class,
+            sector_tags=ref.sector_tags,
+            last_price=ref.last_price,
+            score=ref.score,
+            conviction=max_conviction,
+            lane_attribution=tuple(sorted({lc.lane for lc in lane_cands})),
+            reasons=tuple(lc.reason for lc in lane_cands),
+        ))
+
+    merged.sort(key=lambda m: (m.conviction, m.score), reverse=True)
+    return Stage2Result(candidates=merged, lane_counts=lane_counts)
+
+
+def render_opportunities_snapshot(result: Stage2Result, *, generated_at: datetime) -> str:
+    lines = [
+        "# Opportunities (Stage-2)",
+        "",
+        f"Generated: {generated_at.isoformat(timespec='seconds')}",
+        f"Total endorsed: {len(result.candidates)}",
+        "",
+        "## Lane Counts",
+        "",
+    ]
+    for lane, count in result.lane_counts.items():
+        lines.append(f"- {lane}: {count}")
+    lines.extend(["", "## Ranked Candidates", ""])
+    for idx, c in enumerate(result.candidates, start=1):
+        lines.append(f"### {idx}. {c.symbol} ({c.asset_class})")
+        lines.append("")
+        lines.append(f"- Lanes: {', '.join(c.lane_attribution)}")
+        lines.append(f"- Conviction: {c.conviction:.2f}")
+        lines.append(f"- Stage-1 score: {c.score:.2f}")
+        lines.append(f"- Last price: ${c.last_price}")
+        if c.sector_tags:
+            lines.append(f"- Sectors: {', '.join(c.sector_tags)}")
+        for r in c.reasons:
+            lines.append(f"- Why: {r}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_opportunities_snapshot(result: Stage2Result, path: Path, *, generated_at: datetime) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_opportunities_snapshot(result, generated_at=generated_at))
