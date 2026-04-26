@@ -619,6 +619,102 @@ def screen_universe() -> None:
     click.echo(f"Wrote universe snapshot: {len(assets)} liquid assets")
 
 
+@main.command("backtest")
+@click.option("--from", "from_date_str", default="2024-01-01", show_default=True,
+              help="Backtest start date (YYYY-MM-DD).")
+@click.option("--to", "to_date_str", default=None,
+              help="Backtest end date (YYYY-MM-DD). Defaults to today.")
+@click.option("--symbols", "symbols_csv",
+              default="SPY,QQQ,AAPL,MSFT,NVDA,AMD,GOOGL,META,AMZN,TSLA,BTC/USD,ETH/USD",
+              show_default=True,
+              help="Comma-separated symbols.")
+@click.option("--strategies", "strategies_csv", default="momentum,mean_reversion",
+              show_default=True)
+@click.option("--max-hold-days", default=60, show_default=True, type=int)
+@click.option("--starting-equity", default=15000, show_default=True, type=int)
+@click.option("--slippage-bps", default=0.0, show_default=True, type=float)
+@click.option("--no-refresh", is_flag=True, default=False,
+              help="Skip cache warm-up (use whatever is in data/backtest_bars.db).")
+@click.option("--report-path", default="strategy/backtest_results.md", show_default=True)
+def backtest(from_date_str: str, to_date_str: str | None,
+             symbols_csv: str, strategies_csv: str,
+             max_hold_days: int, starting_equity: int, slippage_bps: float,
+             no_refresh: bool, report_path: str) -> None:
+    """Replay historical bars through real strategy + risk_manager code paths."""
+    from datetime import date as _date
+    from decimal import Decimal as _Decimal
+
+    from trading_bot.backtest.bar_store import BarStore
+    from trading_bot.backtest.metrics import compute_metrics
+    from trading_bot.backtest.reporter import write_markdown_report
+    from trading_bot.backtest.simulator import (
+        BacktestStore,
+        Backtester,
+        fetch_vix_history,
+    )
+
+    from_date = _date.fromisoformat(from_date_str)
+    to_date = _date.fromisoformat(to_date_str) if to_date_str else _date.today()
+    symbols = [s.strip() for s in symbols_csv.split(",") if s.strip()]
+    strategy_names = tuple(s.strip() for s in strategies_csv.split(",") if s.strip())
+
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    market = MarketDataClient(settings)
+
+    bar_store = BarStore("data/backtest_bars.db")
+
+    if not no_refresh:
+        click.echo(f"[backtest] warming bar cache for {len(symbols)} symbols ({from_date} → {to_date})...")
+        warm = bar_store.warm(symbols, from_date=from_date, to_date=to_date, market=market)
+        for sym, count in warm.items():
+            note = f"{count} new" if count > 0 else ("cached" if count == 0 else "FETCH FAILED")
+            click.echo(f"  {sym}: {note}")
+
+    click.echo("[backtest] fetching VIX history (FRED)...")
+    vix_series = fetch_vix_history(from_date, to_date)
+    click.echo(f"  VIX: {len(vix_series)} dates")
+
+    click.echo(f"[backtest] running simulator ({from_date} → {to_date})...")
+    bt = Backtester(
+        config=cfg, bar_store=bar_store,
+        starting_equity=_Decimal(str(starting_equity)),
+        max_hold_days=max_hold_days,
+        slippage_bps=slippage_bps,
+        vix_series=vix_series,
+    )
+    result = bt.run(
+        from_date=from_date, to_date=to_date,
+        symbols=symbols, strategy_names=strategy_names,
+    )
+    metrics = compute_metrics(result)
+
+    # Persist trades
+    store = BacktestStore("data/backtest_trades.db")
+    for t in result.trades:
+        store.append(t)
+
+    # Write markdown report
+    write_markdown_report(result, metrics, report_path)
+
+    click.echo(
+        f"[backtest] run_id={result.run_id} trades={len(result.trades)} "
+        f"halted_days={result.halted_days} skipped_risk={result.skipped_by_risk} "
+        f"skipped_no_bars={result.skipped_no_bars}"
+    )
+    click.echo(
+        f"[backtest] equity {starting_equity} → {result.ending_equity:,.2f} "
+        f"({(result.ending_equity / _Decimal(str(starting_equity)) - 1) * 100:+.2f}%)"
+    )
+    click.echo(f"[backtest] report: {report_path}")
+    if metrics.overall.sharpe_daily_ann is not None:
+        click.echo(
+            f"[backtest] overall: PF={metrics.overall.profit_factor or '—'}, "
+            f"Sharpe={metrics.overall.sharpe_daily_ann}, "
+            f"win={metrics.overall.win_rate_pct}%"
+        )
+
+
 @main.command("vip-scan")
 def vip_scan() -> None:
     """Poll VIP tweet feeds (Truth Social RSS). Alert-only — never trades."""
