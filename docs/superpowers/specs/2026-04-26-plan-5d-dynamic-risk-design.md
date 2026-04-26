@@ -1,8 +1,9 @@
-# Plan 5b — Dynamic Position Sizing
+# Plan 5d — Dynamic Position Sizing
 
-**Status:** Design
+**Status:** Design (paused; re-enters queue after backtest harness lands)
 **Date:** 2026-04-26
 **Parent plan:** [2026-04-25-plan-5-adaptive-intelligence.md](2026-04-25-plan-5-adaptive-intelligence.md)
+**Sequence note:** Originally numbered 5b. Re-sequenced to 5d per [2026-04-26-revised-plan-sequence.md](2026-04-26-revised-plan-sequence.md) — backtest harness (new 5b) supplies the empirical data needed to set the tuning knobs (`conviction_floor`, `target_atr_pct`, `mult_ceiling`) instead of guessing them.
 
 ## Goal
 

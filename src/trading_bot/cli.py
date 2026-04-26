@@ -16,9 +16,9 @@ from trading_bot.evolution import (
     save_params,
 )
 from trading_bot.exceptions import RiskRuleViolation
-from trading_bot.intelligence import IntelligenceAggregator
+from trading_bot.intelligence import IntelligenceAggregator, get_macro_snapshot
 from trading_bot.market_data import MarketDataClient
-from trading_bot.orchestrator import ScanResult, TradeOrchestrator
+from trading_bot.orchestrator import ScanResult, TradeOrchestrator, load_ranked_watchlist
 from trading_bot.pnl_state import PnlStateBuilder
 from trading_bot.portfolio_monitor import (
     diff_snapshots,
@@ -43,10 +43,78 @@ from trading_bot.universe import build_universe, write_universe_snapshot
 
 CONFIG_PATH = Path("strategy/config.yaml")
 WATCHLIST_PATH = Path("strategy/watchlist.yaml")
+OPPORTUNITIES_PATH = Path("strategy/opportunities.md")
 RULES_PATH = Path("strategy/rules.md")
 PARAMS_PATH = Path("strategy/params.yaml")
 CLOSED_DB_PATH = Path("data/closed_trades.db")
 SNAPSHOT_PATH = Path("data/portfolio_snapshot.json")
+
+ACTIVE_UNIVERSE_TOP_N_STOCKS = 25
+
+
+def _is_usd_crypto(symbol: str) -> bool:
+    """Filter out wrapped/cross-quoted crypto pairs (BTC/USDC, LINK/BTC, etc.)
+    so we don't double-count the same underlying asset."""
+    return symbol.endswith("/USD")
+
+
+def _load_active_universe(*, crypto_only: bool = False):
+    """Active trading universe = top-N ranked stocks from opportunities.md
+    + USD-quoted crypto pairs (from opportunities.md and watchlist.yaml).
+    Falls back to full watchlist.yaml if opportunities.md is missing/empty.
+
+    If crypto_only=True, returns only the crypto subset — used by the 24/7
+    crypto-scan loop when the equity market is closed.
+    """
+    fallback = load_watchlist(WATCHLIST_PATH)
+    ranked = load_ranked_watchlist(OPPORTUNITIES_PATH)
+
+    if not ranked:
+        if crypto_only:
+            return [e for e in fallback if e.asset_class == "crypto" and _is_usd_crypto(e.symbol)]
+        return fallback
+
+    ranked_crypto = [
+        e for e in ranked if e.asset_class == "crypto" and _is_usd_crypto(e.symbol)
+    ]
+    fallback_crypto = [
+        e for e in fallback if e.asset_class == "crypto" and _is_usd_crypto(e.symbol)
+    ]
+
+    if crypto_only:
+        seen: set[str] = set()
+        out: list = []
+        for e in ranked_crypto + fallback_crypto:
+            if e.symbol in seen:
+                continue
+            seen.add(e.symbol)
+            out.append(e)
+        return out
+
+    stocks = [e for e in ranked if e.asset_class != "crypto"][:ACTIVE_UNIVERSE_TOP_N_STOCKS]
+    seen = set()
+    out = []
+    for e in stocks + ranked_crypto + fallback_crypto:
+        if e.symbol in seen:
+            continue
+        seen.add(e.symbol)
+        out.append(e)
+    return out
+
+
+def _live_regime(market, cfg, *, vix_override=None):
+    """detect_regime with VIX from FRED + configured vol threshold."""
+    vix = vix_override
+    if vix is None:
+        try:
+            vix = get_macro_snapshot().vix
+        except Exception:
+            vix = None
+    return detect_regime(
+        market,
+        vix=vix,
+        vol_threshold_pct=cfg.regime.vol_threshold_pct,
+    )
 
 
 def _build_risk_state() -> RiskState:
@@ -159,7 +227,7 @@ def scan(regime: str) -> None:
     alpaca = AlpacaClient(settings)
     market = MarketDataClient(settings)
     journal = TradeJournal(Path(cfg.storage.trade_journal_path))
-    watchlist = load_watchlist(WATCHLIST_PATH)
+    watchlist = _load_active_universe()
 
     orch = TradeOrchestrator(
         config=cfg, market_data=market, alpaca=alpaca,
@@ -264,7 +332,7 @@ def full_run() -> None:
     market = MarketDataClient(settings)
     journal = TradeJournal(Path(cfg.storage.trade_journal_path))
     closed = ClosedTradeStore(CLOSED_DB_PATH)
-    watchlist = load_watchlist(WATCHLIST_PATH)
+    watchlist = _load_active_universe()
     pnl_builder = PnlStateBuilder(settings, cfg)
 
     # 1. Reconcile any newly-closed trades from Alpaca
@@ -273,7 +341,7 @@ def full_run() -> None:
     click.echo(f"[reconcile] {rec_summary.new_closed} new closed trades")
 
     # 2. Detect live regime
-    regime_reading = detect_regime(market)
+    regime_reading = _live_regime(market, cfg)
     regime = regime_reading.regime.value
     click.echo(f"[regime] {regime} (vol {regime_reading.vol_annualized_pct:.1f}%, conf {regime_reading.confidence})")
 
@@ -320,10 +388,10 @@ def intel_scan() -> None:
     alpaca = AlpacaClient(settings)
     market = MarketDataClient(settings)
     journal = TradeJournal(Path(cfg.storage.trade_journal_path))
-    watchlist = load_watchlist(WATCHLIST_PATH)
+    watchlist = _load_active_universe()
     pnl_builder = PnlStateBuilder(settings, cfg)
 
-    regime_reading = detect_regime(market)
+    regime_reading = _live_regime(market, cfg)
     regime = regime_reading.regime.value
 
     orch = TradeOrchestrator(
@@ -395,7 +463,7 @@ def rich_report(period: str) -> None:
     alpaca = AlpacaClient(settings)
     market = MarketDataClient(settings)
     journal = TradeJournal(Path(cfg.storage.trade_journal_path))
-    watchlist = load_watchlist(WATCHLIST_PATH)
+    watchlist = _load_active_universe()
     pnl_builder = PnlStateBuilder(settings, cfg)
     intel_agg = IntelligenceAggregator(settings)
 
@@ -404,7 +472,7 @@ def rich_report(period: str) -> None:
     Reconciler(settings, journal, closed).reconcile(lookback_days=30)
 
     # 2. Regime + scan (allows trades to be placed if signals appear)
-    regime_reading = detect_regime(market)
+    regime_reading = _live_regime(market, cfg)
     regime = regime_reading.regime.value
     orch = TradeOrchestrator(
         config=cfg, market_data=market, alpaca=alpaca,
@@ -442,6 +510,83 @@ def rich_report(period: str) -> None:
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     ).send(subject=f"Trading Bot — {period.upper()} Rich Report ({regime})", html_body=html)
     click.echo(f"[rich-report:{period}] sent ({len(result.decisions)} decisions, "
+               f"VIX={intel.macro.vix}, {len(events)} events)")
+
+
+@main.command("crypto-scan")
+def crypto_scan() -> None:
+    """24/7 crypto-only scan. Identical signal/risk logic to intel-scan but
+    restricted to USD-quoted crypto pairs so the equity market being closed
+    is irrelevant. Silent unless an order is placed or rejected."""
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    alpaca = AlpacaClient(settings)
+    market = MarketDataClient(settings)
+    journal = TradeJournal(Path(cfg.storage.trade_journal_path))
+    watchlist = _load_active_universe(crypto_only=True)
+    if not watchlist:
+        click.echo("[crypto-scan] empty crypto universe — nothing to scan")
+        return
+
+    pnl_builder = PnlStateBuilder(settings, cfg)
+    regime_reading = _live_regime(market, cfg)
+    regime = regime_reading.regime.value
+
+    orch = TradeOrchestrator(
+        config=cfg, market_data=market, alpaca=alpaca,
+        journal=journal, regime=regime,
+        state_builder=pnl_builder.to_risk_state,
+    )
+    result = orch.scan(watchlist=watchlist)
+    placed = [d for d in result.decisions if d.action == "placed_order"]
+    rejected = [d for d in result.decisions if d.action == "rejected_by_risk"]
+
+    click.echo(f"[crypto-scan] regime={regime} symbols={len(watchlist)} "
+               f"placed={len(placed)} rejected={len(rejected)}")
+    for d in placed:
+        click.echo(f"  PLACED {d.symbol}: {d.reason} (entry={d.entry_order_id})")
+    for d in rejected:
+        click.echo(f"  REJECTED {d.symbol}: {d.reason}")
+
+
+@main.command("eod-report")
+def eod_report() -> None:
+    """End-of-day rich HTML email; no scan, no order placement."""
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    alpaca = AlpacaClient(settings)
+    market = MarketDataClient(settings)
+    intel_agg = IntelligenceAggregator(settings)
+
+    regime = _live_regime(market, cfg).regime.value
+
+    watchlist = _load_active_universe()
+    intel = intel_agg.gather([w.symbol for w in watchlist])
+
+    prev = load_snapshot(SNAPSHOT_PATH)
+    curr = take_snapshot(alpaca)
+    events = diff_snapshots(prev, curr, big_move_pct_threshold=2.0)
+    save_snapshot(SNAPSHOT_PATH, curr)
+
+    try:
+        bars = market.get_daily_bars("SPY", lookback_days=2)
+        spy_change = (Decimal(str((bars["close"].iloc[-1] / bars["close"].iloc[-2] - 1) * 100))
+                      .quantize(Decimal("0.01")) if len(bars) >= 2 else Decimal("0"))
+    except Exception:
+        spy_change = Decimal("0")
+
+    account = alpaca.get_account()
+    positions = alpaca.get_positions()
+    empty_scan = ScanResult(decisions=[], timestamp=datetime.now())
+
+    html = build_rich_report_html(
+        period="eod", account=account, positions=positions, scan=empty_scan,
+        spy_daily_change_pct=spy_change, regime=regime, intel=intel, events=events,
+    )
+    EmailSender(
+        user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
+    ).send(subject=f"Trading Bot — EOD Report ({regime})", html_body=html)
+    click.echo(f"[eod-report] sent to {cfg.email.to} (regime={regime}, "
                f"VIX={intel.macro.vix}, {len(events)} events)")
 
 

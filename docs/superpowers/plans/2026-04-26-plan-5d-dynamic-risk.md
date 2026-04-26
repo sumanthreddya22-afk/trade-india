@@ -1,4 +1,4 @@
-# Plan 5b — Dynamic Position Sizing — Implementation Plan
+# Plan 5d — Dynamic Position Sizing — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

@@ -27,3 +27,6 @@ email:
 
 storage:
   trade_journal_path: data/trade_journal.db
+
+regime:
+  vol_threshold_pct: 22.0   # 20d realized vol % above which we force risk_off (Phase 0b: was 30)

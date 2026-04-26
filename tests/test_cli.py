@@ -195,6 +195,50 @@ def test_screen_universe_writes_snapshot(tmp_path, monkeypatch):
     assert "NVDA" in snapshot
 
 
+def test_load_active_universe_falls_back_to_watchlist(tmp_path, monkeypatch):
+    """Phase 0a: with no opportunities.md, returns watchlist.yaml verbatim."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "strategy").mkdir()
+    (tmp_path / "strategy" / "watchlist.yaml").write_text(
+        "symbols:\n"
+        "  - symbol: AAPL\n    asset_class: stock\n    notes: x\n"
+        "  - symbol: BTC/USD\n    asset_class: crypto\n    notes: y\n"
+    )
+    from trading_bot.cli import _load_active_universe
+
+    universe = _load_active_universe()
+    syms = [e.symbol for e in universe]
+    assert syms == ["AAPL", "BTC/USD"]
+
+
+def test_load_active_universe_merges_opportunities_with_crypto(tmp_path, monkeypatch):
+    """Phase 0a: top stocks come from opportunities.md; crypto from watchlist.yaml."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "strategy").mkdir()
+    (tmp_path / "strategy" / "watchlist.yaml").write_text(
+        "symbols:\n"
+        "  - symbol: SPY\n    asset_class: stock\n    notes: legacy\n"
+        "  - symbol: BTC/USD\n    asset_class: crypto\n    notes: btc\n"
+        "  - symbol: ETH/USD\n    asset_class: crypto\n    notes: eth\n"
+    )
+    (tmp_path / "strategy" / "opportunities.md").write_text(
+        "# Opportunities\n"
+        "### 1. NVDA (us_equity)\n"
+        "### 2. AMD (us_equity)\n"
+        "### 3. TSLA (us_equity)\n"
+    )
+    from trading_bot.cli import _load_active_universe
+
+    universe = _load_active_universe()
+    syms = [e.symbol for e in universe]
+    # Top-ranked stocks first, then crypto from watchlist
+    assert syms[:3] == ["NVDA", "AMD", "TSLA"]
+    assert "BTC/USD" in syms
+    assert "ETH/USD" in syms
+    # Legacy SPY (in watchlist but not in opportunities) is dropped
+    assert "SPY" not in syms
+
+
 def test_rank_writes_opportunities(tmp_path, monkeypatch):
     from trading_bot.cli import main
 

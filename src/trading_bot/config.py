@@ -62,12 +62,19 @@ class StorageConfig(BaseModel):
     trade_journal_path: str
 
 
+class RegimeConfig(BaseModel):
+    """Regime-detection tuning knobs."""
+
+    vol_threshold_pct: float = Field(default=22.0, gt=0, le=100)
+
+
 class AppConfig(BaseModel):
     risk: RiskConfig
     allocation: AllocationConfig
     regime_allocations: dict[str, RegimeAllocation]
     email: EmailConfig
     storage: StorageConfig
+    regime: RegimeConfig = Field(default_factory=RegimeConfig)
 
 
 def load_config(path: Path) -> AppConfig:
