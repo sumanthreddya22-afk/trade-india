@@ -1,6 +1,8 @@
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 from trading_bot.alpaca_client import (
     AlpacaClient,
@@ -34,6 +36,30 @@ class Decision:
 class ScanResult:
     decisions: list[Decision]
     timestamp: datetime
+
+
+def load_ranked_watchlist(path: Path) -> list[WatchlistEntry]:
+    """Parse strategy/opportunities.md and return WatchlistEntry list in rank order.
+
+    Entries look like:
+        ### 1. NVDA (us_equity)
+        ### 2. BTC/USD (crypto)
+    """
+    if not path.exists():
+        return []
+    text = path.read_text()
+    out: list[WatchlistEntry] = []
+    pattern = re.compile(r"^###\s+\d+\.\s+(\S+)\s+\(([^)]+)\)\s*$", re.MULTILINE)
+    for match in pattern.finditer(text):
+        symbol = match.group(1)
+        asset_class_raw = match.group(2)
+        # Preserve the raw asset_class value; only normalise crypto variants.
+        if "crypto" in asset_class_raw.lower():
+            asset_class = "crypto"
+        else:
+            asset_class = asset_class_raw
+        out.append(WatchlistEntry(symbol=symbol, asset_class=asset_class, notes=""))
+    return out
 
 
 class TradeOrchestrator:

@@ -193,3 +193,37 @@ def test_screen_universe_writes_snapshot(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     snapshot = (tmp_path / "strategy" / "latest_intelligence.md").read_text()
     assert "NVDA" in snapshot
+
+
+def test_rank_writes_opportunities(tmp_path, monkeypatch):
+    from trading_bot.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "strategy").mkdir()
+
+    from decimal import Decimal
+    from trading_bot.universe import LiquidAsset
+
+    with patch("trading_bot.cli.build_universe") as mock_build, \
+         patch("trading_bot.cli.AlpacaClient"), \
+         patch("trading_bot.cli.MarketDataClient") as mock_md, \
+         patch("trading_bot.cli.Settings"), \
+         patch("trading_bot.cli.load_config"):
+        mock_build.return_value = [
+            LiquidAsset(symbol="AAA", name="AAA", asset_class="us_equity",
+                        exchange="NASDAQ", last_price=Decimal("100"),
+                        avg_dollar_volume=Decimal("1e9"), fractionable=True,
+                        sector_tags=("ai",)),
+        ]
+        import pandas as pd
+        def fake_bars(symbol, lookback_days=60):
+            closes = [100 + i * 0.5 for i in range(60)]
+            return pd.DataFrame({"close": closes, "volume": [1e6] * 60})
+        mock_md.return_value.get_daily_bars.side_effect = fake_bars
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["rank"])
+
+    assert result.exit_code == 0, result.output
+    text = (tmp_path / "strategy" / "opportunities.md").read_text()
+    assert "AAA" in text

@@ -187,3 +187,27 @@ def test_orchestrator_skips_when_bars_too_short(watchlist):
     result = orch.scan(watchlist=watchlist)
     for d in result.decisions:
         assert d.action == "skipped_insufficient_data"
+
+
+from pathlib import Path
+
+from trading_bot.orchestrator import load_ranked_watchlist
+
+
+def test_load_ranked_watchlist_reads_opportunities(tmp_path: Path):
+    md = tmp_path / "opportunities.md"
+    md.write_text(
+        "# Opportunities (Stage-2)\n\n"
+        "## Ranked Candidates\n\n"
+        "### 1. NVDA (us_equity)\n\n"
+        "- Lanes: momentum\n"
+        "- Conviction: 0.75\n\n"
+        "### 2. BTC/USD (crypto)\n\n"
+        "- Lanes: breakout\n"
+        "- Conviction: 0.60\n"
+    )
+    entries = load_ranked_watchlist(md)
+    syms = [e.symbol for e in entries]
+    assert syms == ["NVDA", "BTC/USD"]
+    assert entries[0].asset_class == "us_equity"
+    assert entries[1].asset_class == "crypto"

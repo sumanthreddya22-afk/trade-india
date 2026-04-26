@@ -37,6 +37,8 @@ from trading_bot.reports import (
 from trading_bot.risk_manager import RiskManager, RiskState
 from trading_bot.state import load_watchlist
 from trading_bot.trade_journal import TradeJournal
+from trading_bot.screener import build_stage1_shortlist, run_stage2, write_opportunities_snapshot
+from trading_bot.strategy_lanes import BreakoutLane, MeanReversionLane, MomentumLane
 from trading_bot.universe import build_universe, write_universe_snapshot
 
 CONFIG_PATH = Path("strategy/config.yaml")
@@ -464,6 +466,41 @@ def screen_universe() -> None:
         generated_at=datetime.now(timezone.utc),
     )
     click.echo(f"Wrote universe snapshot: {len(assets)} liquid assets")
+
+
+@main.command("rank")
+def rank_command() -> None:
+    """Run stage-1 + stage-2 screener; write strategy/opportunities.md."""
+    settings = Settings()
+    alpaca = AlpacaClient(settings)
+    market = MarketDataClient(settings)
+
+    def bar_loader_short(symbol: str):
+        try:
+            return market.get_daily_bars(symbol, lookback_days=20)
+        except Exception:
+            import pandas as pd
+            return pd.DataFrame()
+
+    def bar_loader_long(symbol: str):
+        try:
+            return market.get_daily_bars(symbol, lookback_days=60)
+        except Exception:
+            import pandas as pd
+            return pd.DataFrame()
+
+    universe = build_universe(alpaca, bar_loader=bar_loader_short)
+    shortlist = build_stage1_shortlist(universe, bar_loader=bar_loader_short, top_n=100)
+
+    lanes = [MomentumLane(), MeanReversionLane(), BreakoutLane()]
+    result = run_stage2(shortlist, lanes=lanes, bar_loader=bar_loader_long)
+    write_opportunities_snapshot(
+        result,
+        Path("strategy/opportunities.md"),
+        generated_at=datetime.now(timezone.utc),
+        shortlist=shortlist,
+    )
+    click.echo(f"Stage-2 ranked {len(result.candidates)} candidates across {len(lanes)} lanes")
 
 
 if __name__ == "__main__":

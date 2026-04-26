@@ -166,7 +166,12 @@ def run_stage2(
     return Stage2Result(candidates=merged, lane_counts=lane_counts)
 
 
-def render_opportunities_snapshot(result: Stage2Result, *, generated_at: datetime) -> str:
+def render_opportunities_snapshot(
+    result: Stage2Result,
+    *,
+    generated_at: datetime,
+    shortlist: "list[RankedCandidate] | None" = None,
+) -> str:
     lines = [
         "# Opportunities (Stage-2)",
         "",
@@ -191,9 +196,29 @@ def render_opportunities_snapshot(result: Stage2Result, *, generated_at: datetim
         for r in c.reasons:
             lines.append(f"- Why: {r}")
         lines.append("")
+    # When a shortlist is provided and there are no stage-2 endorsed candidates,
+    # fall back to listing stage-1 shortlist members so the file is non-empty.
+    if shortlist and not result.candidates:
+        lines.extend(["", "## Stage-1 Shortlist (no lane endorsements)", ""])
+        for idx, c in enumerate(shortlist, start=1):
+            lines.append(f"### {idx}. {c.symbol} ({c.asset_class})")
+            lines.append("")
+            lines.append(f"- Stage-1 score: {c.score:.2f}")
+            lines.append(f"- Last price: ${c.last_price}")
+            if c.sector_tags:
+                lines.append(f"- Sectors: {', '.join(c.sector_tags)}")
+            lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 
-def write_opportunities_snapshot(result: Stage2Result, path: Path, *, generated_at: datetime) -> None:
+def write_opportunities_snapshot(
+    result: Stage2Result,
+    path: Path,
+    *,
+    generated_at: datetime,
+    shortlist: "list[RankedCandidate] | None" = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(render_opportunities_snapshot(result, generated_at=generated_at))
+    path.write_text(
+        render_opportunities_snapshot(result, generated_at=generated_at, shortlist=shortlist)
+    )
