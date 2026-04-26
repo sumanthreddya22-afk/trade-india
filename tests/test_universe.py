@@ -66,3 +66,22 @@ def test_compute_adv_returns_avg_dollar_volume():
     # mean(close * volume) across 20 rows
     expected = (bars["close"] * bars["volume"]).mean()
     assert abs(float(adv) - float(expected)) < 1.0
+
+
+from trading_bot.universe import tag_sectors
+
+
+def test_tag_sectors_finds_ai_semiconductors():
+    tags = tag_sectors(symbol="NVDA", name="NVIDIA Corp - AI semiconductor leader")
+    assert "ai" in tags
+    assert "semiconductors" in tags
+
+
+def test_tag_sectors_finds_energy():
+    tags = tag_sectors(symbol="XLE", name="Energy Select Sector SPDR Fund")
+    assert "energy" in tags
+
+
+def test_tag_sectors_returns_empty_on_no_match():
+    tags = tag_sectors(symbol="ZZZ", name="Generic Holdings Inc")
+    assert tags == ()
