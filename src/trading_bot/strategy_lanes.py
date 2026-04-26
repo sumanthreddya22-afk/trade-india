@@ -35,6 +35,7 @@ class Lane(Protocol):
 
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator, MACD
+from ta.volatility import BollingerBands
 
 
 class MomentumLane:
@@ -80,6 +81,44 @@ class MomentumLane:
             out.append(LaneCandidate(
                 symbol=c.symbol, lane=self.name, conviction=conviction,
                 reason=f"RSI {rsi:.0f}, MACD>signal, price>EMA20, 5d {c.five_day_return_pct:.1f}%",
+                source_score=c.score,
+            ))
+        return out
+
+
+class MeanReversionLane:
+    """RSI < 30 (oversold) AND price < lower Bollinger Band (2σ, 20-day).
+    Conviction higher when farther below the band.
+    """
+    name = "mean_reversion"
+
+    def evaluate(
+        self,
+        ranked: list[RankedCandidate],
+        bar_loader: Callable[[str], pd.DataFrame],
+    ) -> list[LaneCandidate]:
+        out: list[LaneCandidate] = []
+        for c in ranked:
+            bars = bar_loader(c.symbol)
+            if len(bars) < 22:
+                continue
+            close = bars["close"]
+            rsi = float(RSIIndicator(close=close, window=14).rsi().iloc[-1])
+            bb = BollingerBands(close=close, window=20, window_dev=2)
+            lower = float(bb.bollinger_lband().iloc[-1])
+            last = float(close.iloc[-1])
+
+            if rsi >= 30:
+                continue
+            if last >= lower:
+                continue
+
+            # Conviction grows with how much we're below the band, capped at 0.85.
+            below_pct = (lower - last) / lower if lower else 0.0
+            conviction = 0.4 + min(below_pct * 5.0, 0.45)
+            out.append(LaneCandidate(
+                symbol=c.symbol, lane=self.name, conviction=conviction,
+                reason=f"RSI {rsi:.0f}, price ${last:.2f} < lower BB ${lower:.2f}",
                 source_score=c.score,
             ))
         return out

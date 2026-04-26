@@ -90,3 +90,26 @@ def test_momentum_lane_rejects_parabolic_overbought():
     cand = _ranked("HOT")
     out = lane.evaluate([cand], bar_loader=lambda s: bars.get(s, pd.DataFrame()))
     assert out == []
+
+
+from trading_bot.strategy_lanes import MeanReversionLane
+
+
+def test_mean_reversion_lane_accepts_oversold_below_lower_band():
+    lane = MeanReversionLane()
+    # 30 days of stable price then a sharp drop
+    closes = [100] * 25 + [90, 88, 86, 84, 82]
+    bars = pd.DataFrame({"close": closes, "volume": [1e6] * len(closes)})
+    cand = _ranked("DROP")
+    out = lane.evaluate([cand], bar_loader=lambda s: bars)
+    assert len(out) == 1
+    assert out[0].lane == "mean_reversion"
+
+
+def test_mean_reversion_lane_rejects_normal_market():
+    lane = MeanReversionLane()
+    closes = [100 + i * 0.1 for i in range(30)]  # gentle uptrend, no oversold
+    bars = pd.DataFrame({"close": closes, "volume": [1e6] * 30})
+    cand = _ranked("NORMAL")
+    out = lane.evaluate([cand], bar_loader=lambda s: bars)
+    assert out == []
