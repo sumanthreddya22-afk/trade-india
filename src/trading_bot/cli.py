@@ -17,6 +17,7 @@ from trading_bot.evolution import (
 )
 from trading_bot.exceptions import RiskRuleViolation
 from trading_bot.intelligence import IntelligenceAggregator, get_macro_snapshot
+from trading_bot.last_scan import write_last_scan
 from trading_bot.market_data import MarketDataClient
 from trading_bot.orchestrator import ScanResult, TradeOrchestrator, load_ranked_watchlist
 from trading_bot.pnl_state import PnlStateBuilder
@@ -234,6 +235,7 @@ def scan(regime: str) -> None:
         journal=journal, regime=regime,
     )
     result = orch.scan(watchlist=watchlist)
+    write_last_scan(command="scan", regime=regime, universe_size=len(watchlist), result=result)
     click.echo(f"Scan complete — {len(result.decisions)} decisions:")
     for d in result.decisions:
         click.echo(f"  {d.symbol}: {d.action} ({d.reason})")
@@ -352,6 +354,7 @@ def full_run() -> None:
         state_builder=pnl_builder.to_risk_state,
     )
     result = orch.scan(watchlist=watchlist)
+    write_last_scan(command="full-run", regime=regime, universe_size=len(watchlist), result=result)
     click.echo(f"[scan] {len(result.decisions)} decisions:")
     for d in result.decisions:
         click.echo(f"  {d.symbol}: {d.action} ({d.reason})")
@@ -400,6 +403,7 @@ def intel_scan() -> None:
         state_builder=pnl_builder.to_risk_state,
     )
     result = orch.scan(watchlist=watchlist)
+    write_last_scan(command="intel-scan", regime=regime, universe_size=len(watchlist), result=result)
     placed = [d for d in result.decisions if d.action == "placed_order"]
     rejected = [d for d in result.decisions if d.action == "rejected_by_risk"]
 
@@ -480,6 +484,7 @@ def rich_report(period: str) -> None:
         state_builder=pnl_builder.to_risk_state,
     )
     result = orch.scan(watchlist=watchlist)
+    write_last_scan(command="rich-report", regime=regime, universe_size=len(watchlist), result=result)
 
     # 3. Intelligence
     symbols = [w.symbol for w in watchlist]
@@ -538,6 +543,7 @@ def crypto_scan() -> None:
         state_builder=pnl_builder.to_risk_state,
     )
     result = orch.scan(watchlist=watchlist)
+    write_last_scan(command="crypto-scan", regime=regime, universe_size=len(watchlist), result=result)
     placed = [d for d in result.decisions if d.action == "placed_order"]
     rejected = [d for d in result.decisions if d.action == "rejected_by_risk"]
 
@@ -611,6 +617,17 @@ def screen_universe() -> None:
         generated_at=datetime.now(timezone.utc),
     )
     click.echo(f"Wrote universe snapshot: {len(assets)} liquid assets")
+
+
+@main.command("dashboard")
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8765, show_default=True, type=int)
+@click.option("--reload", is_flag=True, default=False, help="Auto-reload on code change (dev).")
+def dashboard(host: str, port: int, reload: bool) -> None:
+    """Start the local trading-bot dashboard at http://HOST:PORT (default 127.0.0.1:8765)."""
+    from trading_bot.dashboard.app import run
+    click.echo(f"Dashboard starting at http://{host}:{port} — Ctrl+C to stop")
+    run(host=host, port=port, reload=reload)
 
 
 @main.command("rank")

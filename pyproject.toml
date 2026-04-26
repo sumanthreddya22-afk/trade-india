@@ -16,6 +16,9 @@ dependencies = [
     "numpy>=1.26",
     "ta>=0.11",
     "requests>=2.31",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "croniter>=6.2.2",
 ]
 
 [project.optional-dependencies]
@@ -44,3 +47,12 @@ addopts = "-v --strict-markers"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[dependency-groups]
+dev = [
+    "freezegun>=1.5.5",
+    "httpx>=0.28.1",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "pytest-mock>=3.15.1",
+]

@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-950">
+<head>
+  <meta charset="utf-8">
+  <title>Trading Bot — Command Center</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+  <style>
+    :root { --bg: #0a0f1c; --card: #0f172a; --border: #1e293b; }
+    body { background: linear-gradient(180deg,#070b15 0%,#0a0f1c 100%); color: #e2e8f0; font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+    .card { background: rgba(15,23,42,.85); border:1px solid #1e293b; border-radius: 16px; }
+    .label { font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color:#06b6d4; font-weight:600; }
+    .kpi-num { font-size: 36px; font-weight: 700; line-height: 1.1; letter-spacing:-.02em; }
+    .kpi-sub { font-size: 12px; color:#64748b; margin-top:4px; }
+    .pulse-dot { width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 12px #10b981; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .nav-item { display:flex;align-items:center;gap:.75rem;padding:.55rem .75rem;border-radius:.5rem;font-size:14px;color:#94a3b8;}
+    .nav-item.active { background:#0f172a;color:#e2e8f0;border:1px solid #1e293b;}
+    .nav-item:hover { color:#e2e8f0;}
+    .pos-row:hover { background:rgba(15,23,42,.6); }
+    .scroll-thin::-webkit-scrollbar { width:6px;height:6px;}
+    .scroll-thin::-webkit-scrollbar-thumb { background:#1e293b;border-radius:3px;}
+    .gradient-text { background: linear-gradient(90deg,#22d3ee,#a78bfa);-webkit-background-clip:text;background-clip:text;color:transparent;}
+  </style>
+</head>
+<body class="min-h-full">
+
+<div id="dash" class="flex min-h-screen"
+     hx-get="/" hx-trigger="every 60s"
+     hx-target="#dash" hx-select="#dash" hx-swap="outerHTML">
+
+  <!-- ───────────────────── Sidebar ───────────────────── -->
+  <aside class="w-56 shrink-0 border-r border-slate-800/70 px-3 py-5 hidden md:flex flex-col">
+    <div class="flex items-center gap-2 px-2 mb-8">
+      <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-400 to-emerald-500 grid place-items-center text-slate-900 font-bold">TB</div>
+      <div>
+        <div class="text-sm font-semibold leading-tight">Trading Bot</div>
+        <div class="text-xs text-slate-500">Paper command</div>
+      </div>
+    </div>
+    <nav class="space-y-1">
+      <a href="#dashboard" class="nav-item active"><span>📊</span> Dashboard</a>
+      <a href="#regime" class="nav-item"><span>🌡️</span> Regime</a>
+      <a href="#exposure" class="nav-item"><span>📈</span> Exposure</a>
+      <a href="#opportunities" class="nav-item"><span>🎯</span> Opportunities</a>
+      <a href="#orders" class="nav-item"><span>📋</span> Orders</a>
+      <a href="#stats" class="nav-item"><span>📓</span> Journal</a>
+    </nav>
+
+    <div class="mt-auto px-2 text-xs flex items-center gap-2">
+      {% if s.automation_status == "OK" %}
+        <span class="pulse-dot"></span><span class="text-emerald-400">Automation healthy</span>
+      {% elif s.automation_status == "WARN" %}
+        <span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="text-amber-400">{{ s.automation_note }}</span>
+      {% else %}
+        <span class="w-2 h-2 rounded-full bg-rose-500"></span><span class="text-rose-400">{{ s.automation_note }}</span>
+      {% endif %}
+    </div>
+  </aside>
+
+  <!-- ───────────────────── Main ───────────────────── -->
+  <main class="flex-1 px-6 lg:px-10 py-6 space-y-6 max-w-[1600px]">
+
+    <!-- Header -->
+    <header class="flex items-start justify-between flex-wrap gap-3">
+      <div>
+        <div class="text-xs tracking-[.2em] uppercase text-cyan-400/80 font-semibold">Alpaca Paper Account</div>
+        <h1 class="text-3xl lg:text-4xl font-bold mt-1">Today's Trading Command Center</h1>
+      </div>
+      <div class="text-right">
+        <div class="text-xs text-slate-500">Universe • Cache 30s • Refresh 60s</div>
+        <div class="mt-1 flex items-center gap-2 justify-end">
+          <button hx-get="/refresh" hx-target="body" hx-swap="outerHTML" hx-select="body"
+                  class="px-3 py-1.5 rounded-md border border-slate-700 hover:border-cyan-500 hover:text-cyan-300 text-sm">
+            ↻ Refresh
+          </button>
+          <span class="text-xs text-slate-500">Generated {{ s.generated_at.strftime("%b %-d at %-I:%M %p UTC") }}</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Regime banner -->
+    <section id="regime" class="card p-6 lg:p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+      <div class="space-y-2">
+        <div class="label">Regime</div>
+        <h2 class="text-3xl lg:text-5xl font-bold capitalize gradient-text">
+          {{ s.regime.replace('_', ' ') }}
+        </h2>
+        <p class="text-sm text-slate-400 max-w-2xl">{{ s.regime_notes or "—" }}</p>
+        <div class="flex flex-wrap gap-3 text-xs text-slate-500 mt-2">
+          {% if s.vix is not none %}<span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700">VIX {{ "%.2f"|format(s.vix) }}</span>{% endif %}
+          <span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700">20d vol {{ "%.1f"|format(s.vol_pct) }}%</span>
+          <span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700">Universe {{ s.universe_size }} ({{ s.universe_source }})</span>
+        </div>
+      </div>
+      <div class="text-right shrink-0">
+        <div class="label mb-2">Automation</div>
+        {% set color = "emerald" if s.automation_status == "OK" else ("amber" if s.automation_status == "WARN" else "rose") %}
+        <div class="px-5 py-3 rounded-xl border border-{{ color }}-500/40 bg-{{ color }}-500/10 inline-block">
+          <div class="text-3xl font-bold text-{{ color }}-400">{{ s.automation_status }}</div>
+        </div>
+        <div class="text-xs text-slate-500 mt-1">{{ s.automation_note }}</div>
+      </div>
+    </section>
+
+    <!-- KPI row -->
+    <section id="dashboard" class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div class="card p-5">
+        <div class="label">Equity</div>
+        <div class="kpi-num text-emerald-400 mt-2">{{ fmt.usd(s.kpi.equity) }}</div>
+        <div class="kpi-sub">Today {{ fmt.pct(s.kpi.today_pnl_pct, sign=true) }}</div>
+      </div>
+      <div class="card p-5">
+        <div class="label">Cash</div>
+        <div class="kpi-num text-cyan-400 mt-2">{{ fmt.pct(s.kpi.cash_pct) }}</div>
+        <div class="kpi-sub">{{ fmt.usd(s.kpi.cash) }} dry powder</div>
+      </div>
+      <div class="card p-5">
+        <div class="label">Invested</div>
+        <div class="kpi-num text-cyan-400 mt-2">{{ fmt.pct(s.kpi.invested_pct) }}</div>
+        <div class="kpi-sub">{{ s.kpi.open_position_count }} open position{{ "" if s.kpi.open_position_count == 1 else "s" }}</div>
+      </div>
+      <div class="card p-5">
+        <div class="label">Max Drawdown</div>
+        <div class="kpi-num text-rose-400 mt-2">{{ fmt.pct(s.kpi.max_drawdown_pct) }}</div>
+        <div class="kpi-sub">30d trailing</div>
+      </div>
+      <div class="card p-5">
+        <div class="label">Open P&amp;L</div>
+        <div class="kpi-num text-{{ fmt.pnl_color(s.kpi.open_pnl) }}-400 mt-2">{{ fmt.usd(s.kpi.open_pnl, sign=true) }}</div>
+        <div class="kpi-sub">unrealised on open positions</div>
+      </div>
+    </section>
+
+    <!-- Risk Headroom + Halt + Macro + Allocation drift -->
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <!-- Risk headroom (2 cols) -->
+      <div class="card p-6 lg:col-span-2">
+        <div class="flex items-baseline justify-between">
+          <div>
+            <div class="label">Risk Gates</div>
+            <h3 class="text-xl font-semibold mt-1">Headroom Before Halt</h3>
+          </div>
+          {% if s.halt and s.halt.halted %}
+          <span class="px-2 py-1 rounded text-xs bg-rose-500/20 border border-rose-500/40 text-rose-300">HALTED · {{ s.halt.reason }}</span>
+          {% else %}
+          <span class="px-2 py-1 rounded text-xs bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">Trading active</span>
+          {% endif %}
+        </div>
+
+        {% if s.halt %}
+        <div class="grid grid-cols-3 gap-3 mt-4 text-sm">
+          <div class="rounded bg-slate-900/60 border border-slate-800 p-3">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500">Daily P&amp;L</div>
+            <div class="text-{{ fmt.pnl_color(s.halt.daily_pnl_pct) }}-400 font-semibold mt-1">{{ fmt.pct(s.halt.daily_pnl_pct, sign=true) }}</div>
+          </div>
+          <div class="rounded bg-slate-900/60 border border-slate-800 p-3">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500">Weekly P&amp;L</div>
+            <div class="text-{{ fmt.pnl_color(s.halt.weekly_pnl_pct) }}-400 font-semibold mt-1">{{ fmt.pct(s.halt.weekly_pnl_pct, sign=true) }}</div>
+          </div>
+          <div class="rounded bg-slate-900/60 border border-slate-800 p-3">
+            <div class="text-[10px] uppercase tracking-wider text-slate-500">Losing days</div>
+            <div class="font-semibold mt-1">{{ s.halt.consecutive_losing_days }}</div>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="space-y-3 mt-5">
+          {% for r in s.risk_headroom %}
+          {% set color = "rose" if r.severity == "halt" else ("amber" if r.severity == "warn" else "cyan") %}
+          <div>
+            <div class="flex items-baseline justify-between text-sm">
+              <span class="text-slate-300">{{ r.rule }}</span>
+              <span class="text-slate-400 text-xs">{{ r.note }}</span>
+            </div>
+            <div class="h-2 bg-slate-800 rounded-full mt-1 overflow-hidden">
+              <div class="h-full bg-{{ color }}-400" style="width: {{ r.used_pct if r.used_pct < 100 else 100 }}%"></div>
+            </div>
+          </div>
+          {% else %}
+          <div class="text-sm text-slate-500 italic">Risk state unavailable.</div>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Macro + Allocation drift stacked -->
+      <div class="space-y-4">
+        <div class="card p-5">
+          <div class="label">Macro</div>
+          <h3 class="text-base font-semibold mt-1">FRED feed</h3>
+          {% if s.macro %}
+          <div class="grid grid-cols-3 gap-2 mt-3 text-sm">
+            <div>
+              <div class="text-[10px] uppercase tracking-wider text-slate-500">VIX</div>
+              <div class="text-cyan-400 font-semibold">{% if s.macro.vix is not none %}{{ "%.2f"|format(s.macro.vix) }}{% else %}—{% endif %}</div>
+            </div>
+            <div>
+              <div class="text-[10px] uppercase tracking-wider text-slate-500">10Y</div>
+              <div class="text-cyan-400 font-semibold">{% if s.macro.yield_10y_pct is not none %}{{ "%.2f"|format(s.macro.yield_10y_pct) }}%{% else %}—{% endif %}</div>
+            </div>
+            <div>
+              <div class="text-[10px] uppercase tracking-wider text-slate-500">Fed Funds</div>
+              <div class="text-cyan-400 font-semibold">{% if s.macro.fed_funds_pct is not none %}{{ "%.2f"|format(s.macro.fed_funds_pct) }}%{% else %}—{% endif %}</div>
+            </div>
+          </div>
+          {% else %}
+          <div class="text-sm text-slate-500 italic mt-2">Macro feed unavailable.</div>
+          {% endif %}
+        </div>
+
+        <div class="card p-5">
+          <div class="label">Allocation</div>
+          <h3 class="text-base font-semibold mt-1">vs Regime Target</h3>
+          {% if s.allocation_drift %}
+          <div class="space-y-2 mt-3">
+            {% for d in s.allocation_drift %}
+            <div class="flex items-baseline justify-between text-sm">
+              <span class="capitalize text-slate-300">{{ d.bucket }}</span>
+              <span class="text-slate-400 text-xs">
+                <span class="text-slate-500">target</span> {{ fmt.pct(d.target_pct) }}
+                <span class="text-slate-600">·</span>
+                <span class="text-cyan-300">actual</span> {{ fmt.pct(d.actual_pct) }}
+                <span class="text-slate-600">·</span>
+                <span class="text-{{ 'rose' if d.drift_pct < 0 else ('emerald' if d.drift_pct > 0 else 'slate') }}-400">{{ fmt.pct(d.drift_pct, sign=true) }}</span>
+              </span>
+            </div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="text-sm text-slate-500 italic mt-2">No regime allocation defined.</div>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+
+    <!-- Last Scan / Decision Pipeline -->
+    <section class="card p-6">
+      <div class="flex items-baseline justify-between flex-wrap gap-2">
+        <div>
+          <div class="label">Decision Pipeline</div>
+          <h3 class="text-xl font-semibold mt-1">Last Scan
+            {% if s.last_scan %}<span class="text-slate-500 text-sm font-normal">— {{ s.last_scan.command }} @ {{ s.last_scan.timestamp.strftime("%a %-I:%M %p UTC") }}, regime {{ s.last_scan.regime }}, {{ s.last_scan.universe_size }} symbols</span>{% endif %}
+          </h3>
+        </div>
+        {% if s.last_scan %}
+        <div class="flex gap-2 text-xs">
+          <span class="px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">PLACED {{ s.last_scan.placed }}</span>
+          <span class="px-2 py-1 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300">REJECTED {{ s.last_scan.rejected }}</span>
+          <span class="px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">HOLD {{ s.last_scan.holds }}</span>
+        </div>
+        {% endif %}
+      </div>
+
+      {% if s.last_scan and s.last_scan.decisions %}
+      <div class="mt-4 max-h-80 overflow-y-auto scroll-thin">
+        <table class="w-full text-sm">
+          <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-slate-950/95">
+            <tr><th class="text-left py-2 pr-2">Symbol</th><th class="text-left py-2 pr-2">Action</th><th class="text-left py-2">Reason</th></tr>
+          </thead>
+          <tbody class="divide-y divide-slate-800/60">
+            {% for d in s.last_scan.decisions %}
+            <tr class="pos-row">
+              <td class="py-2 pr-2 font-mono">{{ d.symbol }}</td>
+              <td class="py-2 pr-2"><span class="px-2 py-0.5 rounded bg-{{ d.badge_color }}-500/10 border border-{{ d.badge_color }}-500/30 text-{{ d.badge_color }}-300 text-xs">{{ d.action.replace('_', ' ') }}</span></td>
+              <td class="py-2 text-slate-400 text-xs">{{ d.reason }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="mt-4 text-sm text-slate-500 italic">No scan run yet — `data/last_scan.json` is empty. Will populate after the first intel-scan/full-run/crypto-scan fires.</div>
+      {% endif %}
+    </section>
+
+    <!-- Exposure + Equity curve -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      <div id="exposure" class="card p-6">
+        <div class="flex items-baseline justify-between">
+          <div>
+            <div class="label">Risk Allocation</div>
+            <h3 class="text-xl font-semibold mt-1">Exposure Map</h3>
+          </div>
+          <span class="text-xs text-slate-500">stop coverage tracked at fill time</span>
+        </div>
+
+        <div class="space-y-3 mt-5">
+          {% for e in s.exposure %}
+          <div>
+            <div class="flex items-baseline justify-between text-sm">
+              <span class="capitalize text-slate-300">{{ e.bucket }}</span>
+              <span class="text-slate-400">{{ fmt.pct(e.pct) }} <span class="text-slate-600">·</span> {{ fmt.usd(e.value) }}</span>
+            </div>
+            <div class="h-2 bg-slate-800 rounded-full mt-1 overflow-hidden">
+              {% set color = "cyan" if e.bucket == "stock" else ("amber" if e.bucket == "crypto" else "slate") %}
+              <div class="h-full bg-{{ color }}-400" style="width: {{ e.pct if e.pct < 100 else 100 }}%"></div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+
+        {% if s.positions %}
+        <div class="mt-6 border-t border-slate-800 pt-4 space-y-2">
+          {% for p in s.positions %}
+          <div class="pos-row flex items-baseline justify-between text-sm py-1.5 px-2 rounded">
+            <div>
+              <span class="font-mono font-semibold">{{ p.symbol }}</span>
+              <span class="text-xs text-slate-500 ml-2">{{ p.qty }} @ {{ fmt.usd(p.avg_entry) }}</span>
+            </div>
+            <div class="text-right">
+              <div class="text-{{ fmt.pnl_color(p.unrealized_pl) }}-400">{{ fmt.usd(p.unrealized_pl, sign=true) }}</div>
+              <div class="text-xs text-slate-500">{{ fmt.pct(p.unrealized_pl_pct, sign=true) }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="mt-6 text-sm text-slate-500 italic">No open positions.</div>
+        {% endif %}
+      </div>
+
+      <div class="card p-6">
+        <div class="flex items-baseline justify-between">
+          <div>
+            <div class="label">Equity Curve</div>
+            <h3 class="text-xl font-semibold mt-1">Recorded History</h3>
+          </div>
+          <span class="text-xs text-slate-500">30d, daily</span>
+        </div>
+        <div class="mt-4 h-64">
+          <canvas id="equityChart"></canvas>
+        </div>
+        <script>
+          (function() {
+            const points = {{ equity_points | tojson | safe }};
+            const labels = points.map(p => new Date(p.ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }));
+            const data = points.map(p => Number(p.equity));
+            const el = document.getElementById("equityChart");
+            if (!el || !data.length) {
+              if (el) el.parentElement.innerHTML = '<div class="text-slate-500 text-sm italic h-full grid place-items-center">Waiting for ≥2 days of portfolio history.</div>';
+              return;
+            }
+            // Destroy any prior Chart instance attached to this canvas (HTMX re-swaps).
+            try { const prior = Chart.getChart && Chart.getChart(el); if (prior) prior.destroy(); } catch (e) {}
+            new Chart(el, {
+              type: "line",
+              data: { labels, datasets: [{
+                label: "Equity ($)", data, borderColor: "#22d3ee", backgroundColor: "rgba(34,211,238,0.08)",
+                fill: true, tension: 0.25, pointRadius: 0, pointHoverRadius: 5, borderWidth: 2,
+              }]},
+              options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { mode: "index", intersect: false } },
+                scales: {
+                  x: { ticks: { color: "#475569", maxTicksLimit: 8 }, grid: { color: "rgba(30,41,59,0.5)" } },
+                  y: { ticks: { color: "#475569", callback: v => "$" + Number(v).toLocaleString() }, grid: { color: "rgba(30,41,59,0.5)" } }
+                }
+              }
+            });
+          })();
+        </script>
+      </div>
+    </section>
+
+    <!-- Stats (closed-trade journal) -->
+    <section id="stats" class="card p-6">
+      <div class="flex items-baseline justify-between">
+        <div>
+          <div class="label">Closed-Trade Stats</div>
+          <h3 class="text-xl font-semibold mt-1">Journal Summary</h3>
+        </div>
+        {% if s.stats.total_trades == 0 %}
+        <span class="text-xs text-amber-400/80">no closed trades yet — metrics populate after first reconcile</span>
+        {% else %}
+        <span class="text-xs text-slate-500">{{ s.stats.wins }}W / {{ s.stats.losses }}L over {{ s.stats.total_trades }} trades</span>
+        {% endif %}
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mt-5">
+        {% set entries = [
+          ("Total trades", s.stats.total_trades or "—", "slate"),
+          ("Win rate", (fmt.pct(s.stats.win_rate_pct) if s.stats.win_rate_pct is not none else "—"), "emerald"),
+          ("Profit factor", fmt.num_or_dash(s.stats.profit_factor), "cyan"),
+          ("Avg R:R", fmt.num_or_dash(s.stats.avg_rr), "cyan"),
+          ("Expectancy", (fmt.usd(s.stats.expectancy, sign=true) if s.stats.expectancy is not none else "—"), "emerald"),
+          ("Best trade", (fmt.usd(s.stats.best_trade, sign=true) ~ ' · ' ~ s.stats.best_trade_symbol if s.stats.best_trade is not none else "—"), "emerald"),
+          ("Worst trade", (fmt.usd(s.stats.worst_trade, sign=true) ~ ' · ' ~ s.stats.worst_trade_symbol if s.stats.worst_trade is not none else "—"), "rose"),
+          ("Streak", s.stats.streak, "cyan"),
+        ] %}
+        {% for label, val, color in entries %}
+        <div class="p-3 rounded-lg bg-slate-900/60 border border-slate-800">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500">{{ label }}</div>
+          <div class="text-{{ color }}-400 font-semibold mt-1 text-sm break-all">{{ val }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+
+    <!-- Opportunities + Orders -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      <div id="opportunities" class="card p-6">
+        <div class="flex items-baseline justify-between">
+          <div>
+            <div class="label">Today's Watchlist</div>
+            <h3 class="text-xl font-semibold mt-1">Top Opportunities</h3>
+          </div>
+          <span class="text-xs text-slate-500">{{ s.opportunities|length }} of {{ s.universe_size }} ranked</span>
+        </div>
+        <div class="mt-4 max-h-96 overflow-y-auto scroll-thin">
+          {% if s.opportunities %}
+          <table class="w-full text-sm">
+            <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-slate-950/95">
+              <tr><th class="text-left py-2 pr-2">#</th><th class="text-left py-2 pr-2">Symbol</th><th class="text-left py-2">Class</th></tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60">
+              {% for o in s.opportunities %}
+              <tr class="pos-row">
+                <td class="py-2 pr-2 text-slate-500">{{ o.rank }}</td>
+                <td class="py-2 pr-2 font-mono">{{ o.symbol }}</td>
+                <td class="py-2 text-slate-400 capitalize">{{ o.asset_class.replace('_', ' ') }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+          <div class="text-sm text-slate-500 italic">opportunities.md is empty — premarket rank job hasn't run yet (next: 8:07 ET tomorrow).</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div id="orders" class="card p-6">
+        <div class="flex items-baseline justify-between">
+          <div>
+            <div class="label">Live Orders</div>
+            <h3 class="text-xl font-semibold mt-1">Pending &amp; Working</h3>
+          </div>
+          <span class="text-xs text-slate-500">{{ s.orders|length }} open</span>
+        </div>
+        <div class="mt-4 max-h-96 overflow-y-auto scroll-thin">
+          {% if s.orders %}
+          <table class="w-full text-sm">
+            <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-slate-950/95">
+              <tr>
+                <th class="text-left py-2 pr-2">Symbol</th>
+                <th class="text-left py-2 pr-2">Side</th>
+                <th class="text-left py-2 pr-2">Qty</th>
+                <th class="text-left py-2 pr-2">Type</th>
+                <th class="text-left py-2">Status</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/60">
+              {% for o in s.orders %}
+              <tr class="pos-row">
+                <td class="py-2 pr-2 font-mono">{{ o.symbol }}</td>
+                <td class="py-2 pr-2 capitalize {{ 'text-emerald-400' if o.side == 'buy' else 'text-rose-400' }}">{{ o.side }}</td>
+                <td class="py-2 pr-2">{{ o.qty }}</td>
+                <td class="py-2 pr-2 text-slate-400">{{ o.type }}</td>
+                <td class="py-2 text-slate-400">{{ o.status }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% else %}
+          <div class="text-sm text-slate-500 italic">No open orders.</div>
+          {% endif %}
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Scheduled jobs -->
+    <section class="card p-6">
+      <div class="flex items-baseline justify-between">
+        <div>
+          <div class="label">Automation</div>
+          <h3 class="text-xl font-semibold mt-1">Scheduled Jobs</h3>
+        </div>
+        <span class="text-xs text-slate-500">{{ s.scheduled_jobs|length }} cron tasks · times in local TZ</span>
+      </div>
+      {% if s.scheduled_jobs %}
+      <table class="w-full text-sm mt-4">
+        <thead class="text-xs text-slate-500 uppercase tracking-wider">
+          <tr>
+            <th class="text-left py-2 pr-2">Task</th>
+            <th class="text-left py-2 pr-2">Cron</th>
+            <th class="text-left py-2 pr-2">Cadence</th>
+            <th class="text-left py-2">Next fire</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800/60">
+          {% for j in s.scheduled_jobs %}
+          <tr class="pos-row">
+            <td class="py-2 pr-2 text-slate-200">{{ j.label }}</td>
+            <td class="py-2 pr-2 font-mono text-xs text-slate-500">{{ j.cron }}</td>
+            <td class="py-2 pr-2 text-slate-400 text-xs">{{ j.fires_per_day_estimate }}</td>
+            <td class="py-2 text-cyan-300">{{ j.next_run_local }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="text-sm text-slate-500 italic mt-3">No scheduled jobs registered.</div>
+      {% endif %}
+    </section>
+
+    <!-- Errors / footer -->
+    {% if s.errors %}
+    <section class="card border-amber-500/30 bg-amber-500/5 p-4">
+      <div class="text-amber-400 text-xs uppercase tracking-wider font-semibold mb-2">Non-fatal errors during snapshot build</div>
+      <ul class="text-sm text-amber-200/80 list-disc list-inside space-y-1">
+        {% for e in s.errors %}<li>{{ e }}</li>{% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    <footer class="text-xs text-slate-600 pt-4 pb-8 text-center">
+      Trading Bot Dashboard · Local · 127.0.0.1 · Auto-refresh every 60s
+    </footer>
+
+  </main>
+</div>
+</body>
+</html>
