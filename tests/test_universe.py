@@ -129,3 +129,26 @@ def test_build_universe_filters_and_tags():
     assert "ILLIQ" not in symbols  # filtered out by ADV
     nvda = next(a for a in universe if a.symbol == "NVDA")
     assert "semiconductors" in nvda.sector_tags
+
+
+from datetime import datetime, timezone
+
+from trading_bot.universe import render_universe_snapshot
+
+
+def test_render_universe_snapshot_includes_counts_and_top_sectors():
+    assets = [
+        LiquidAsset(symbol="NVDA", name="NVIDIA",
+                    asset_class="us_equity", exchange="NASDAQ",
+                    last_price=Decimal("450"), avg_dollar_volume=Decimal("8e9"),
+                    fractionable=True, sector_tags=("ai", "semiconductors")),
+        LiquidAsset(symbol="GLD", name="Gold ETF",
+                    asset_class="us_equity", exchange="NYSE",
+                    last_price=Decimal("180"), avg_dollar_volume=Decimal("3e8"),
+                    fractionable=True, sector_tags=("metals",)),
+    ]
+    md = render_universe_snapshot(assets, generated_at=datetime(2026, 4, 25, tzinfo=timezone.utc))
+    assert "# Universe Snapshot" in md
+    assert "Total liquid assets: 2" in md
+    assert "NVDA" in md
+    assert "semiconductors" in md

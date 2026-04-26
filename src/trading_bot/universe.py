@@ -132,3 +132,56 @@ def build_universe(
             )
         )
     return apply_liquidity_filter(candidates, min_price=min_price, min_adv=min_adv)
+
+
+from collections import Counter
+from datetime import datetime
+from pathlib import Path
+
+
+def render_universe_snapshot(
+    assets: list[LiquidAsset],
+    *,
+    generated_at: datetime,
+    top_n_per_sector: int = 5,
+) -> str:
+    """Render a markdown snapshot summarizing the universe."""
+    lines = [
+        "# Universe Snapshot",
+        "",
+        f"Generated: {generated_at.isoformat(timespec='seconds')}",
+        f"Total liquid assets: {len(assets)}",
+        "",
+    ]
+
+    sector_counts: Counter[str] = Counter()
+    for a in assets:
+        for tag in a.sector_tags:
+            sector_counts[tag] += 1
+
+    lines.extend(["## Sector Breakdown", ""])
+    for sector, count in sector_counts.most_common():
+        lines.append(f"- {sector}: {count}")
+    if not sector_counts:
+        lines.append("- (no sector tags applied)")
+    lines.append("")
+
+    lines.extend(["## Top Names by ADV (per sector)", ""])
+    by_sector: dict[str, list[LiquidAsset]] = {}
+    for a in assets:
+        for tag in a.sector_tags or ("untagged",):
+            by_sector.setdefault(tag, []).append(a)
+    for sector in sorted(by_sector):
+        ranked = sorted(by_sector[sector], key=lambda x: x.avg_dollar_volume, reverse=True)[:top_n_per_sector]
+        lines.append(f"### {sector}")
+        for a in ranked:
+            lines.append(
+                f"- {a.symbol} ({a.exchange}) — ${a.last_price} — ADV ${a.avg_dollar_volume:,.0f}"
+            )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_universe_snapshot(assets: list[LiquidAsset], path: Path, *, generated_at: datetime) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_universe_snapshot(assets, generated_at=generated_at))
