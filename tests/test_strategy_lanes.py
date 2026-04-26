@@ -113,3 +113,28 @@ def test_mean_reversion_lane_rejects_normal_market():
     cand = _ranked("NORMAL")
     out = lane.evaluate([cand], bar_loader=lambda s: bars)
     assert out == []
+
+
+from trading_bot.strategy_lanes import BreakoutLane
+
+
+def test_breakout_lane_accepts_new_high_with_volume():
+    lane = BreakoutLane()
+    # Flat range then break above high on volume spike
+    closes = [100] * 20 + [102]  # bar 21 breaks the prior 20-day high (100)
+    volumes = [1e6] * 20 + [3e6]  # volume spike on breakout
+    bars = pd.DataFrame({"close": closes, "volume": volumes})
+    cand = _ranked("BREAK")
+    out = lane.evaluate([cand], bar_loader=lambda s: bars)
+    assert len(out) == 1
+    assert out[0].lane == "breakout"
+
+
+def test_breakout_lane_rejects_breakout_without_volume():
+    lane = BreakoutLane()
+    closes = [100] * 20 + [102]
+    volumes = [1e6] * 21  # no volume confirmation
+    bars = pd.DataFrame({"close": closes, "volume": volumes})
+    cand = _ranked("WEAK")
+    out = lane.evaluate([cand], bar_loader=lambda s: bars)
+    assert out == []

@@ -122,3 +122,39 @@ class MeanReversionLane:
                 source_score=c.score,
             ))
         return out
+
+
+class BreakoutLane:
+    """Price closes above prior 20-day high AND volume > 1.5× 20-day avg."""
+    name = "breakout"
+
+    def evaluate(
+        self,
+        ranked: list[RankedCandidate],
+        bar_loader: Callable[[str], pd.DataFrame],
+    ) -> list[LaneCandidate]:
+        out: list[LaneCandidate] = []
+        for c in ranked:
+            bars = bar_loader(c.symbol)
+            if len(bars) < 21:
+                continue
+            close = bars["close"]
+            volume = bars["volume"]
+            prior_high = float(close.iloc[-21:-1].max())
+            last = float(close.iloc[-1])
+            avg_vol = float(volume.iloc[-21:-1].mean())
+            last_vol = float(volume.iloc[-1])
+
+            if last <= prior_high:
+                continue
+            if avg_vol <= 0 or last_vol < 1.5 * avg_vol:
+                continue
+
+            vol_ratio = last_vol / avg_vol
+            conviction = 0.5 + min((vol_ratio - 1.5) * 0.2, 0.4)
+            out.append(LaneCandidate(
+                symbol=c.symbol, lane=self.name, conviction=conviction,
+                reason=f"Close ${last:.2f} > 20d high ${prior_high:.2f}, vol {vol_ratio:.1f}× avg",
+                source_score=c.score,
+            ))
+        return out
