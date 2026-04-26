@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -37,6 +37,7 @@ from trading_bot.reports import (
 from trading_bot.risk_manager import RiskManager, RiskState
 from trading_bot.state import load_watchlist
 from trading_bot.trade_journal import TradeJournal
+from trading_bot.universe import build_universe, write_universe_snapshot
 
 CONFIG_PATH = Path("strategy/config.yaml")
 WATCHLIST_PATH = Path("strategy/watchlist.yaml")
@@ -440,6 +441,29 @@ def rich_report(period: str) -> None:
     ).send(subject=f"Trading Bot — {period.upper()} Rich Report ({regime})", html_body=html)
     click.echo(f"[rich-report:{period}] sent ({len(result.decisions)} decisions, "
                f"VIX={intel.macro.vix}, {len(events)} events)")
+
+
+@main.command("screen-universe")
+def screen_universe() -> None:
+    """Pull Alpaca tradable universe, apply liquidity screen, write snapshot."""
+    settings = Settings()
+    market = MarketDataClient(settings)
+
+    def bar_loader(symbol: str):
+        try:
+            return market.get_daily_bars(symbol, lookback_days=20)
+        except Exception:
+            import pandas as pd
+            return pd.DataFrame()
+
+    alpaca = AlpacaClient(settings)
+    assets = build_universe(alpaca, bar_loader=bar_loader)
+    write_universe_snapshot(
+        assets,
+        Path("strategy/latest_intelligence.md"),
+        generated_at=datetime.now(timezone.utc),
+    )
+    click.echo(f"Wrote universe snapshot: {len(assets)} liquid assets")
 
 
 if __name__ == "__main__":

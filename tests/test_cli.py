@@ -165,3 +165,31 @@ def _real_state_zero():
         consecutive_losing_days=0,
         halted=False,
     )
+
+
+def test_screen_universe_writes_snapshot(tmp_path, monkeypatch):
+    from trading_bot.cli import main
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "strategy").mkdir()
+
+    with patch("trading_bot.cli.build_universe") as mock_build, \
+         patch("trading_bot.cli.AlpacaClient"), \
+         patch("trading_bot.cli.MarketDataClient"), \
+         patch("trading_bot.cli.Settings"), \
+         patch("trading_bot.cli.load_config"):
+        from decimal import Decimal
+        from trading_bot.universe import LiquidAsset
+        mock_build.return_value = [
+            LiquidAsset(symbol="NVDA", name="NVIDIA",
+                        asset_class="us_equity", exchange="NASDAQ",
+                        last_price=Decimal("450"), avg_dollar_volume=Decimal("8e9"),
+                        fractionable=True, sector_tags=("ai", "semiconductors")),
+        ]
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["screen-universe"])
+
+    assert result.exit_code == 0, result.output
+    snapshot = (tmp_path / "strategy" / "latest_intelligence.md").read_text()
+    assert "NVDA" in snapshot
