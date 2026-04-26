@@ -2,6 +2,7 @@
 stage-2 strategy-lane scoring on the shortlist (delegated to strategy_lanes.py)."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -66,3 +67,33 @@ def score_candidate(
         volume_ratio=vol_ratio,
         score=score,
     )
+
+
+def build_stage1_shortlist(
+    universe: list[LiquidAsset],
+    *,
+    bar_loader: Callable[[str], pd.DataFrame],
+    top_n: int = 100,
+    benchmark_symbol: str = "SPY",
+) -> list[RankedCandidate]:
+    """Score the entire universe and return top_n by composite score.
+
+    Skips assets whose bars are unavailable or insufficient (< 6 rows).
+    """
+    benchmark_bars = bar_loader(benchmark_symbol)
+    benchmark_5d = 0.0
+    if len(benchmark_bars) >= 6:
+        last = float(benchmark_bars["close"].iloc[-1])
+        fifth = float(benchmark_bars["close"].iloc[-6])
+        if fifth:
+            benchmark_5d = ((last - fifth) / fifth) * 100
+
+    candidates: list[RankedCandidate] = []
+    for asset in universe:
+        bars = bar_loader(asset.symbol)
+        if len(bars) < 6:
+            continue
+        candidates.append(score_candidate(asset, bars=bars, benchmark_5d_pct=benchmark_5d))
+
+    candidates.sort(key=lambda c: c.score, reverse=True)
+    return candidates[:top_n]

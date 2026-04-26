@@ -2,7 +2,7 @@ from decimal import Decimal
 import pandas as pd
 
 from trading_bot.universe import LiquidAsset
-from trading_bot.screener import RankedCandidate, score_candidate
+from trading_bot.screener import RankedCandidate, score_candidate, build_stage1_shortlist
 
 
 def _asset(symbol):
@@ -28,3 +28,45 @@ def test_score_candidate_combines_momentum_volume_and_sector():
     # Volume ratio = last vol / mean(prior vols), well above 1.0
     assert cand.volume_ratio > 1.0
     assert cand.score > 0
+
+
+from collections.abc import Callable
+
+
+def _make_bars(close_path: list[float]) -> pd.DataFrame:
+    return pd.DataFrame({
+        "close": close_path,
+        "volume": [1_000_000] * len(close_path),
+    })
+
+
+def test_build_stage1_shortlist_ranks_by_score_and_caps_size():
+    universe = [
+        _asset("AAA"),
+        _asset("BBB"),
+        _asset("CCC"),
+    ]
+    bar_paths = {
+        "AAA": [100, 100, 100, 100, 100, 110],  # +10% 5d
+        "BBB": [100, 100, 100, 100, 100, 105],  # +5% 5d
+        "CCC": [100, 100, 100, 100, 100, 101],  # +1% 5d
+        "SPY": [100, 100, 100, 100, 100, 100],  # 0% 5d
+    }
+
+    def loader(sym: str) -> pd.DataFrame:
+        return _make_bars(bar_paths[sym])
+
+    short = build_stage1_shortlist(universe, bar_loader=loader, top_n=2, benchmark_symbol="SPY")
+    assert [c.symbol for c in short] == ["AAA", "BBB"]
+
+
+def test_build_stage1_shortlist_handles_missing_bars():
+    universe = [_asset("AAA"), _asset("EMPTY")]
+
+    def loader(sym: str) -> pd.DataFrame:
+        if sym == "EMPTY":
+            return pd.DataFrame()
+        return _make_bars([100, 100, 100, 100, 100, 110])
+
+    short = build_stage1_shortlist(universe, bar_loader=loader, top_n=10, benchmark_symbol="SPY")
+    assert "EMPTY" not in {c.symbol for c in short}
