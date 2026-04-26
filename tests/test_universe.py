@@ -51,3 +51,18 @@ def test_liquidity_filter_drops_low_adv():
     assets = [_asset("ILLIQ", 50, 100_000)]
     kept = apply_liquidity_filter(assets, min_price=Decimal("5"), min_adv=Decimal("5000000"))
     assert kept == []
+
+
+from pathlib import Path
+import pandas as pd
+
+from trading_bot.universe import compute_adv
+
+
+def test_compute_adv_returns_avg_dollar_volume():
+    fixture = Path(__file__).parent / "fixtures" / "bars" / "nvda_20d.csv"
+    bars = pd.read_csv(fixture, parse_dates=["timestamp"])
+    adv = compute_adv(bars)
+    # mean(close * volume) across 20 rows
+    expected = (bars["close"] * bars["volume"]).mean()
+    assert abs(float(adv) - float(expected)) < 1.0

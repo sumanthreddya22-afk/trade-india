@@ -11,6 +11,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 
+import pandas as pd
+
 
 @dataclass(frozen=True)
 class LiquidAsset:
@@ -47,3 +49,14 @@ def apply_liquidity_filter(
             continue
         out.append(a)
     return out
+
+
+def compute_adv(bars: pd.DataFrame) -> Decimal:
+    """Average daily dollar volume across the bar window.
+
+    Expects a DataFrame with `close` and `volume` columns. Returns Decimal.
+    """
+    if bars.empty:
+        return Decimal("0")
+    dollar_volume = bars["close"] * bars["volume"]
+    return Decimal(str(float(dollar_volume.mean())))
