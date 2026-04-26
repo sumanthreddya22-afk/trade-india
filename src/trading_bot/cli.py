@@ -619,6 +619,55 @@ def screen_universe() -> None:
     click.echo(f"Wrote universe snapshot: {len(assets)} liquid assets")
 
 
+@main.command("vip-scan")
+def vip_scan() -> None:
+    """Poll VIP tweet feeds (Truth Social RSS). Alert-only — never trades."""
+    from trading_bot.vip_tweets import scan as run_vip_scan
+
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    result = run_vip_scan()
+
+    high = [p for p in result.new_posts if p.severity == "high"]
+    med = [p for p in result.new_posts if p.severity == "med"]
+    click.echo(
+        f"[vip-scan] handles={result.handles_polled} new={len(result.new_posts)} "
+        f"high={len(high)} med={len(med)} errors={len(result.errors)}"
+    )
+    for p in result.new_posts:
+        click.echo(f"  [{p.severity.upper()}] {p.handle}: {p.text[:140]} ({p.severity_reason})")
+    for e in result.errors:
+        click.echo(f"  ERROR: {e}")
+
+    if not high:
+        return  # alerts only fire on HIGH
+
+    rows = "".join(
+        f"<tr><td style='padding:8px;border-bottom:1px solid #2a2a2a'>"
+        f"<strong style='color:#f87171'>{p.severity.upper()}</strong>"
+        f"</td><td style='padding:8px;border-bottom:1px solid #2a2a2a;color:#e5e7eb'>"
+        f"{p.handle} ({p.platform})<br/>"
+        f"<span style='color:#9ca3af;font-size:12px'>{p.severity_reason}</span>"
+        f"</td><td style='padding:8px;border-bottom:1px solid #2a2a2a;color:#e5e7eb'>"
+        f"{p.text[:300]}<br/>"
+        f"<a href='{p.url}' style='color:#22d3ee;font-size:12px'>{p.url}</a>"
+        f"</td></tr>"
+        for p in high
+    )
+    html = (
+        f"<div style='background:#0a0f1c;color:#e5e7eb;padding:24px;font-family:system-ui'>"
+        f"<h2 style='color:#f87171;margin:0 0 4px'>VIP Tweet Alert — {len(high)} high-severity post(s)</h2>"
+        f"<p style='color:#9ca3af;margin:0 0 16px;font-size:14px'>"
+        f"Bot is alert-only — no trades placed. Manual judgment required.</p>"
+        f"<table style='width:100%;border-collapse:collapse;background:#0f172a'>{rows}</table>"
+        f"</div>"
+    )
+    EmailSender(
+        user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
+    ).send(subject=f"VIP TWEET ALERT — {len(high)} high-severity", html_body=html)
+    click.echo(f"[vip-scan] alert email sent to {cfg.email.to}")
+
+
 @main.command("dashboard")
 @click.option("--host", default="127.0.0.1", show_default=True)
 @click.option("--port", default=8765, show_default=True, type=int)

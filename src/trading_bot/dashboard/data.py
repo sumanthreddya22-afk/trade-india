@@ -445,13 +445,14 @@ def _build_universe_meta(opp_path: Path, watchlist_path: Path) -> tuple[int, str
 
 
 _KNOWN_SCHEDULED_JOBS: list[tuple[str, str, str]] = [
-    # (task_id, human label, cron)
+    # (task_id, human label, cron) — keep in sync with the scheduled-tasks MCP
     ("trading-bot-premarket-rank", "Pre-market rank (refresh opportunities.md)", "0 8 * * 1-5"),
-    ("trading-bot-intel-scan", "Intel-scan (place trades)", "*/15 9-15 * * 1-5"),
-    ("trading-bot-portfolio-watch", "Portfolio watch (alerts)", "7,22,37,52 9-15 * * 1-5"),
+    ("trading-bot-intel-scan", "Intel-scan (place trades, hourly)", "0 9-15 * * 1-5"),
+    ("trading-bot-portfolio-watch", "Portfolio watch (alerts, every 30 min)", "15,45 9-15 * * 1-5"),
     ("trading-bot-rich-report-mid", "Midday rich report", "30 12 * * 1-5"),
     ("trading-bot-daily-full-run", "EOD report", "30 16 * * 1-5"),
-    ("trading-bot-crypto-scan", "Crypto scan (24/7)", "5,35 * * * *"),
+    ("trading-bot-crypto-scan", "Crypto scan (24/7, hourly)", "5 * * * *"),
+    ("trading-bot-vip-tweets", "VIP tweet monitor (Truth Social)", "*/10 * * * *"),
     ("trading-bot-weekly-evolve", "Weekly evolve", "0 10 * * 6"),
 ]
 

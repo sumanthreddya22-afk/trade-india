@@ -1,0 +1,14 @@
+# VIP tweet monitor — accounts whose posts can move markets.
+# Add/remove handles freely; bot rereads on each scan.
+#
+# Notes:
+# - Truth Social RSS: https://truthsocial.com/users/<handle>/feed.rss  (works without auth)
+# - X (Twitter): not wired. Free API is ~50 reads/month — unusable. Add `platform: x`
+#   handles only if you've signed up for the $200/mo Basic tier.
+# - The bot ALERTS only — it never auto-trades, auto-halts, or auto-vetoes
+#   based on a tweet. Email is the surface; humans decide what to do.
+
+handles:
+  - name: Donald Trump
+    platform: truth_social
+    rss_url: https://truthsocial.com/users/realDonaldTrump/feed.rss

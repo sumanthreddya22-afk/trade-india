@@ -19,17 +19,33 @@ def test_liquid_asset_holds_screening_fields():
     assert "ai" in asset.sector_tags
 
 
-def _asset(symbol, price, adv):
+def _asset(symbol, price, adv, asset_class="us_equity"):
     return LiquidAsset(
         symbol=symbol,
         name=symbol,
-        asset_class="us_equity",
-        exchange="NASDAQ",
+        asset_class=asset_class,
+        exchange="NASDAQ" if asset_class == "us_equity" else "CRYPTO",
         last_price=Decimal(str(price)),
         avg_dollar_volume=Decimal(str(adv)),
         fractionable=True,
         sector_tags=(),
     )
+
+
+def test_liquidity_filter_passes_crypto_regardless_of_adv_or_price():
+    """Alpaca paper crypto reports sandbox-level volume (e.g. BTC/USD ~$160k/day)
+    even though real-market liquidity is in the billions. Crypto should bypass
+    both the price floor (DOGE/USD = $0.09) and the ADV floor."""
+    assets = [
+        _asset("BTC/USD", 68000, 161000, asset_class="crypto"),
+        _asset("DOGE/USD", 0.09, 25000, asset_class="crypto"),
+        _asset("PENNY", 0.50, 50_000_000),  # equity below price floor — should drop
+    ]
+    kept = apply_liquidity_filter(assets, min_price=Decimal("10"), min_adv=Decimal("10000000"))
+    syms = {a.symbol for a in kept}
+    assert "BTC/USD" in syms
+    assert "DOGE/USD" in syms
+    assert "PENNY" not in syms
 
 
 def test_liquidity_filter_keeps_qualified_assets():

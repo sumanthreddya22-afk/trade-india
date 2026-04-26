@@ -29,8 +29,8 @@ class LiquidAsset:
     sector_tags: tuple[str, ...]
 
 
-DEFAULT_MIN_PRICE = Decimal("5")
-DEFAULT_MIN_ADV = Decimal("5000000")  # $5M average daily dollar volume
+DEFAULT_MIN_PRICE = Decimal("10")  # raised from $5 — penny-stock filter
+DEFAULT_MIN_ADV = Decimal("10000000")  # $10M average daily dollar volume — raised from $5M
 
 
 def apply_liquidity_filter(
@@ -41,12 +41,22 @@ def apply_liquidity_filter(
 ) -> list[LiquidAsset]:
     """Keep only assets whose last price >= min_price and avg dollar volume >= min_adv.
 
-    Crypto assets bypass the equity-style price floor (BTC and ETH are always
-    above $5; SOL/USD etc. are also fine), but ADV still applies.
+    Equity rules: both price and ADV filters apply.
+
+    Crypto rules: neither filter applies. The price floor is meaningless for
+    pairs like DOGE/USD ($0.09) or PEPE/USD that are still highly liquid in
+    real markets. The ADV filter is also wrong here: Alpaca paper crypto
+    bars carry sandbox-level volume (BTC/USD reports ~$160k/day vs ~$30B in
+    reality). So we trust Alpaca's `tradable` flag for crypto and let all
+    pairs through; downstream lanes still gate on signal strength per-symbol.
     """
     out: list[LiquidAsset] = []
     for a in assets:
-        if a.asset_class == "us_equity" and a.last_price < min_price:
+        is_crypto = "/" in a.symbol or "crypto" in a.asset_class.lower()
+        if is_crypto:
+            out.append(a)
+            continue
+        if a.last_price < min_price:
             continue
         if a.avg_dollar_volume < min_adv:
             continue
