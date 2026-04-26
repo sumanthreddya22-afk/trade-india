@@ -8,11 +8,13 @@ liquidity filtering and a richer sector taxonomy.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 
 import pandas as pd
+
+from trading_bot.alpaca_client import AlpacaClient
 
 
 @dataclass(frozen=True)
@@ -94,3 +96,39 @@ def tag_sectors(*, symbol: str, name: str) -> tuple[str, ...]:
                 matched.add(tag)
                 break
     return tuple(sorted(matched))
+
+
+def build_universe(
+    alpaca: AlpacaClient,
+    *,
+    bar_loader: Callable[[str], pd.DataFrame],
+    min_price: Decimal = DEFAULT_MIN_PRICE,
+    min_adv: Decimal = DEFAULT_MIN_ADV,
+) -> list[LiquidAsset]:
+    """Pull tradable universe, score liquidity, tag sectors, return LiquidAssets.
+
+    bar_loader is injected so tests can supply canned data without hitting Alpaca.
+    """
+    raw_equities = alpaca.get_active_assets("us_equity")
+    raw_crypto = alpaca.get_active_assets("crypto")
+
+    candidates: list[LiquidAsset] = []
+    for asset in list(raw_equities) + list(raw_crypto):
+        bars = bar_loader(asset.symbol)
+        if bars.empty:
+            continue
+        last_price = Decimal(str(float(bars["close"].iloc[-1])))
+        adv = compute_adv(bars)
+        candidates.append(
+            LiquidAsset(
+                symbol=asset.symbol,
+                name=asset.name,
+                asset_class=asset.asset_class,
+                exchange=asset.exchange,
+                last_price=last_price,
+                avg_dollar_volume=adv,
+                fractionable=asset.fractionable,
+                sector_tags=tag_sectors(symbol=asset.symbol, name=asset.name),
+            )
+        )
+    return apply_liquidity_filter(candidates, min_price=min_price, min_adv=min_adv)
