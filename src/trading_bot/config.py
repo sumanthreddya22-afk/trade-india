@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     gmail_user: str
     gmail_app_password: str
     bot_mode: Literal["paper", "live"] = "paper"
+    # Optional: Massive (Polygon) API key for the full-market data layer
+    # (universe screening, news sentiment, short interest). Commands that
+    # need it fail fast with a clear error if missing.
+    polygon_api_key: str = ""
 
     @field_validator("bot_mode")
     @classmethod
@@ -68,6 +72,17 @@ class RegimeConfig(BaseModel):
     vol_threshold_pct: float = Field(default=22.0, gt=0, le=100)
 
 
+class StrategyConfig(BaseModel):
+    """Optional strategy-layer filters (Plan 6c+)."""
+
+    # News-sentiment floor: if set, entries are skipped when the symbol's
+    # most-recent cached sentiment score is below this. None = filter
+    # disabled. Range -1..+1. Default disabled until backtest finds the
+    # right value.
+    sentiment_floor: float | None = Field(default=None, ge=-1.0, le=1.0)
+    sentiment_max_age_days: int = Field(default=3, ge=1, le=30)
+
+
 class AppConfig(BaseModel):
     risk: RiskConfig
     allocation: AllocationConfig
@@ -75,6 +90,7 @@ class AppConfig(BaseModel):
     email: EmailConfig
     storage: StorageConfig
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
+    strategy: StrategyConfig = Field(default_factory=StrategyConfig)
 
 
 def load_config(path: Path) -> AppConfig:

@@ -70,6 +70,10 @@ def create_app() -> FastAPI:
         snap = cache.get()
         return templates.TemplateResponse(request, "dashboard.html", _ctx(snap))
 
+    @app.get("/architecture", response_class=HTMLResponse)
+    def architecture(request: Request) -> Any:
+        return templates.TemplateResponse(request, "architecture.html", {})
+
     @app.get("/refresh", response_class=HTMLResponse)
     def refresh(request: Request) -> Any:
         cache.invalidate()

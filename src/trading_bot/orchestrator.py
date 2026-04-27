@@ -145,6 +145,23 @@ class TradeOrchestrator:
                 decisions.append(Decision(symbol=symbol, action="hold", reason=sig.reason))
                 continue
 
+            # News-sentiment gate (Plan 6c). When sentiment_floor is set,
+            # skip entries on names with recent-news score below floor.
+            # Crypto bypasses (Massive's news endpoint is equity-focused).
+            sf = getattr(self._cfg.strategy, "sentiment_floor", None)
+            if sf is not None and entry.asset_class != "crypto":
+                from trading_bot.news_sentiment import score_for, passes_filter
+                score = score_for(
+                    symbol,
+                    max_age_days=self._cfg.strategy.sentiment_max_age_days,
+                )
+                if not passes_filter(score, floor=sf):
+                    decisions.append(Decision(
+                        symbol=symbol, action="skipped_sentiment",
+                        reason=f"news score {score:.2f} < floor {sf:.2f}",
+                    ))
+                    continue
+
             asset_class = AssetClass.CRYPTO if entry.asset_class == "crypto" else AssetClass.STOCK
             order = OrderRequest(
                 symbol=symbol,

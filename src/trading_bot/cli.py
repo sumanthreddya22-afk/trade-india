@@ -40,7 +40,11 @@ from trading_bot.state import load_watchlist
 from trading_bot.trade_journal import TradeJournal
 from trading_bot.screener import build_stage1_shortlist, run_stage2, write_opportunities_snapshot
 from trading_bot.strategy_lanes import BreakoutLane, MeanReversionLane, MomentumLane
-from trading_bot.universe import build_universe, write_universe_snapshot
+from trading_bot.universe import (
+    build_universe,
+    build_universe_from_grouped,
+    write_universe_snapshot,
+)
 
 CONFIG_PATH = Path("strategy/config.yaml")
 WATCHLIST_PATH = Path("strategy/watchlist.yaml")
@@ -720,6 +724,43 @@ def backtest(from_date_str: str, to_date_str: str | None,
         )
 
 
+@main.command("news-warm")
+@click.option("--lookback-days", default=3, show_default=True, type=int)
+def news_warm(lookback_days: int) -> None:
+    """Refresh per-ticker news sentiment for the active trading universe.
+    Stores aggregate scores in data/news_sentiment.db. Run on cron before
+    each scan window so entries can gate on freshly-computed scores."""
+    from trading_bot.news_sentiment import warm_for_symbols
+
+    universe = _load_active_universe()
+    symbols = [e.symbol for e in universe if e.asset_class != "crypto"]
+    if not symbols:
+        click.echo("[news-warm] no stock symbols in active universe — skipping")
+        return
+    click.echo(f"[news-warm] fetching sentiment for {len(symbols)} symbols "
+               f"(lookback {lookback_days}d)...")
+
+    readings = warm_for_symbols(symbols, lookback_days=lookback_days)
+    have = sum(1 for r in readings.values() if r is not None)
+    no_data = sum(1 for r in readings.values() if r is None)
+
+    click.echo(f"[news-warm] cached={have} no-data={no_data}")
+    # Surface the most-bearish + most-bullish for human eyeballs
+    scored = sorted(
+        [r for r in readings.values() if r is not None],
+        key=lambda r: r.score,
+    )
+    if scored:
+        click.echo("  bearish:")
+        for r in scored[:5]:
+            click.echo(f"    {r.symbol:6} {r.score:+.2f}  ({r.dominant_label}, "
+                       f"{r.n_articles} articles)")
+        click.echo("  bullish:")
+        for r in reversed(scored[-5:]):
+            click.echo(f"    {r.symbol:6} {r.score:+.2f}  ({r.dominant_label}, "
+                       f"{r.n_articles} articles)")
+
+
 @main.command("verify-stops")
 def verify_stops() -> None:
     """Sweep open positions, verify each has a live stop order. Email
@@ -870,8 +911,57 @@ def rank_command() -> None:
             import pandas as pd
             return pd.DataFrame()
 
-    universe = build_universe(alpaca, bar_loader=bar_loader_short)
-    shortlist = build_stage1_shortlist(universe, bar_loader=bar_loader_short, top_n=100)
+    # Plan 6: Massive-first universe build.
+    # Strategy on a rate-limited free tier (~5 calls/min):
+    #   1) ONE Massive grouped call → OHLC for every US equity (~10k tickers).
+    #   2) Intersect with Alpaca tradable + apply liquidity filter.
+    #   3) Sort by ADV, keep top 200 candidates pre-stage-1.
+    #   4) Stage-1 then uses Alpaca per-ticker on those 200 (small enough
+    #      to finish in <2 minutes inside Alpaca's rate budget).
+    # Falls back to legacy per-ticker if grouped is unavailable.
+    import pandas as _pd
+    from datetime import timedelta as _td
+    try:
+        from trading_bot.massive_client import MassiveClient, MassiveAuthError
+        massive = MassiveClient()
+
+        grouped_df = _pd.DataFrame()
+        for back in range(1, 8):
+            day = datetime.now(timezone.utc).date() - _td(days=back)
+            grouped_df = massive.daily_grouped(day)
+            if not grouped_df.empty:
+                click.echo(f"[rank] Massive grouped: {day} → {len(grouped_df)} tickers")
+                break
+        if grouped_df.empty:
+            raise RuntimeError("Massive grouped returned empty for last 7 days")
+
+        def _grouped() -> "_pd.DataFrame":
+            return grouped_df
+
+        universe = build_universe_from_grouped(
+            alpaca,
+            massive_grouped_loader=_grouped,
+            crypto_bar_loader=bar_loader_short,
+        )
+        click.echo(f"[rank] universe (post-liquidity-filter): {len(universe)} assets")
+
+        # Pre-shortlist by ADV before stage-1 to bound the per-ticker fetches.
+        # 200 names × ~200ms each = ~40s with comfortable rate-limit headroom.
+        universe.sort(key=lambda a: a.avg_dollar_volume, reverse=True)
+        pre_shortlist = universe[:200]
+        click.echo(f"[rank] pre-shortlist (top 200 by ADV): "
+                   f"{sum(1 for a in pre_shortlist if 'crypto' not in a.asset_class.lower())} stocks "
+                   f"+ {sum(1 for a in pre_shortlist if 'crypto' in a.asset_class.lower())} crypto")
+
+        shortlist = build_stage1_shortlist(
+            pre_shortlist, bar_loader=bar_loader_short, top_n=100,
+        )
+    except Exception as e:
+        click.echo(f"[rank] Massive path failed ({e}); falling back to per-ticker")
+        universe = build_universe(alpaca, bar_loader=bar_loader_short)
+        shortlist = build_stage1_shortlist(
+            universe, bar_loader=bar_loader_short, top_n=100,
+        )
 
     lanes = [MomentumLane(), MeanReversionLane(), BreakoutLane()]
     result = run_stage2(shortlist, lanes=lanes, bar_loader=bar_loader_long)
