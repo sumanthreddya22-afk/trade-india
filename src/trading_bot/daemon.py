@@ -95,12 +95,6 @@ def main() -> int:
     runners = _load_runners(log)
     register_jobs(scheduler=sched, cadence=cadence, runners=runners)
 
-    # Initial heartbeat before scheduler runs (so supervisor doesn't see stale boot)
-    runners["heartbeat"]()
-
-    sched.start()
-    log.event("scheduler_started", jobs=[j.id for j in sched.get_jobs()])
-
     stop = {"flag": False}
 
     def _stop_handler(signum, frame):
@@ -109,6 +103,12 @@ def main() -> int:
 
     signal.signal(signal.SIGTERM, _stop_handler)
     signal.signal(signal.SIGINT, _stop_handler)
+
+    # Initial heartbeat before scheduler runs (so supervisor doesn't see stale boot)
+    runners["heartbeat"]()
+
+    sched.start()
+    log.event("scheduler_started", jobs=[j.id for j in sched.get_jobs()])
 
     try:
         while not stop["flag"]:
