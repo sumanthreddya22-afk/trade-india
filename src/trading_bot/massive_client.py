@@ -13,9 +13,10 @@ backtest/massive_bar_loader.py):
 Reads `POLYGON_API_KEY` from settings (or env). Fails fast with a clear
 error if the key is missing — better than a 401 deep in the stack.
 
-Rate-limit handling: per-minute quotas exist on the user's plan; we hit
-them earlier when fetching 16 symbols in parallel. Each method does a
-single bounded retry on 429 with a short pause.
+Rate-limit handling: per-minute quotas exist on the user's plan
+(~5 calls/min). The client enforces MIN_CALL_INTERVAL_S between
+calls on a single instance and applies an exponential BACKOFF_SCHEDULE
+on 429 responses before raising MassiveRateLimitError.
 """
 from __future__ import annotations
 
@@ -33,7 +34,11 @@ from trading_bot.config import Settings
 
 POLYGON_BASE = "https://api.polygon.io"
 HTTP_TIMEOUT = 30
-RATELIMIT_PAUSE_SECONDS = 65  # one full minute + a few seconds buffer
+# Polygon free/starter plan is ~5 calls/min. 12s is the floor; 13 buffers.
+MIN_CALL_INTERVAL_S = 13.0
+# On 429: sleep for the next value, retry, then advance. Last entry is
+# ~5 minutes; total worst-case wait across the schedule is ~9 minutes.
+BACKOFF_SCHEDULE = (10, 30, 60, 120, 300)
 
 
 class MassiveAuthError(RuntimeError):
@@ -98,23 +103,44 @@ class MassiveClient:
     # ---- HTTP plumbing ----
 
     def _get(self, path: str, *, params: dict[str, Any] | None = None) -> requests.Response:
+        # Per-instance throttle: enforce MIN_CALL_INTERVAL_S between calls.
+        now = time.monotonic()
+        last = getattr(self, "_last_call_at", None)
+        if last is not None:
+            elapsed = now - last
+            if elapsed < MIN_CALL_INTERVAL_S:
+                time.sleep(MIN_CALL_INTERVAL_S - elapsed)
+
         url = f"{POLYGON_BASE}{path}"
         full_params = dict(params or {})
         full_params["apiKey"] = self._api_key
-        for attempt in range(2):
+
+        for backoff in BACKOFF_SCHEDULE:
             r = requests.get(url, params=full_params, timeout=HTTP_TIMEOUT)
+            self._last_call_at = time.monotonic()
             if r.status_code == 429:
-                if attempt == 0:
-                    time.sleep(RATELIMIT_PAUSE_SECONDS)
-                    continue
-                raise MassiveRateLimitError(f"rate-limited twice on {path}")
+                time.sleep(backoff)
+                continue
             if r.status_code in (401, 403):
                 raise MassiveAuthError(
                     f"Massive auth/entitlement error on {path}: {r.status_code} {r.text}"
                 )
             r.raise_for_status()
             return r
-        raise RuntimeError("unreachable")
+
+        # One last attempt after exhausting backoff
+        r = requests.get(url, params=full_params, timeout=HTTP_TIMEOUT)
+        self._last_call_at = time.monotonic()
+        if r.status_code == 429:
+            raise MassiveRateLimitError(
+                f"rate-limited {len(BACKOFF_SCHEDULE) + 1}x on {path}; giving up"
+            )
+        if r.status_code in (401, 403):
+            raise MassiveAuthError(
+                f"Massive auth/entitlement error on {path}: {r.status_code} {r.text}"
+            )
+        r.raise_for_status()
+        return r
 
     # ---- daily grouped aggregates ----
 
