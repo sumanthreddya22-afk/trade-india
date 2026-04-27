@@ -168,3 +168,78 @@ def test_render_universe_snapshot_includes_counts_and_top_sectors():
     assert "Total liquid assets: 2" in md
     assert "NVDA" in md
     assert "semiconductors" in md
+
+
+# --- Plan-6 follow-up: seed-list fallback ---
+
+
+from dataclasses import dataclass
+
+
+@dataclass
+class _FakeAlpacaAsset:
+    symbol: str
+    name: str
+    asset_class: str
+    exchange: str
+    fractionable: bool
+
+
+class _FakeAlpacaClient:
+    def __init__(self, equities, crypto):
+        self._eq = equities
+        self._cr = crypto
+
+    def get_active_assets(self, kind):
+        if kind == "us_equity":
+            return self._eq
+        if kind == "crypto":
+            return self._cr
+        return []
+
+
+def test_build_universe_from_seed_list_intersects_with_alpaca_tradable():
+    from trading_bot.universe import build_universe_from_seed_list
+
+    alpaca_eq = [
+        _FakeAlpacaAsset("AAPL", "Apple", "us_equity", "NASDAQ", True),
+        _FakeAlpacaAsset("MSFT", "Microsoft", "us_equity", "NASDAQ", True),
+        _FakeAlpacaAsset("OBSCURE_PENNY", "Random Penny", "us_equity", "NYSE", True),
+    ]
+    alpaca_cr = [
+        _FakeAlpacaAsset("BTC/USD", "Bitcoin", "crypto", "FTX", True),
+    ]
+    client = _FakeAlpacaClient(alpaca_eq, alpaca_cr)
+
+    universe = build_universe_from_seed_list(client)
+
+    symbols = {a.symbol for a in universe}
+    assert "AAPL" in symbols
+    assert "MSFT" in symbols
+    assert "OBSCURE_PENNY" not in symbols
+    assert "BTC/USD" in symbols
+
+
+def test_build_universe_from_seed_list_returns_liquid_assets_with_zero_adv():
+    from trading_bot.universe import (
+        CORE_LIQUID_TICKERS,
+        build_universe_from_seed_list,
+    )
+
+    sample = list(CORE_LIQUID_TICKERS)[:1]
+    alpaca_eq = [_FakeAlpacaAsset(sample[0], "X", "us_equity", "NASDAQ", True)]
+    client = _FakeAlpacaClient(alpaca_eq, [])
+    universe = build_universe_from_seed_list(client)
+    assert len(universe) == 1
+    assert universe[0].avg_dollar_volume == Decimal("0")
+    assert universe[0].last_price == Decimal("0")
+
+
+def test_core_liquid_tickers_is_substantial_and_unique():
+    from trading_bot.universe import CORE_LIQUID_TICKERS
+
+    assert len(CORE_LIQUID_TICKERS) >= 150
+    assert len(set(CORE_LIQUID_TICKERS)) == len(CORE_LIQUID_TICKERS)
+    for t in CORE_LIQUID_TICKERS:
+        assert t.isupper()
+        assert "/" not in t

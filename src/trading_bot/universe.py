@@ -92,6 +92,106 @@ SECTOR_KEYWORDS: dict[str, tuple[str, ...]] = {
 }
 
 
+# --- Plan-6 follow-up: seed-list fallback for cold-start / Massive outage ---
+#
+# Hardcoded list of well-known liquid US-equity tickers. Used by
+# build_universe_from_seed_list when the Massive grouped cache is empty
+# and we still need *some* universe to rank against. Curated to cover:
+#   - SPY/QQQ mega-caps, FAANG, big tech
+#   - Semiconductors (AMD/NVDA/AVGO/...)
+#   - Financials (JPM/BAC/WFC/...)
+#   - Energy majors (XOM/CVX/COP/...)
+#   - Healthcare/biotech leaders
+#   - Defensives (KO/PG/JNJ/WMT/...)
+#   - High-volume ETFs (SPY/QQQ/IWM/DIA/XLK/XLF/...)
+# Tickers are intersected with Alpaca's current tradable list, so any
+# delistings drop silently. Review quarterly.
+_CORE_LIQUID_TICKERS_RAW: tuple[str, ...] = (
+    # ETFs
+    "SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "VEA", "VWO", "EFA", "EEM",
+    "XLK", "XLF", "XLE", "XLV", "XLI", "XLP", "XLY", "XLU", "XLB", "XLRE",
+    "XLC", "GLD", "SLV", "TLT", "HYG", "LQD", "GDX", "USO", "UNG", "ARKK",
+    "SOXX", "SMH", "IBB", "XBI", "KRE", "KWEB", "FXI", "EWZ", "EWJ", "INDA",
+    # Mega-cap tech
+    "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "NVDA", "TSLA", "NFLX", "ADBE",
+    "CRM", "ORCL", "CSCO", "INTC", "AMD", "AVGO", "QCOM", "TXN", "MU", "AMAT",
+    "ASML", "TSM", "LRCX", "KLAC", "MRVL", "NOW", "INTU", "PYPL", "SHOP", "SQ",
+    "UBER", "ABNB", "SNOW", "PLTR", "CRWD", "ZS", "DDOG", "NET", "MDB", "TEAM",
+    # Financials
+    "JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "SCHW", "AXP", "USB",
+    "PNC", "TFC", "COF", "BK", "STT", "V", "MA", "FIS", "FISV",
+    "BX", "KKR", "APO",
+    # Energy
+    "XOM", "CVX", "COP", "EOG", "OXY", "PXD", "PSX", "VLO", "MPC", "SLB",
+    "HAL", "BKR", "DVN", "FANG", "HES", "MRO", "APA",
+    # Healthcare / biotech
+    "JNJ", "UNH", "PFE", "MRK", "ABBV", "LLY", "BMY", "AMGN", "GILD", "BIIB",
+    "REGN", "VRTX", "ISRG", "TMO", "DHR", "ABT", "MDT", "SYK", "ZTS", "CVS",
+    "CI", "HUM", "ELV", "MRNA", "BNTX",
+    # Industrials / defense
+    "BA", "CAT", "DE", "MMM", "GE", "LMT", "RTX", "NOC", "GD", "HON",
+    "UPS", "FDX", "UNP", "CSX", "NSC", "DAL", "UAL", "LUV", "AAL",
+    # Consumer
+    "WMT", "COST", "TGT", "HD", "LOW", "NKE", "MCD", "SBUX", "DIS", "CMCSA",
+    "T", "VZ", "TMUS", "KO", "PEP", "PG", "MO", "PM", "CL",
+    "KMB", "GIS", "K", "MDLZ", "HSY", "EL", "ULTA",
+    # Materials
+    "LIN", "APD", "SHW", "FCX", "NEM", "DOW", "DD", "NUE", "STLD", "X",
+    "AA", "CLF",
+    # Real estate
+    "AMT", "PLD", "CCI", "EQIX", "PSA", "WELL", "O", "SPG",
+    # Utilities
+    "NEE", "DUK", "SO", "AEP", "EXC", "XEL", "SRE", "D", "PEG",
+    # Misc large-cap / high-volume
+    "WBA", "F", "GM", "RIVN", "LCID", "NIO", "BABA", "JD", "PDD",
+    "ROKU", "SPOT", "PINS", "SNAP", "TWLO", "ZM", "DOCU", "OKTA", "FSLY",
+    "MARA", "RIOT", "COIN", "HOOD", "SOFI", "AFRM",
+)
+CORE_LIQUID_TICKERS: tuple[str, ...] = tuple(sorted(set(_CORE_LIQUID_TICKERS_RAW)))
+
+
+def build_universe_from_seed_list(alpaca: "AlpacaClient") -> list[LiquidAsset]:
+    """Cold-start fallback when the grouped cache has no fresh data.
+
+    Pulls Alpaca's tradable equity + crypto list, intersects equities
+    with `CORE_LIQUID_TICKERS`, and returns LiquidAssets shaped for
+    downstream stage-1 ranking. last_price/avg_dollar_volume are 0 —
+    the screener recomputes both from per-symbol bars before ranking.
+
+    Crypto is included in full (no seed-list filter): the set is small
+    enough that liquidity filtering happens lane-side per symbol.
+    """
+    raw_equities = alpaca.get_active_assets("us_equity")
+    raw_crypto = alpaca.get_active_assets("crypto")
+
+    seed_set = set(CORE_LIQUID_TICKERS)
+    out: list[LiquidAsset] = []
+
+    for asset in raw_equities:
+        if asset.symbol not in seed_set:
+            continue
+        out.append(LiquidAsset(
+            symbol=asset.symbol, name=asset.name,
+            asset_class=asset.asset_class, exchange=asset.exchange,
+            last_price=Decimal("0"),
+            avg_dollar_volume=Decimal("0"),
+            fractionable=asset.fractionable,
+            sector_tags=tag_sectors(symbol=asset.symbol, name=asset.name),
+        ))
+
+    for asset in raw_crypto:
+        out.append(LiquidAsset(
+            symbol=asset.symbol, name=asset.name,
+            asset_class=asset.asset_class, exchange=asset.exchange,
+            last_price=Decimal("0"),
+            avg_dollar_volume=Decimal("0"),
+            fractionable=asset.fractionable,
+            sector_tags=tag_sectors(symbol=asset.symbol, name=asset.name),
+        ))
+
+    return out
+
+
 def tag_sectors(*, symbol: str, name: str) -> tuple[str, ...]:
     """Return sorted unique tags inferred from symbol+name keywords.
 
