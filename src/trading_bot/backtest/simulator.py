@@ -453,6 +453,8 @@ class Backtester:
 
     def _strategy_for(self, regime: str, allowed: tuple[str, ...]):
         chosen = strategy_for_regime(regime)
+        if chosen is None:
+            return None
         if isinstance(chosen, MomentumStrategy) and "momentum" in allowed:
             return chosen
         if isinstance(chosen, MeanReversionStrategy) and "mean_reversion" in allowed:

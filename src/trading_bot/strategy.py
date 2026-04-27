@@ -144,14 +144,21 @@ class MeanReversionStrategy:
 
 
 def strategy_for_regime(regime: str):
-    """Strategy router: pick the right strategy for the current market regime."""
+    """Strategy router: pick the right strategy for the current market regime.
+
+    Backtest-driven changes (Plan 5b verdict, run 9bcc54801ec3):
+    - MomentumStrategy in trending_up: PF 1.27 over 220 trades — keep.
+    - MeanReversionStrategy in sideways: PF 0.66 over 49 trades — losing.
+      Disabled until it's reworked. Sideways → no entries, just hold cash
+      (returning None signals "skip this regime" in the orchestrator and
+      backtester).
+    - MeanReversionStrategy in trending_down/risk_off: too few backtest
+      trades to evaluate (1 in risk_off). Conservatively disabled until
+      data accrues.
+
+    The router returning None means "no entries this regime" — existing
+    positions are still managed (exits run, stops trigger, etc.).
+    """
     if regime == "trending_up":
         return MomentumStrategy()
-    if regime == "trending_down":
-        # Don't trade aggressively in downtrends. Mean reversion only on deep oversold.
-        return MeanReversionStrategy(rsi_lower=20.0, rsi_upper=30.0)
-    if regime == "sideways":
-        return MeanReversionStrategy()
-    # risk_off
-    return MeanReversionStrategy(rsi_lower=20.0, rsi_upper=28.0,
-                                  per_trade_risk_pct=Decimal("0.25"))
+    return None

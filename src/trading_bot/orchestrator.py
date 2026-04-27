@@ -105,6 +105,17 @@ class TradeOrchestrator:
         state = self._build_state()
         decisions: list[Decision] = []
 
+        if self._strategy is None:
+            # Regime has no enabled strategy (e.g. sideways/risk_off after
+            # the Plan-5b backtest disabled mean_reversion). Skip entries;
+            # existing positions still managed by their bracket orders.
+            for entry in watchlist:
+                decisions.append(Decision(
+                    symbol=entry.symbol, action="hold",
+                    reason=f"no strategy enabled for regime {self._regime}",
+                ))
+            return ScanResult(decisions=decisions, timestamp=datetime.now(timezone.utc))
+
         for entry in watchlist:
             symbol = entry.symbol
             if has_open_position(symbol, positions):

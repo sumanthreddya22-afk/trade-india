@@ -106,8 +106,12 @@ def test_mean_reversion_holds_when_still_dropping():
 
 
 def test_strategy_router_picks_correct_strategy():
+    """Plan 5b verdict (run 9bcc54801ec3) found mean_reversion losing in
+    sideways (PF 0.66 over 49 trades) and inconclusive elsewhere. Router
+    now only enables MomentumStrategy in trending_up; other regimes
+    return None (no entries; existing positions still managed)."""
     from trading_bot.strategy import MomentumStrategy
     assert isinstance(strategy_for_regime("trending_up"), MomentumStrategy)
-    assert isinstance(strategy_for_regime("trending_down"), MeanReversionStrategy)
-    assert isinstance(strategy_for_regime("sideways"), MeanReversionStrategy)
-    assert isinstance(strategy_for_regime("risk_off"), MeanReversionStrategy)
+    assert strategy_for_regime("trending_down") is None
+    assert strategy_for_regime("sideways") is None
+    assert strategy_for_regime("risk_off") is None
