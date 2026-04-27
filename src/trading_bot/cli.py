@@ -886,6 +886,114 @@ def dashboard(host: str, port: int, reload: bool) -> None:
     run(host=host, port=port, reload=reload)
 
 
+@main.command("massive-refresh")
+@click.option("--days", default=5, show_default=True, type=int,
+              help="How many trading days back to ensure are cached.")
+@click.option("--news/--no-news", default=False, show_default=True,
+              help="Also refresh news sentiment cache for the active stock universe.")
+def massive_refresh(days: int, news: bool) -> None:
+    """Refresh the Massive grouped cache for the last N trading days.
+
+    Idempotent: skips dates already cached. Walks back day-by-day from
+    today, attempting up to `days + 7` calendar days back to find the
+    most recent N actual trading days. Exits non-zero only if the cache
+    ends up with zero entries within the last 7 days (i.e. a hard
+    failure, not just a holiday).
+    """
+    from datetime import timedelta as _td
+
+    from trading_bot.massive_cache import MassiveGroupedCache
+    from trading_bot.massive_client import (
+        MassiveAuthError,
+        MassiveClient,
+        MassiveRateLimitError,
+    )
+
+    cache = MassiveGroupedCache()
+    try:
+        massive = MassiveClient()
+    except MassiveAuthError as e:
+        click.echo(f"[massive-refresh] auth error: {e}", err=True)
+        raise SystemExit(1)
+
+    today = datetime.now(timezone.utc).date()
+    found_trading_days = 0
+    calls_made = 0
+    cached_dates: list = []
+    skipped_dates: list = []
+    failed_dates: list = []
+
+    cur = today
+    tries = 0
+    while found_trading_days < days and tries < days + 7:
+        cur -= _td(days=1)
+        tries += 1
+
+        if cache.has(cur):
+            skipped_dates.append(cur)
+            found_trading_days += 1
+            continue
+
+        try:
+            df = massive.daily_grouped(cur)
+            calls_made += 1
+        except MassiveRateLimitError as e:
+            click.echo(f"[massive-refresh] rate-limited on {cur}: {e}", err=True)
+            failed_dates.append(cur)
+            continue
+        except MassiveAuthError as e:
+            # Polygon 403s "Attempted to request today's data before end of
+            # day" if we ask for the current ET trading session before close.
+            # Skip and try older — not a fatal error.
+            msg = str(e).lower()
+            if "today" in msg or "before end of day" in msg:
+                click.echo(f"[massive-refresh] {cur}: not yet available (pre-close), skipping")
+                continue
+            click.echo(f"[massive-refresh] auth error on {cur}: {e}", err=True)
+            raise SystemExit(1)
+
+        if df.empty:
+            continue
+
+        n = cache.store(cur, df)
+        cached_dates.append((cur, n))
+        found_trading_days += 1
+
+    cache.evict_older_than(days=30)
+
+    click.echo(
+        f"[massive-refresh] calls={calls_made} "
+        f"cached_new={len(cached_dates)} skipped_existing={len(skipped_dates)} "
+        f"failed={len(failed_dates)}"
+    )
+    for d, n in cached_dates:
+        click.echo(f"  + {d}: {n} tickers")
+    for d in skipped_dates:
+        click.echo(f"  = {d}: already cached")
+    for d in failed_dates:
+        click.echo(f"  ! {d}: failed")
+
+    if news:
+        from trading_bot.news_sentiment import warm_for_symbols
+
+        universe = _load_active_universe()
+        symbols = [e.symbol for e in universe if e.asset_class != "crypto"]
+        if not symbols:
+            click.echo("[massive-refresh:news] empty stock universe — skipping")
+        else:
+            click.echo(f"[massive-refresh:news] warming {len(symbols)} symbols...")
+            readings = warm_for_symbols(symbols)
+            have = sum(1 for r in readings.values() if r is not None)
+            click.echo(f"[massive-refresh:news] cached={have} no-data={len(readings) - have}")
+
+    fresh = cache.latest(max_age_days=7)
+    if fresh is None:
+        click.echo("[massive-refresh] WARNING: cache has no entries within 7 days", err=True)
+        raise SystemExit(2)
+    on_date, df = fresh
+    click.echo(f"[massive-refresh] freshest cached day: {on_date} ({len(df)} tickers)")
+
+
 @main.command("rank")
 def rank_command() -> None:
     """Run stage-1 + stage-2 screener; write strategy/opportunities.md."""
