@@ -233,13 +233,11 @@ def build_universe_from_grouped(
     """
     grouped = massive_grouped_loader()  # DataFrame indexed by ticker
     if grouped.empty:
-        # Fall back to legacy path so we never silently produce an empty universe
-        # on weekends or API hiccups.
-        return _legacy_build_universe(
-            alpaca,
-            bar_loader=crypto_bar_loader,
-            min_price=min_price, min_adv=min_adv,
-        )
+        # Empty grouped is only valid on holidays/weekends. Caller is
+        # responsible for handling [] — we don't fall back to a 10k-symbol
+        # legacy fanout (that path produced 20+ min stalls). Returning an
+        # empty list signals "no usable equities from grouped".
+        return []
 
     raw_equities = alpaca.get_active_assets("us_equity")
     raw_crypto = alpaca.get_active_assets("crypto")
@@ -287,45 +285,6 @@ def build_universe_from_grouped(
     return apply_liquidity_filter(candidates, min_price=min_price, min_adv=min_adv)
 
 
-def _legacy_build_universe(
-    alpaca: AlpacaClient,
-    *,
-    bar_loader: Callable[[str], pd.DataFrame],
-    min_price: Decimal = DEFAULT_MIN_PRICE,
-    min_adv: Decimal = DEFAULT_MIN_ADV,
-) -> list[LiquidAsset]:
-    """Pre-Plan-6 universe build via per-ticker bar fetches. Kept as a
-    fallback for weekends/API errors when grouped aggregates aren't
-    available."""
-    raw_equities = alpaca.get_active_assets("us_equity")
-    raw_crypto = alpaca.get_active_assets("crypto")
-
-    candidates: list[LiquidAsset] = []
-    for asset in list(raw_equities) + list(raw_crypto):
-        bars = bar_loader(asset.symbol)
-        if bars.empty:
-            continue
-        last_price = Decimal(str(float(bars["close"].iloc[-1])))
-        adv = compute_adv(bars)
-        candidates.append(
-            LiquidAsset(
-                symbol=asset.symbol,
-                name=asset.name,
-                asset_class=asset.asset_class,
-                exchange=asset.exchange,
-                last_price=last_price,
-                avg_dollar_volume=adv,
-                fractionable=asset.fractionable,
-                sector_tags=tag_sectors(symbol=asset.symbol, name=asset.name),
-            )
-        )
-    return apply_liquidity_filter(candidates, min_price=min_price, min_adv=min_adv)
-
-
-# Backward-compatible alias: existing callers + tests reference `build_universe`.
-# Default behavior is the legacy per-ticker path; callers that want the Plan-6
-# grouped path call `build_universe_from_grouped` explicitly.
-build_universe = _legacy_build_universe
 
 
 from collections import Counter

@@ -103,48 +103,10 @@ def test_tag_sectors_returns_empty_on_no_match():
     assert tags == ()
 
 
-from unittest.mock import MagicMock
-from decimal import Decimal
-import pandas as pd
-
-from trading_bot.alpaca_client import TradableAsset
-from trading_bot.universe import build_universe
-
-
-def test_build_universe_filters_and_tags():
-    alpaca = MagicMock()
-    alpaca.get_active_assets.side_effect = [
-        [
-            TradableAsset(symbol="NVDA", name="NVIDIA semiconductor",
-                          exchange="NASDAQ", asset_class="us_equity",
-                          tradable=True, fractionable=True),
-            TradableAsset(symbol="ILLIQ", name="Illiquid Inc",
-                          exchange="NYSE", asset_class="us_equity",
-                          tradable=True, fractionable=False),
-        ],
-        [
-            TradableAsset(symbol="BTC/USD", name="Bitcoin USD",
-                          exchange="CRYPTO", asset_class="crypto",
-                          tradable=True, fractionable=True),
-        ],
-    ]
-
-    def fake_bar_loader(symbol: str) -> pd.DataFrame:
-        if symbol == "NVDA":
-            return pd.DataFrame({"close": [450]*20, "volume": [30_000_000]*20})
-        if symbol == "ILLIQ":
-            return pd.DataFrame({"close": [10]*20, "volume": [10_000]*20})
-        if symbol == "BTC/USD":
-            return pd.DataFrame({"close": [70000]*20, "volume": [1_000]*20})
-        return pd.DataFrame()
-
-    universe = build_universe(alpaca, bar_loader=fake_bar_loader)
-    symbols = {a.symbol for a in universe}
-    assert "NVDA" in symbols
-    assert "BTC/USD" in symbols
-    assert "ILLIQ" not in symbols  # filtered out by ADV
-    nvda = next(a for a in universe if a.symbol == "NVDA")
-    assert "semiconductors" in nvda.sector_tags
+# test_build_universe_filters_and_tags was removed in the Plan-6 rate-limit
+# hardening: _legacy_build_universe (the per-ticker fanout) was deleted
+# because it was the source of 20+ min bot rank stalls. The replacement
+# (build_universe_from_seed_list) is covered by tests below.
 
 
 from datetime import datetime, timezone

@@ -41,8 +41,8 @@ from trading_bot.trade_journal import TradeJournal
 from trading_bot.screener import build_stage1_shortlist, run_stage2, write_opportunities_snapshot
 from trading_bot.strategy_lanes import BreakoutLane, MeanReversionLane, MomentumLane
 from trading_bot.universe import (
-    build_universe,
     build_universe_from_grouped,
+    build_universe_from_seed_list,
     write_universe_snapshot,
 )
 
@@ -602,25 +602,21 @@ def eod_report() -> None:
 
 @main.command("screen-universe")
 def screen_universe() -> None:
-    """Pull Alpaca tradable universe, apply liquidity screen, write snapshot."""
+    """Snapshot the seed-list universe (Alpaca tradable ∩ CORE_LIQUID_TICKERS).
+
+    Plan-6 made this a thin wrapper: the actual screening lives in
+    `bot rank` (cache-fed grouped path) and `bot massive-refresh`
+    (the writer). screen-universe is now mostly a debugging aid.
+    """
     settings = Settings()
-    market = MarketDataClient(settings)
-
-    def bar_loader(symbol: str):
-        try:
-            return market.get_daily_bars(symbol, lookback_days=20)
-        except Exception:
-            import pandas as pd
-            return pd.DataFrame()
-
     alpaca = AlpacaClient(settings)
-    assets = build_universe(alpaca, bar_loader=bar_loader)
+    assets = build_universe_from_seed_list(alpaca)
     write_universe_snapshot(
         assets,
         Path("strategy/latest_intelligence.md"),
         generated_at=datetime.now(timezone.utc),
     )
-    click.echo(f"Wrote universe snapshot: {len(assets)} liquid assets")
+    click.echo(f"Wrote universe snapshot: {len(assets)} liquid assets (seed-list path)")
 
 
 @main.command("backtest")
@@ -957,8 +953,8 @@ def rank_command() -> None:
             pre_shortlist, bar_loader=bar_loader_short, top_n=100,
         )
     except Exception as e:
-        click.echo(f"[rank] Massive path failed ({e}); falling back to per-ticker")
-        universe = build_universe(alpaca, bar_loader=bar_loader_short)
+        click.echo(f"[rank] Massive path failed ({e}); falling back to seed list")
+        universe = build_universe_from_seed_list(alpaca)
         shortlist = build_stage1_shortlist(
             universe, bar_loader=bar_loader_short, top_n=100,
         )

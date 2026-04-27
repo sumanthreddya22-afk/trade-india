@@ -173,7 +173,7 @@ def test_screen_universe_writes_snapshot(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "strategy").mkdir()
 
-    with patch("trading_bot.cli.build_universe") as mock_build, \
+    with patch("trading_bot.cli.build_universe_from_seed_list") as mock_build, \
          patch("trading_bot.cli.AlpacaClient"), \
          patch("trading_bot.cli.MarketDataClient"), \
          patch("trading_bot.cli.Settings"), \
@@ -248,7 +248,7 @@ def test_rank_writes_opportunities(tmp_path, monkeypatch):
     from decimal import Decimal
     from trading_bot.universe import LiquidAsset
 
-    with patch("trading_bot.cli.build_universe") as mock_build, \
+    with patch("trading_bot.cli.build_universe_from_seed_list") as mock_build, \
          patch("trading_bot.cli.AlpacaClient"), \
          patch("trading_bot.cli.MarketDataClient") as mock_md, \
          patch("trading_bot.cli.Settings"), \
