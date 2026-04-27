@@ -102,6 +102,11 @@ class SentimentCache:
         )
 
 
+# Cap the per-run symbol count so an inflated active universe can't blow
+# through the Massive rate budget. 50 × 13s/call = ~11 min worst case.
+MAX_SYMBOLS_PER_WARM = 50
+
+
 def warm_for_symbols(
     symbols: list[str],
     *,
@@ -109,8 +114,14 @@ def warm_for_symbols(
     cache: SentimentCache | None = None,
     massive: MassiveClient | None = None,
 ) -> dict[str, SentimentReading | None]:
-    """Pull fresh sentiment for each symbol and cache it. Returns
-    {symbol -> reading or None on missing data}."""
+    """Pull fresh sentiment for each symbol and cache it.
+
+    Skips symbols that already have a row in the cache from today
+    (idempotent: re-running within the same trading day is a no-op
+    on the Massive side). Caps input at MAX_SYMBOLS_PER_WARM.
+
+    Returns {symbol -> reading or None on missing data}.
+    """
     cache = cache or SentimentCache()
     try:
         massive = massive or MassiveClient()
@@ -119,7 +130,13 @@ def warm_for_symbols(
 
     out: dict[str, SentimentReading | None] = {}
     today = datetime.now(timezone.utc).date()
-    for sym in symbols:
+
+    capped = symbols[:MAX_SYMBOLS_PER_WARM]
+    for sym in capped:
+        existing = cache.latest(sym, max_age_days=1)
+        if existing is not None and existing.snapshot_date == today:
+            out[sym] = existing
+            continue
         try:
             score, n, label = massive.aggregate_sentiment(sym, lookback_days=lookback_days)
         except Exception:
@@ -134,6 +151,7 @@ def warm_for_symbols(
         )
         cache.write(reading)
         out[sym] = reading
+
     return out
 
 

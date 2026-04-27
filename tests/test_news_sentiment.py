@@ -53,3 +53,56 @@ def test_passes_filter_blocks_below_floor():
 def test_score_for_returns_none_on_missing(tmp_path):
     c = SentimentCache(tmp_path / "ns.db")
     assert score_for("XYZ", cache=c) is None
+
+
+def test_warm_skips_symbols_already_cached_today(tmp_path):
+    """If a symbol has a fresh row from today, warm should not call Massive."""
+    from datetime import datetime, timezone
+
+    from trading_bot.news_sentiment import (
+        SentimentCache,
+        SentimentReading,
+        warm_for_symbols,
+    )
+
+    cache = SentimentCache(tmp_path / "ns.db")
+    today = datetime.now(timezone.utc).date()
+    cache.write(SentimentReading(
+        symbol="AAPL", snapshot_date=today,
+        score=0.4, n_articles=3, dominant_label="positive",
+    ))
+
+    class _FakeMassive:
+        def __init__(self):
+            self.calls = []
+        def aggregate_sentiment(self, sym, *, lookback_days):
+            self.calls.append(sym)
+            return 0.0, 1, "neutral"
+
+    fake = _FakeMassive()
+    out = warm_for_symbols(["AAPL", "MSFT"], cache=cache, massive=fake)
+
+    assert "AAPL" not in fake.calls
+    assert "MSFT" in fake.calls
+    assert out["AAPL"] is not None
+    assert out["AAPL"].score == 0.4
+    assert out["MSFT"] is not None
+
+
+def test_warm_caps_at_50_symbols(tmp_path):
+    """Defensive: the cron task can pass an oversized list; warm should cap."""
+    from trading_bot.news_sentiment import warm_for_symbols, SentimentCache
+
+    cache = SentimentCache(tmp_path / "ns.db")
+
+    class _FakeMassive:
+        def __init__(self):
+            self.calls = []
+        def aggregate_sentiment(self, sym, *, lookback_days):
+            self.calls.append(sym)
+            return 0.0, 1, "neutral"
+
+    fake = _FakeMassive()
+    symbols = [f"S{i:03d}" for i in range(80)]
+    warm_for_symbols(symbols, cache=cache, massive=fake)
+    assert len(fake.calls) <= 50
