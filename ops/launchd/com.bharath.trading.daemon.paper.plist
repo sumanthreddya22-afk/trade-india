@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bharath.trading.daemon.paper</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/bharathkandala/Trading/.venv/bin/python</string>
+    <string>-m</string>
+    <string>trading_bot.daemon</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/bharathkandala/Trading</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TRADING_BOT_CONFIG</key>
+    <string>/Users/bharathkandala/Trading/data/paper_active.json</string>
+    <key>TRADING_BOT_HEARTBEAT</key>
+    <string>/Users/bharathkandala/Trading/data/heartbeat.json</string>
+    <key>TRADING_BOT_PAUSE</key>
+    <string>/Users/bharathkandala/Trading/data/pause.flag</string>
+    <key>TRADING_BOT_RUNS</key>
+    <string>/Users/bharathkandala/Trading/runs</string>
+    <key>TRADING_BOT_STATE_DB</key>
+    <string>/Users/bharathkandala/Trading/data/state.db</string>
+    <key>PYTHONPATH</key>
+    <string>/Users/bharathkandala/Trading/src</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/bharathkandala/Trading/runs/_launchd/daemon.stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/bharathkandala/Trading/runs/_launchd/daemon.stderr.log</string>
+</dict>
+</plist>
