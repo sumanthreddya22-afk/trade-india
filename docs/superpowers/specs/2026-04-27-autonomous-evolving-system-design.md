@@ -157,7 +157,7 @@ class Role(Protocol):
 **Mission:** Refresh per-symbol news+sentiment for the active universe.
 **Inputs:** Polygon news API (`/v2/reference/news`).
 **Outputs:** `news_sentiment.db` (3-day TTL).
-**Cadence:** 5 min before each Stock Scanner run.
+**Cadence:** Two scheduled warms — 08:55 ET pre-open and 12:00 ET midday. Plus on-demand: if Stock Scanner finds a candidate whose cache entry is older than 4h, that single symbol's sentiment is fetched inline.
 **KPI:** % of names blocked by sentiment_floor that underperformed 5 days later (target ≥ 60%).
 **Failure behavior:** If API unreachable, Stock Scanner uses last cached value or skips sentiment gate (logged).
 
@@ -191,7 +191,7 @@ class Role(Protocol):
 **Mission:** Poll Truth Social RSS, flag HIGH-severity posts. Alert-only, never trades.
 **Inputs:** Truth Social RSS feed.
 **Outputs:** Alerts in `runs/<date>/vip.log`.
-**Cadence:** Every 30 min during US market hours.
+**Cadence:** Every 30 min during US market hours. Suspended outside market hours (alerts during closed market drive no trade action).
 **KPI:** False-alarm rate; coverage of regulatory/policy posts.
 
 #### Role 7 — Tone Analyst (lab)
@@ -215,7 +215,7 @@ class Role(Protocol):
 **Mission:** Same as Stock Scanner but for crypto pairs. Sentiment floor not applied.
 **Inputs:** Alpaca crypto bars, regime.
 **Outputs:** `decisions` rows.
-**Cadence:** Every 15 min, 24/7.
+**Cadence:** Every 30 min, 24/7.
 **KPI:** Same.
 
 #### Role 10 — Strategy Coach (daemon)
@@ -253,17 +253,17 @@ class Role(Protocol):
 **Mission:** Post-order lifecycle: verify fill, attach stops, manage trailing stops (when configured), cancel stale unfilled limits.
 **Inputs:** Open orders, positions.
 **Outputs:** Updated orders, attached stops.
-**Cadence:** Every 30 min during market hours; immediately after Trade Executor places an order.
+**Cadence:** Immediately after Trade Executor places an order (the primary check); plus a safety-net sweep every 60 min during market hours.
 **Policy:** Cancel any unfilled limit order older than 60 min. Verify every position has stop attached; re-attach if missing.
 **KPI:** Stop-attached rate (target 100%); stale-order cancellation rate.
 
 ### 7.5 Tier 4 — Position care (the stewardship team)
 
 #### Role 14 — Portfolio Monitor (daemon)
-**Mission:** Snapshot diff every 30 min during market hours. Alert on stop-hits, big intraday moves, unusual fills.
+**Mission:** Snapshot diff once per hour during market hours. Alert on stop-hits, big intraday moves, unusual fills.
 **Inputs:** Alpaca positions/orders.
 **Outputs:** Event records in `state.db`; per-event alerts routed via Reporter.
-**Cadence:** Every 30 min during market hours.
+**Cadence:** Every 60 min during market hours. (Stop-hit emails come from Trade Executor's fill detection, not from this role — Portfolio Monitor is observability only.)
 **KPI:** Alert lead time on stop-hits.
 
 #### Role 15 — Hold-SPY Coordinator (daemon)
@@ -346,21 +346,21 @@ class Role(Protocol):
 **Mission:** Reconcile Alpaca account vs trade journal; detect drawdown breach; write `pause.flag` if breached.
 **Inputs:** Alpaca account API (independent fetch), `trade_journal.db`, `equity_high_water_mark`.
 **Outputs:** `pause.flag` if drawdown > 20% from high-water mark; alerts on reconciliation drift > 1%.
-**Cadence:** Every 60 s.
+**Cadence:** Every 5 min during US market hours; every 30 min outside market hours. (A 20% drawdown happens via stop-outs over time or an overnight gap; both are detectable at 5min cadence. Saves Alpaca API rate budget for actual trading.)
 **KPI:** Drift caught; false-pause rate.
 
 #### Role 24 — Schedule Auditor (supervisor)
 **Mission:** Verify every routine ran today on its expected cadence. Alert on misses.
 **Inputs:** `role_runs` table in `state.db`.
 **Outputs:** Daily roll-up at 17:00 ET; immediate alerts on missed scan windows.
-**Cadence:** Every 5 min during market hours; daily roll-up at 17:00 ET.
+**Cadence:** Every 15 min during market hours; daily roll-up at 17:00 ET.
 **KPI:** Missed-run detection rate.
 
 #### Role 25 — Resource Guardian (supervisor)
 **Mission:** Track Anthropic + Polygon API budgets, disk space, DB size, network connectivity. Alert + halt cost-affecting routines on breach.
 **Inputs:** API call counters, `df`, `ping`, DB file sizes.
 **Outputs:** Budget halts (e.g. halt Strategy Architect at 100% Anthropic budget); alerts.
-**Cadence:** Every 5 min.
+**Cadence:** Every 30 min, 24/7. (Anthropic spend is a once-weekly burst; disk space changes slowly; sustained network outages are caught by per-call retries within minutes — 30 min cadence is sufficient for this role's checks.)
 **Locked budgets:**
 - Anthropic monthly cap: $20 (warn at 80%, halt at 100%).
 - Polygon: respect rate-limit; flat-rate plan, no overage.
@@ -381,17 +381,20 @@ class Role(Protocol):
 
 ### Continuous (every 60 s)
 - Daemon: heartbeat write
-- Supervisor: Watchdog, Account Sentinel
+- Supervisor: Watchdog
 
-### High-frequency (during market hours, 09:30–16:00 ET, Mon–Fri unless noted)
-- Crypto Scanner: every 15 min, **24/7**
-- Portfolio Monitor: every 30 min
-- Order Steward (verify-stops): every 30 min
-- VIP Listener: every 30 min
+### Frequent — supervisor / scheduling
+- Account Sentinel: every 5 min during market hrs, every 30 min off-hrs
+- Schedule Auditor: every 15 min during market hrs
+- Resource Guardian: every 30 min, 24/7
+
+### Trading-cycle (during market hours, 09:30–16:00 ET, Mon–Fri unless noted)
+- Crypto Scanner: every 30 min, **24/7**
 - Stock Scanner: every 60 min
-- Sentiment Analyst (news-warm): 5 min before each Stock Scan
-- Schedule Auditor: every 5 min
-- Resource Guardian: every 5 min
+- Portfolio Monitor: every 60 min
+- Order Steward (sweep): every 60 min, plus immediate on-demand after each Trade Executor placement
+- VIP Listener: every 30 min, suspended outside market hours
+- Sentiment Analyst (news-warm): 08:55 ET pre-open + 12:00 ET midday + on-demand inline at scan time when a candidate's cache is > 4h stale
 
 ### Pre-market and open (Mon–Fri)
 | ET | Routine |
@@ -400,9 +403,9 @@ class Role(Protocol):
 | 06:30 | Universe Curator (massive-refresh) |
 | 07:00 | Macro Sensor (regime classification) |
 | 07:30 | Universe Curator (rank, top 25) |
-| 08:55 | Sentiment Analyst (pre-open warm) |
-| 09:25 | Sentiment Analyst (final warm) |
+| 08:55 | Sentiment Analyst (pre-open warm — full universe) |
 | 09:30 | Stock Scanner first cycle |
+| 12:00 | Sentiment Analyst (midday refresh — full universe) |
 
 ### End-of-day (Mon–Fri)
 | ET | Routine |
@@ -482,7 +485,22 @@ class Role(Protocol):
     "stocks_filter": "stage1_top100",
     "crypto_pairs": ["BTC/USD", "ETH/USD", "SOL/USD"]
   },
-  "fallback_when_no_alpha": "hold_spy"
+  "fallback_when_no_alpha": "hold_spy",
+  "cadence": {
+    "heartbeat_seconds": 60,
+    "watchdog_seconds": 60,
+    "account_sentinel_minutes_market": 5,
+    "account_sentinel_minutes_offhours": 30,
+    "schedule_auditor_minutes": 15,
+    "resource_guardian_minutes": 30,
+    "stock_scanner_minutes": 60,
+    "crypto_scanner_minutes": 30,
+    "portfolio_monitor_minutes": 60,
+    "order_steward_sweep_minutes": 60,
+    "vip_listener_minutes": 30,
+    "sentiment_warm_times_et": ["08:55", "12:00"],
+    "sentiment_stale_hours_for_on_demand": 4
+  }
 }
 ```
 
@@ -758,7 +776,10 @@ Resume only when 30d alpha is above 1.65× SPY AND has been > 1.5× for 5 consec
 ### 14.9 Wash-trade fallback
 On `40310000`: cancel conflicting open order, retry once as bracket OCO. If still rejected, blacklist symbol for 24 h, email. Symbol re-enters universe automatically next day.
 
-### 14.10 Earnings policy
+### 14.10 Cadence is config, not code
+All polling cadences live in the `cadence:` block of `paper_active.json` (and `live_active.json`). The daemon reads this block on startup and on config reload (file mtime change triggers atomic reload). Tuning a cadence requires editing JSON, not redeploying code. Default values in §9 represent what the design team has reasoned about; they are starting points, not contracts.
+
+### 14.11 Earnings policy
 - T-1 on held: trim to 50% by EOD.
 - T-0 on held < 7 days: full exit by EOD T-1.
 - T-0 on held ≥ 7 days: hold through.
