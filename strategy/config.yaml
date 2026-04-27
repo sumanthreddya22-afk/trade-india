@@ -30,3 +30,19 @@ storage:
 
 regime:
   vol_threshold_pct: 22.0   # 20d realized vol % above which we force risk_off (Phase 0b: was 30)
+
+strategy:
+  # News-sentiment floor (Plan 6c). When set, entries are skipped when the
+  # symbol's most-recent cached Polygon sentiment score is below this value.
+  # Range -1..+1. None = filter disabled.
+  #
+  # Active value: -0.5 (defensive — only blocks names where the average of
+  # recent articles is majority-negative). passes_filter() returns True for
+  # symbols with no news data, so coverage gaps don't block entries. Crypto
+  # bypasses this gate entirely (Polygon news is equity-focused).
+  #
+  # This is NOT a backtest-validated value — it's a conservative defensive
+  # gate while Plan 7 (composite signal aggregator) is built. Easy kill
+  # switch: set to null to disable.
+  sentiment_floor: -0.5
+  sentiment_max_age_days: 3
