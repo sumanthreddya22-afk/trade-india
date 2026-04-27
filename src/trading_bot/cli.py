@@ -996,7 +996,13 @@ def massive_refresh(days: int, news: bool) -> None:
 
 @main.command("rank")
 def rank_command() -> None:
-    """Run stage-1 + stage-2 screener; write strategy/opportunities.md."""
+    """Run stage-1 + stage-2 screener; write strategy/opportunities.md.
+
+    Reads the Massive grouped cache (filled by `bot massive-refresh`)
+    for the universe; falls through to CORE_LIQUID_TICKERS seed list
+    if cache is empty. Never calls Massive directly — that path is
+    the refresh task's responsibility.
+    """
     settings = Settings()
     alpaca = AlpacaClient(settings)
     market = MarketDataClient(settings)
@@ -1015,31 +1021,15 @@ def rank_command() -> None:
             import pandas as pd
             return pd.DataFrame()
 
-    # Plan 6: Massive-first universe build.
-    # Strategy on a rate-limited free tier (~5 calls/min):
-    #   1) ONE Massive grouped call → OHLC for every US equity (~10k tickers).
-    #   2) Intersect with Alpaca tradable + apply liquidity filter.
-    #   3) Sort by ADV, keep top 200 candidates pre-stage-1.
-    #   4) Stage-1 then uses Alpaca per-ticker on those 200 (small enough
-    #      to finish in <2 minutes inside Alpaca's rate budget).
-    # Falls back to legacy per-ticker if grouped is unavailable.
-    import pandas as _pd
-    from datetime import timedelta as _td
-    try:
-        from trading_bot.massive_client import MassiveClient, MassiveAuthError
-        massive = MassiveClient()
+    from trading_bot.massive_cache import MassiveGroupedCache
+    cache = MassiveGroupedCache()
+    cached = cache.latest(max_age_days=5)
 
-        grouped_df = _pd.DataFrame()
-        for back in range(1, 8):
-            day = datetime.now(timezone.utc).date() - _td(days=back)
-            grouped_df = massive.daily_grouped(day)
-            if not grouped_df.empty:
-                click.echo(f"[rank] Massive grouped: {day} → {len(grouped_df)} tickers")
-                break
-        if grouped_df.empty:
-            raise RuntimeError("Massive grouped returned empty for last 7 days")
+    if cached is not None:
+        on_date, grouped_df = cached
+        click.echo(f"[rank] cache hit (date={on_date}, {len(grouped_df)} tickers)")
 
-        def _grouped() -> "_pd.DataFrame":
+        def _grouped():
             return grouped_df
 
         universe = build_universe_from_grouped(
@@ -1047,25 +1037,28 @@ def rank_command() -> None:
             massive_grouped_loader=_grouped,
             crypto_bar_loader=bar_loader_short,
         )
-        click.echo(f"[rank] universe (post-liquidity-filter): {len(universe)} assets")
 
-        # Pre-shortlist by ADV before stage-1 to bound the per-ticker fetches.
-        # 200 names × ~200ms each = ~40s with comfortable rate-limit headroom.
-        universe.sort(key=lambda a: a.avg_dollar_volume, reverse=True)
-        pre_shortlist = universe[:200]
-        click.echo(f"[rank] pre-shortlist (top 200 by ADV): "
-                   f"{sum(1 for a in pre_shortlist if 'crypto' not in a.asset_class.lower())} stocks "
-                   f"+ {sum(1 for a in pre_shortlist if 'crypto' in a.asset_class.lower())} crypto")
-
-        shortlist = build_stage1_shortlist(
-            pre_shortlist, bar_loader=bar_loader_short, top_n=100,
-        )
-    except Exception as e:
-        click.echo(f"[rank] Massive path failed ({e}); falling back to seed list")
+        if not universe:
+            click.echo("[rank] grouped path empty after liquidity filter — "
+                       "falling back to seed list")
+            universe = build_universe_from_seed_list(alpaca)
+        else:
+            stocks = [a for a in universe if "crypto" not in a.asset_class.lower()]
+            cryptos = [a for a in universe if "crypto" in a.asset_class.lower()]
+            stocks.sort(key=lambda a: a.avg_dollar_volume, reverse=True)
+            universe = stocks[:200] + cryptos
+            click.echo(
+                f"[rank] pre-shortlist (top 200 stocks by ADV + {len(cryptos)} crypto)"
+            )
+    else:
+        click.echo("[rank] cache miss — using CORE_LIQUID_TICKERS seed list")
         universe = build_universe_from_seed_list(alpaca)
-        shortlist = build_stage1_shortlist(
-            universe, bar_loader=bar_loader_short, top_n=100,
-        )
+
+    click.echo(f"[rank] universe size: {len(universe)} assets")
+
+    shortlist = build_stage1_shortlist(
+        universe, bar_loader=bar_loader_short, top_n=100,
+    )
 
     lanes = [MomentumLane(), MeanReversionLane(), BreakoutLane()]
     result = run_stage2(shortlist, lanes=lanes, bar_loader=bar_loader_long)
