@@ -5,7 +5,7 @@ mutate it accidentally.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -22,7 +22,7 @@ class CadenceConfig:
     portfolio_monitor_minutes: int = 60
     order_steward_sweep_minutes: int = 60
     vip_listener_minutes: int = 30
-    sentiment_warm_times_et: list[str] = field(default_factory=lambda: ["08:55", "12:00"])
+    sentiment_warm_times_et: tuple[str, ...] = ("08:55", "12:00")
     sentiment_stale_hours_for_on_demand: int = 4
 
 
@@ -42,6 +42,6 @@ def load_cadence(path: str | Path) -> CadenceConfig:
         portfolio_monitor_minutes=block.get("portfolio_monitor_minutes", 60),
         order_steward_sweep_minutes=block.get("order_steward_sweep_minutes", 60),
         vip_listener_minutes=block.get("vip_listener_minutes", 30),
-        sentiment_warm_times_et=list(times) if times else ["08:55", "12:00"],
+        sentiment_warm_times_et=tuple(times) if times else ("08:55", "12:00"),
         sentiment_stale_hours_for_on_demand=block.get("sentiment_stale_hours_for_on_demand", 4),
     )

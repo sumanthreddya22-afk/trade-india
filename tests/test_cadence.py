@@ -30,7 +30,7 @@ def test_load_cadence_returns_dataclass_with_defaults(tmp_path):
     assert isinstance(c, CadenceConfig)
     assert c.heartbeat_seconds == 60
     assert c.crypto_scanner_minutes == 30
-    assert c.sentiment_warm_times_et == ["08:55", "12:00"]
+    assert c.sentiment_warm_times_et == ("08:55", "12:00")
 
 
 def test_load_cadence_missing_block_uses_defaults(tmp_path):
