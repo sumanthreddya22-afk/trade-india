@@ -200,7 +200,7 @@ def test_backtest_emits_trade_when_signal_engineered(tmp_path):
 def test_resolve_exit_stop_wins_on_conflict(tmp_path):
     bs = BarStore(tmp_path / "bars.db")
     cfg = _real_config()
-    bt = Backtester(config=cfg, bar_store=bs)
+    bt = Backtester(config=cfg, bar_store=bs, enable_trailing_stop=False)
 
     # Synthetic position + a bar that brackets BOTH stop and tp.
     from trading_bot.backtest.simulator import _Position
@@ -224,7 +224,7 @@ def test_resolve_exit_stop_wins_on_conflict(tmp_path):
 def test_resolve_exit_tp_when_only_high_reached(tmp_path):
     bs = BarStore(tmp_path / "bars.db")
     cfg = _real_config()
-    bt = Backtester(config=cfg, bar_store=bs)
+    bt = Backtester(config=cfg, bar_store=bs, enable_trailing_stop=False)
 
     from trading_bot.backtest.simulator import _Position
     pos = _Position(
@@ -244,10 +244,68 @@ def test_resolve_exit_tp_when_only_high_reached(tmp_path):
     assert price == Decimal("110")
 
 
+def test_trailing_stop_ratchets_to_breakeven_at_3pct(tmp_path):
+    """Plan 5c: stop ratchets up to entry once peak unrealized reaches 3%."""
+    bs = BarStore(tmp_path / "bars.db")
+    cfg = _real_config()
+    bt = Backtester(
+        config=cfg, bar_store=bs,
+        enable_trailing_stop=True,
+        trail_breakeven_pct=3.0, trail_lock_pct=999.0,  # disable lock-tier
+    )
+
+    from trading_bot.backtest.simulator import _Position
+    pos = _Position(
+        symbol="X", asset_class="stock", qty=Decimal("10"),
+        entry_price=Decimal("100"),
+        stop_price=Decimal("95"), take_profit_price=Decimal("110"),
+        entry_date=date(2024, 1, 2),
+        regime_at_entry="trending_up", strategy_name="momentum",
+        reason="t", equity_at_entry=Decimal("15000"),
+        daily_pnl_pct_at_entry=0.0,
+    )
+    # Bar with high 104 (+4%) triggers breakeven ratchet, low 100.5 stays
+    # above the new $100 stop.
+    _seed_bars(bs, "X", [(date(2024, 1, 3), 100.0, 104.0, 100.5, 102.0, 1_000_000)])
+    out = bt._resolve_exit(pos, on=date(2024, 1, 3))
+    assert out is None, "no exit on this bar (low above ratcheted stop)"
+    assert pos.stop_price == Decimal("100"), "stop ratcheted up to breakeven"
+    assert pos.peak_unrealized_pct >= 4.0
+
+
+def test_trailing_stop_lock_tier_at_5pct(tmp_path):
+    """Plan 5c: stop trails at giveback_fraction of peak above entry once
+    peak unrealized reaches lock_pct."""
+    bs = BarStore(tmp_path / "bars.db")
+    cfg = _real_config()
+    bt = Backtester(
+        config=cfg, bar_store=bs,
+        enable_trailing_stop=True,
+        trail_breakeven_pct=3.0, trail_lock_pct=5.0,
+        trail_giveback_fraction=0.5,
+    )
+
+    from trading_bot.backtest.simulator import _Position
+    pos = _Position(
+        symbol="X", asset_class="stock", qty=Decimal("10"),
+        entry_price=Decimal("100"),
+        stop_price=Decimal("95"), take_profit_price=Decimal("120"),
+        entry_date=date(2024, 1, 2),
+        regime_at_entry="trending_up", strategy_name="momentum",
+        reason="t", equity_at_entry=Decimal("15000"),
+        daily_pnl_pct_at_entry=0.0,
+    )
+    # High 110 = +10% peak → trail to 5% above entry = 105
+    _seed_bars(bs, "X", [(date(2024, 1, 3), 100.0, 110.0, 106.0, 108.0, 1_000_000)])
+    out = bt._resolve_exit(pos, on=date(2024, 1, 3))
+    assert out is None
+    assert pos.stop_price == Decimal("105.0"), f"expected stop ratcheted to 105, got {pos.stop_price}"
+
+
 def test_resolve_exit_time_based(tmp_path):
     bs = BarStore(tmp_path / "bars.db")
     cfg = _real_config()
-    bt = Backtester(config=cfg, bar_store=bs, max_hold_days=2)
+    bt = Backtester(config=cfg, bar_store=bs, max_hold_days=2, enable_trailing_stop=False)
 
     from trading_bot.backtest.simulator import _Position
     pos = _Position(

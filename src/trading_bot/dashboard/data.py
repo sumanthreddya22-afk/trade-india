@@ -453,6 +453,7 @@ _KNOWN_SCHEDULED_JOBS: list[tuple[str, str, str]] = [
     ("trading-bot-daily-full-run", "EOD report", "30 16 * * 1-5"),
     ("trading-bot-crypto-scan", "Crypto scan (24/7, hourly)", "5 * * * *"),
     ("trading-bot-vip-tweets", "VIP tweet monitor (Truth Social)", "*/10 * * * *"),
+    ("trading-bot-verify-stops", "Verify stops on open positions", "20,50 * * * *"),
     ("trading-bot-weekly-evolve", "Weekly evolve", "0 10 * * 6"),
 ]
 

@@ -208,6 +208,19 @@ class AlpacaClient:
         return OrderResult(entry_order_id=str(entry.id), stop_loss_order_id=stop_id)
 
     def _place_crypto_with_stop(self, req: OrderRequest) -> OrderResult:
+        """Crypto orders are placed in two non-atomic legs:
+            1) market entry
+            2) standalone stop order
+
+        Risk #4 from the trader's analysis: between (1) and (2), the price
+        can flash-crash leaving us with a naked position. Mitigation here:
+        after both legs are placed, do a post-fill verification — re-query
+        positions + open orders. If the stop didn't actually land (or the
+        position is naked for any reason), market-flatten immediately to
+        avoid an unbounded loss. This trades a small chance of unnecessary
+        flattening for a guarantee that we never hold an unprotected
+        crypto position past the verification window.
+        """
         try:
             entry_req = MarketOrderRequest(
                 symbol=req.symbol,
@@ -219,6 +232,8 @@ class AlpacaClient:
         except Exception as e:
             raise AlpacaClientError(f"crypto entry order failed: {e}") from e
 
+        stop = None
+        stop_error: Exception | None = None
         try:
             stop_req = StopOrderRequest(
                 symbol=req.symbol,
@@ -229,10 +244,87 @@ class AlpacaClient:
             )
             stop = self._client.submit_order(stop_req)
         except Exception as e:
-            # Crypto market orders fill near-instantly; cancellation likely won't help.
-            # Surface the error so the operator can manually flatten.
+            stop_error = e
+
+        # Post-fill verification. Sleep briefly to let Alpaca propagate the
+        # fill state, then check that BOTH the position and a live stop
+        # exist. If not, flatten via market order and surface an error.
+        import time as _time
+        _time.sleep(0.5)
+        try:
+            self._verify_crypto_stop_or_flatten(req, entry_id=str(entry.id))
+        except AlpacaClientError:
+            raise
+        except Exception as e:
             raise AlpacaClientError(
-                f"crypto stop-loss order failed (entry may already be filled — manually flatten): {e}"
+                f"crypto post-fill verify failed: {e} "
+                f"(entry={entry.id}); position state uncertain — manual review"
             ) from e
 
+        if stop_error is not None:
+            raise AlpacaClientError(
+                f"crypto stop-loss order failed: {stop_error}; "
+                f"position has been flattened by the post-fill verifier."
+            ) from stop_error
+
         return OrderResult(entry_order_id=str(entry.id), stop_loss_order_id=str(stop.id))
+
+    def _verify_crypto_stop_or_flatten(
+        self, req: OrderRequest, *, entry_id: str
+    ) -> None:
+        """If the just-placed crypto position lacks a live stop order,
+        market-flatten the position immediately. Returns None on success
+        (stop is live OR position no longer exists).
+
+        Raises AlpacaClientError only if the flatten itself fails — at
+        that point the operator must intervene manually.
+        """
+        # Look for a live position on the symbol.
+        try:
+            raw_positions = self._client.get_all_positions()
+        except Exception as e:
+            raise AlpacaClientError(f"verify failed (get_positions): {e}") from e
+
+        pos = next(
+            (p for p in raw_positions if str(p.symbol) == req.symbol),
+            None,
+        )
+        if pos is None:
+            return  # entry not yet filled or already closed — nothing to protect
+
+        # Look for a live stop order on the symbol.
+        try:
+            from alpaca.trading.enums import QueryOrderStatus
+            from alpaca.trading.requests import GetOrdersRequest
+            open_orders = self._client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=100)
+            )
+        except Exception as e:
+            raise AlpacaClientError(f"verify failed (get_orders): {e}") from e
+
+        has_stop = any(
+            str(o.symbol) == req.symbol
+            and str(getattr(o, "type", "")).lower().endswith("stop")
+            for o in open_orders
+        )
+        if has_stop:
+            return  # all good
+
+        # Naked position detected. Market-flatten.
+        try:
+            flatten_req = MarketOrderRequest(
+                symbol=req.symbol,
+                qty=float(getattr(pos, "qty", req.qty)),
+                side=_to_alpaca_side(_opposite(req.side)),
+                time_in_force=TimeInForce.GTC,
+            )
+            self._client.submit_order(flatten_req)
+        except Exception as e:
+            raise AlpacaClientError(
+                f"NAKED CRYPTO POSITION ({req.symbol}, entry={entry_id}) "
+                f"AND FLATTEN FAILED: {e} — manually flatten in Alpaca UI immediately"
+            ) from e
+        raise AlpacaClientError(
+            f"crypto post-fill: stop missing on {req.symbol} (entry={entry_id}); "
+            f"position has been market-flattened."
+        )

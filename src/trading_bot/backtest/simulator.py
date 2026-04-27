@@ -258,6 +258,7 @@ class _Position:
     reason: str
     equity_at_entry: Decimal
     daily_pnl_pct_at_entry: float
+    peak_unrealized_pct: float = 0.0  # ratcheting watermark for trailing-stop logic
 
 
 @dataclass
@@ -306,6 +307,10 @@ class Backtester:
         max_hold_days: int = 60,
         slippage_bps: float = 0.0,
         vix_series: dict[date, float] | None = None,
+        enable_trailing_stop: bool = False,  # off by default — empirical sweep
+        trail_breakeven_pct: float = 3.0,    # showed every variant under-
+        trail_lock_pct: float = 5.0,         # performs the no-trailing
+        trail_giveback_fraction: float = 0.5,  # baseline on momentum/large-caps
     ) -> None:
         self._cfg = config
         self._bars = bar_store
@@ -314,6 +319,10 @@ class Backtester:
         self._slippage_bps = slippage_bps
         self._vix = vix_series or {}
         self._risk = RiskManager(config)
+        self._trailing = enable_trailing_stop
+        self._trail_be = trail_breakeven_pct
+        self._trail_lock = trail_lock_pct
+        self._trail_give = trail_giveback_fraction
 
     # -- public ----------------------------------------------------------
 
@@ -464,11 +473,16 @@ class Backtester:
     def _resolve_exit(
         self, pos: _Position, *, on: date
     ) -> tuple[Decimal, str] | None:
-        """Return (exit_price, reason) if the position closes today, else None."""
+        """Return (exit_price, reason) if the position closes today, else None.
+
+        Trailing-stop logic (when enabled): tracks peak unrealized P&L %
+        across the position's life. At peak ≥ trail_breakeven_pct, the stop
+        ratchets up to entry (breakeven). At peak ≥ trail_lock_pct, the stop
+        trails at trail_giveback_fraction of the peak above entry. Stops
+        never move down — once raised, they stay.
+        """
         bar = self._bars.get_bar(pos.symbol, on)
         if bar is None:
-            # Symbol has no bar today (weekend/holiday for that asset class).
-            # Honor max-hold even without a price — use entry as fallback.
             if (on - pos.entry_date).days >= self._max_hold_days:
                 return pos.entry_price, "time"
             return None
@@ -477,7 +491,24 @@ class Backtester:
         high = Decimal(str(bar.high))
         close = Decimal(str(bar.close))
 
-        # Stop wins on conflict — conservative (we don't know intra-bar order).
+        # Update peak unrealized P&L based on the bar's high (the most-favorable
+        # intra-bar price), then ratchet the stop if applicable.
+        if self._trailing and pos.entry_price > 0:
+            high_pct = float((high / pos.entry_price - 1) * 100)
+            if high_pct > pos.peak_unrealized_pct:
+                pos.peak_unrealized_pct = high_pct
+                # Lock-in tier: trail at giveback% of peak gain above entry
+                if pos.peak_unrealized_pct >= self._trail_lock:
+                    locked_pct = pos.peak_unrealized_pct * self._trail_give
+                    new_stop = pos.entry_price * (Decimal("1") + Decimal(str(locked_pct / 100)))
+                    if new_stop > pos.stop_price:
+                        pos.stop_price = new_stop
+                # Breakeven tier
+                elif pos.peak_unrealized_pct >= self._trail_be:
+                    if pos.entry_price > pos.stop_price:
+                        pos.stop_price = pos.entry_price
+
+        # Stop wins on conflict — conservative.
         if low <= pos.stop_price:
             return pos.stop_price, "stop"
         if high >= pos.take_profit_price:

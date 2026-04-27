@@ -635,11 +635,15 @@ def screen_universe() -> None:
 @click.option("--slippage-bps", default=0.0, show_default=True, type=float)
 @click.option("--no-refresh", is_flag=True, default=False,
               help="Skip cache warm-up (use whatever is in data/backtest_bars.db).")
+@click.option("--trailing-stop", is_flag=True, default=False,
+              help="Enable trailing stops (ratchet to breakeven at +3%, "
+                   "trail at 50%% of peak above 5%%). Empirically worse than "
+                   "off on momentum/large-caps; default off.")
 @click.option("--report-path", default="strategy/backtest_results.md", show_default=True)
 def backtest(from_date_str: str, to_date_str: str | None,
              symbols_csv: str, strategies_csv: str,
              max_hold_days: int, starting_equity: int, slippage_bps: float,
-             no_refresh: bool, report_path: str) -> None:
+             no_refresh: bool, trailing_stop: bool, report_path: str) -> None:
     """Replay historical bars through real strategy + risk_manager code paths."""
     from datetime import date as _date
     from decimal import Decimal as _Decimal
@@ -682,6 +686,7 @@ def backtest(from_date_str: str, to_date_str: str | None,
         max_hold_days=max_hold_days,
         slippage_bps=slippage_bps,
         vix_series=vix_series,
+        enable_trailing_stop=trailing_stop,
     )
     result = bt.run(
         from_date=from_date, to_date=to_date,
@@ -713,6 +718,75 @@ def backtest(from_date_str: str, to_date_str: str | None,
             f"Sharpe={metrics.overall.sharpe_daily_ann}, "
             f"win={metrics.overall.win_rate_pct}%"
         )
+
+
+@main.command("verify-stops")
+def verify_stops() -> None:
+    """Sweep open positions, verify each has a live stop order. Email
+    + flag any naked positions. Does NOT auto-flatten stocks — alerts
+    only, since manual review is safer for equities than for crypto."""
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.enums import QueryOrderStatus
+    from alpaca.trading.requests import GetOrdersRequest
+
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    client = TradingClient(
+        api_key=settings.alpaca_api_key, secret_key=settings.alpaca_api_secret, paper=True
+    )
+
+    try:
+        positions = client.get_all_positions()
+        open_orders = client.get_orders(
+            filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200)
+        )
+    except Exception as e:
+        click.echo(f"[verify-stops] alpaca query failed: {e}")
+        raise SystemExit(1)
+
+    stops_by_symbol: dict[str, list] = {}
+    for o in open_orders:
+        if str(getattr(o, "type", "")).lower().endswith("stop"):
+            stops_by_symbol.setdefault(str(o.symbol), []).append(o)
+
+    naked: list[tuple[str, str, str]] = []  # (symbol, qty, side)
+    for p in positions:
+        sym = str(p.symbol)
+        if sym not in stops_by_symbol:
+            naked.append((sym, str(p.qty), str(p.side)))
+
+    click.echo(
+        f"[verify-stops] positions={len(positions)} stops={sum(len(v) for v in stops_by_symbol.values())} "
+        f"naked={len(naked)}"
+    )
+    for sym, qty, side in naked:
+        click.echo(f"  NAKED {sym}: qty={qty} side={side} — NO STOP ORDER")
+
+    if not naked:
+        return
+
+    rows = "".join(
+        f"<tr><td style='padding:8px;border-bottom:1px solid #2a2a2a;color:#f87171'>"
+        f"<strong>{sym}</strong></td>"
+        f"<td style='padding:8px;border-bottom:1px solid #2a2a2a;color:#e5e7eb'>{qty} {side}</td></tr>"
+        for sym, qty, side in naked
+    )
+    html = (
+        f"<div style='background:#0a0f1c;color:#e5e7eb;padding:24px;font-family:system-ui'>"
+        f"<h2 style='color:#f87171;margin:0 0 4px'>NAKED POSITIONS — {len(naked)}</h2>"
+        f"<p style='color:#9ca3af;margin:0 0 16px;font-size:14px'>"
+        f"These positions have no live stop order. Risk #8 from the trader's analysis: "
+        f"Alpaca bracket legs can detach on partial fills. Replace stops manually in "
+        f"the Alpaca UI or via API.</p>"
+        f"<table style='width:100%;border-collapse:collapse;background:#0f172a'>"
+        f"<thead><tr><th style='padding:8px;text-align:left;color:#94a3b8'>Symbol</th>"
+        f"<th style='padding:8px;text-align:left;color:#94a3b8'>Qty / Side</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>"
+    )
+    EmailSender(
+        user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
+    ).send(subject=f"⚠ NAKED POSITION ALERT — {len(naked)} unprotected", html_body=html)
+    click.echo(f"[verify-stops] alert email sent to {cfg.email.to}")
 
 
 @main.command("vip-scan")
