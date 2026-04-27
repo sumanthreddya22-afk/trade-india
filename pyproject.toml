@@ -19,6 +19,8 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
     "croniter>=6.2.2",
+    "apscheduler>=3.10.4",
+    "alembic>=1.13.0",
 ]
 
 [project.optional-dependencies]
