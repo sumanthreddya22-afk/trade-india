@@ -1,0 +1,41 @@
+{
+  "version": "2026-04-27-phase1-v1",
+  "git_sha": "phase1-bootstrap",
+  "promoted_at": "2026-04-27T00:00:00Z",
+  "promoted_by": "manual-bootstrap",
+  "active_template": "momentum_v3",
+  "template_path": "trading_bot.strategy",
+  "params": {
+    "rsi_low": 55,
+    "rsi_high": 70,
+    "ema_period": 20,
+    "stop_pct": 5.0,
+    "sentiment_floor": -0.5
+  },
+  "fitness_at_promotion": null,
+  "risk_caps": {
+    "max_position_pct": 10,
+    "daily_loss_pct": 3,
+    "max_drawdown_pct": 20
+  },
+  "universe": {
+    "stocks_filter": "stage1_top100",
+    "crypto_pairs": ["BTC/USD", "ETH/USD", "SOL/USD"]
+  },
+  "fallback_when_no_alpha": "hold_spy",
+  "cadence": {
+    "heartbeat_seconds": 60,
+    "watchdog_seconds": 60,
+    "account_sentinel_minutes_market": 5,
+    "account_sentinel_minutes_offhours": 30,
+    "schedule_auditor_minutes": 15,
+    "resource_guardian_minutes": 30,
+    "stock_scanner_minutes": 60,
+    "crypto_scanner_minutes": 30,
+    "portfolio_monitor_minutes": 60,
+    "order_steward_sweep_minutes": 60,
+    "vip_listener_minutes": 30,
+    "sentiment_warm_times_et": ["08:55", "12:00"],
+    "sentiment_stale_hours_for_on_demand": 4
+  }
+}
