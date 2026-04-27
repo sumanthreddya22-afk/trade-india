@@ -1,0 +1,112 @@
+import os
+import tempfile
+import datetime as dt
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from trading_bot.state_db import (
+    Base,
+    Heartbeat,
+    EquityHighWaterMark,
+    RoleRun,
+    RoleKpi,
+    RegimeHistory,
+    ConfigHistory,
+)
+
+
+@pytest.fixture
+def db():
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    engine = create_engine(f"sqlite:///{path}")
+    Base.metadata.create_all(engine)
+    yield engine
+    os.unlink(path)
+
+
+def test_heartbeat_roundtrip(db):
+    with Session(db) as s:
+        hb = Heartbeat(
+            ts=dt.datetime.now(dt.timezone.utc),
+            pid=1234,
+            version="2026-04-27-v1",
+            last_action="intel-scan",
+        )
+        s.add(hb)
+        s.commit()
+        rows = s.query(Heartbeat).all()
+    assert len(rows) == 1
+    assert rows[0].pid == 1234
+    assert rows[0].version == "2026-04-27-v1"
+
+
+def test_equity_high_water_mark_roundtrip(db):
+    with Session(db) as s:
+        hwm = EquityHighWaterMark(
+            account="paper",
+            equity=100500.42,
+            recorded_at=dt.datetime.now(dt.timezone.utc),
+        )
+        s.add(hwm)
+        s.commit()
+        rows = s.query(EquityHighWaterMark).all()
+    assert len(rows) == 1
+    assert rows[0].equity == pytest.approx(100500.42)
+
+
+def test_role_run_with_kpi(db):
+    with Session(db) as s:
+        run = RoleRun(
+            role_name="stock_scanner",
+            started_at=dt.datetime.now(dt.timezone.utc),
+            finished_at=dt.datetime.now(dt.timezone.utc),
+            status="ok",
+            latency_ms=1234,
+        )
+        s.add(run)
+        s.flush()
+        kpi = RoleKpi(
+            role_name="stock_scanner",
+            kpi_name="buy_win_rate_30d",
+            value=0.62,
+            recorded_at=dt.datetime.now(dt.timezone.utc),
+        )
+        s.add(kpi)
+        s.commit()
+    with Session(db) as s:
+        assert s.query(RoleRun).count() == 1
+        assert s.query(RoleKpi).count() == 1
+
+
+def test_regime_history_roundtrip(db):
+    with Session(db) as s:
+        r = RegimeHistory(
+            regime="trending_up",
+            vix=18.4,
+            spy_breadth=0.61,
+            recorded_at=dt.datetime.now(dt.timezone.utc),
+        )
+        s.add(r)
+        s.commit()
+    with Session(db) as s:
+        rows = s.query(RegimeHistory).all()
+        assert rows[0].regime == "trending_up"
+
+
+def test_config_history_roundtrip(db):
+    with Session(db) as s:
+        c = ConfigHistory(
+            account="paper",
+            version="v17",
+            git_sha="abc1234",
+            promoted_at=dt.datetime.now(dt.timezone.utc),
+            promoted_by="auto-promote",
+            payload_json='{"params": {}}',
+        )
+        s.add(c)
+        s.commit()
+    with Session(db) as s:
+        assert s.query(ConfigHistory).first().version == "v17"

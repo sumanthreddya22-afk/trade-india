@@ -1,0 +1,97 @@
+"""state.db ORM models. Shared coordination surface for daemon, lab, supervisor.
+WAL mode is enabled at engine creation in get_engine() so concurrent reads are safe.
+"""
+from __future__ import annotations
+
+import datetime as dt
+from pathlib import Path
+
+from sqlalchemy import (
+    Column,
+    DateTime,
+    Float,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    event,
+)
+from sqlalchemy.orm import DeclarativeBase, Session
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Heartbeat(Base):
+    __tablename__ = "heartbeats"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ts = Column(DateTime(timezone=True), nullable=False, index=True)
+    pid = Column(Integer, nullable=False)
+    version = Column(String(64), nullable=False)
+    last_action = Column(String(128), nullable=True)
+
+
+class EquityHighWaterMark(Base):
+    __tablename__ = "equity_high_water_mark"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account = Column(String(16), nullable=False, index=True)  # "paper" | "live"
+    equity = Column(Float, nullable=False)
+    recorded_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class RoleRun(Base):
+    __tablename__ = "role_runs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    role_name = Column(String(64), nullable=False, index=True)
+    started_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(32), nullable=False)  # ok | error | blocked | halted
+    latency_ms = Column(Integer, nullable=True)
+    error_text = Column(Text, nullable=True)
+
+
+class RoleKpi(Base):
+    __tablename__ = "role_kpis"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    role_name = Column(String(64), nullable=False, index=True)
+    kpi_name = Column(String(64), nullable=False)
+    value = Column(Float, nullable=False)
+    recorded_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class RegimeHistory(Base):
+    __tablename__ = "regime_history"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    regime = Column(String(32), nullable=False)
+    vix = Column(Float, nullable=True)
+    spy_breadth = Column(Float, nullable=True)
+    recorded_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class ConfigHistory(Base):
+    __tablename__ = "config_history"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account = Column(String(16), nullable=False)
+    version = Column(String(64), nullable=False)
+    git_sha = Column(String(64), nullable=True)
+    promoted_at = Column(DateTime(timezone=True), nullable=False)
+    promoted_by = Column(String(64), nullable=False)
+    payload_json = Column(Text, nullable=False)
+
+
+def get_engine(db_path: str | Path = "data/state.db"):
+    engine = create_engine(f"sqlite:///{db_path}", future=True)
+
+    @event.listens_for(engine, "connect")
+    def _set_sqlite_pragma(dbapi_connection, _):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
+    return engine
+
+
+def session_for(db_path: str | Path = "data/state.db") -> Session:
+    return Session(get_engine(db_path))
