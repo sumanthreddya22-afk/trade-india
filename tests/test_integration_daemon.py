@@ -55,6 +55,7 @@ def test_daemon_cold_start_writes_heartbeat(tmp_path):
         "GMAIL_USER": "fake@example.com",
         "GMAIL_APP_PASSWORD": "fake",
         "PYTHONPATH": str(Path(__file__).parent.parent / "src"),
+        "TRADING_BOT_SKIP_MIGRATIONS": "1",  # test sets up schema directly via Base.metadata.create_all
     })
 
     # Use the venv Python; fall back to sys.executable inside the venv.
