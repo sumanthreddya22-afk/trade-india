@@ -45,6 +45,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --strict-markers"
+markers = [
+    "integration: integration tests that spawn subprocesses or hit databases",
+]
 
 [tool.ruff]
 line-length = 100

@@ -22,7 +22,7 @@ def test_logger_writes_json_event(tmp_path):
     log.event("scan_start", symbols=25, regime="trending_up")
     log.event("scan_finish", placed=1, vetoed=2)
 
-    files = list((tmp_path / dt.date.today().isoformat() / "stock_scanner").glob("*.json"))
+    files = list((tmp_path / dt.datetime.now(dt.timezone.utc).date().isoformat() / "stock_scanner").glob("*.json"))
     assert len(files) == 2
     payload = json.loads(files[0].read_text())
     assert "ts" in payload
@@ -34,7 +34,7 @@ def test_logger_writes_json_event(tmp_path):
 def test_logger_event_includes_arbitrary_kwargs(tmp_path):
     log = StructuredLogger(base=tmp_path, role="stock_scanner")
     log.event("decision", symbol="AAPL", action="buy", conviction=0.82)
-    files = sorted((tmp_path / dt.date.today().isoformat() / "stock_scanner").glob("*.json"))
+    files = sorted((tmp_path / dt.datetime.now(dt.timezone.utc).date().isoformat() / "stock_scanner").glob("*.json"))
     payload = json.loads(files[0].read_text())
     assert payload["symbol"] == "AAPL"
     assert payload["action"] == "buy"
@@ -47,7 +47,7 @@ def test_logger_event_handles_exception(tmp_path):
         raise ValueError("boom")
     except ValueError as e:
         log.error("scan_failed", error=e)
-    files = list((tmp_path / dt.date.today().isoformat() / "stock_scanner").glob("*.json"))
+    files = list((tmp_path / dt.datetime.now(dt.timezone.utc).date().isoformat() / "stock_scanner").glob("*.json"))
     payload = json.loads(files[0].read_text())
     assert payload["event"] == "scan_failed"
     assert payload["error_type"] == "ValueError"
