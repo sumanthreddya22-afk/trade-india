@@ -117,6 +117,15 @@ def register_jobs(
         replace_existing=True,
     )
 
+    # Midday report: 12:31 ET weekdays (offset 1 min from the 12:30 stock_scanner cycle
+    # so the two jobs don't compete for the same APScheduler worker thread).
+    scheduler.add_job(
+        runners["midday_report"],
+        trigger=CronTrigger(hour=12, minute=31, day_of_week="mon-fri", timezone=et),
+        id="midday_report",
+        replace_existing=True,
+    )
+
     # Daily digest: 18:00 ET weekdays
     scheduler.add_job(
         runners["daily_digest"],

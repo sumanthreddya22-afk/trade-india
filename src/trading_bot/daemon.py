@@ -44,7 +44,10 @@ def _load_runners(log: StructuredLogger):
         def runner():
             log.event(f"{name}_start")
             # Block any job that may place orders. daily_digest invokes full_run which scans + trades.
-            if is_paused(PAUSE_PATH) and name in {"intel_scan", "crypto_scan", "daily_digest"}:
+            # Block any job that may place orders. midday_report invokes rich-report
+            # which scans + trades. daily_digest invokes eod-report (read-only) so it
+            # is safe to run during pause.
+            if is_paused(PAUSE_PATH) and name in {"intel_scan", "crypto_scan", "midday_report"}:
                 log.event(f"{name}_skipped", reason="pause.flag set")
                 write_heartbeat(HEARTBEAT_PATH, version=config_version,
                                 last_action=f"{name}_skipped_paused")
@@ -72,7 +75,8 @@ def _load_runners(log: StructuredLogger):
         "massive_refresh": _wrap("massive_refresh", lambda: cli_mod.massive_refresh.callback(days=5, news=False)),
         "premarket_rank": _wrap("premarket_rank", lambda: cli_mod.rank_command.callback()),
         "vip_scan": _wrap("vip_scan", lambda: cli_mod.vip_scan.callback()),
-        "daily_digest": _wrap("daily_digest", lambda: cli_mod.full_run.callback()),
+        "midday_report": _wrap("midday_report", lambda: cli_mod.rich_report.callback(period="mid")),
+        "daily_digest": _wrap("daily_digest", lambda: cli_mod.eod_report.callback()),
     }
 
 

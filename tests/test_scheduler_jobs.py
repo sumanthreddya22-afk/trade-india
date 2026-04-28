@@ -19,6 +19,7 @@ def test_register_jobs_creates_expected_jobs():
         "premarket_rank": MagicMock(),
         "vip_scan": MagicMock(),
         "daily_digest": MagicMock(),
+        "midday_report": MagicMock(),
         "heartbeat": MagicMock(),
     }
     register_jobs(scheduler=sched, cadence=cadence, runners=runners)
@@ -34,6 +35,7 @@ def test_register_jobs_creates_expected_jobs():
         "news_warm_midday",
         "massive_refresh",
         "premarket_rank",
+        "midday_report",
         "daily_digest",
     }
     assert expected.issubset(job_ids)
@@ -47,7 +49,8 @@ def test_register_jobs_uses_cadence_minutes():
         "portfolio_watch": MagicMock(), "verify_stops": MagicMock(),
         "news_warm": MagicMock(), "massive_refresh": MagicMock(),
         "premarket_rank": MagicMock(), "vip_scan": MagicMock(),
-        "daily_digest": MagicMock(), "heartbeat": MagicMock(),
+        "daily_digest": MagicMock(), "midday_report": MagicMock(),
+        "heartbeat": MagicMock(),
     }
     register_jobs(scheduler=sched, cadence=cadence, runners=runners)
     crypto = next(j for j in sched.get_jobs() if j.id == "crypto_scanner")
@@ -63,7 +66,8 @@ def test_heartbeat_job_runs_every_60s():
         "portfolio_watch": MagicMock(), "verify_stops": MagicMock(),
         "news_warm": MagicMock(), "massive_refresh": MagicMock(),
         "premarket_rank": MagicMock(), "vip_scan": MagicMock(),
-        "daily_digest": MagicMock(), "heartbeat": MagicMock(),
+        "daily_digest": MagicMock(), "midday_report": MagicMock(),
+        "heartbeat": MagicMock(),
     }
     register_jobs(scheduler=sched, cadence=cadence, runners=runners)
     hb = next(j for j in sched.get_jobs() if j.id == "heartbeat")
