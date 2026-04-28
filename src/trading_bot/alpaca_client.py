@@ -198,7 +198,7 @@ class AlpacaClient:
         """
         try:
             mkt_req = MarketOrderRequest(
-                symbol=symbol,
+                symbol=_to_orderable_symbol(symbol, asset_class),
                 qty=float(qty),
                 side=_to_alpaca_side(side),
                 time_in_force=TimeInForce.GTC if asset_class == AssetClass.CRYPTO else TimeInForce.DAY,

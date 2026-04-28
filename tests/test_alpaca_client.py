@@ -348,6 +348,47 @@ def test_place_protective_stop_propagates_alpaca_errors(fake_settings):
             )
 
 
+def test_place_market_order_normalizes_crypto_symbol(fake_settings):
+    """Crypto position-form 'DOTUSD' must be rewritten to 'DOT/USD' for the order endpoint
+    (regression: previously the flatten path failed at runtime for crypto)."""
+    from decimal import Decimal
+    from alpaca.trading.requests import MarketOrderRequest as AlpacaMarketOrderRequest
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="flat-c")
+        client = AlpacaClient(fake_settings)
+        client.place_market_order(
+            symbol="DOTUSD",
+            qty=100.0,
+            side=OrderSide.SELL,
+            asset_class=AssetClass.CRYPTO,
+        )
+
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert isinstance(call_arg, AlpacaMarketOrderRequest)
+    assert call_arg.symbol == "DOT/USD"
+
+
+def test_place_market_order_passes_through_stock_symbol(fake_settings):
+    """Stock symbols are not rewritten."""
+    from alpaca.trading.requests import MarketOrderRequest as AlpacaMarketOrderRequest
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="flat-s")
+        client = AlpacaClient(fake_settings)
+        client.place_market_order(
+            symbol="AAPL",
+            qty=10.0,
+            side=OrderSide.SELL,
+            asset_class=AssetClass.STOCK,
+        )
+
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert call_arg.symbol == "AAPL"
+
+
 def test_get_active_assets_returns_tradable(monkeypatch):
     from trading_bot.alpaca_client import TradableAsset
 
