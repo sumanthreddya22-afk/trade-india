@@ -72,12 +72,24 @@ class BacktestEngineerRole(BaseRole):
 
         # Aggregate (mean for alpha/sortino, max for DD — worst-case)
         n = max(len(results), 1)
+        # Most-recent fold's per-trade predictions, for Calibrator (Phase 3.5).
+        per_trade: list[dict] = []
+        if results:
+            for t in getattr(results[-1], "trades", []):
+                per_trade.append(
+                    {
+                        "symbol": t.symbol,
+                        "entry_date": t.entry_date.isoformat(),
+                        "predicted_pnl": float(t.realized_pnl),
+                    }
+                )
         return {
             "alpha_vs_spy_x": sum(fold_alphas) / n,
             "sortino": sum(fold_sortinos) / n,
             "max_dd_pct": max(fold_dds) if fold_dds else 0.0,
             "folds_passed": folds_passed,
             "folds_total": len(results),
+            "per_trade_predictions": per_trade,
         }
 
     def _kpi_value(self, lookback_days: int) -> tuple[str, float, str]:
