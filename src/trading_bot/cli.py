@@ -779,7 +779,7 @@ def verify_stops() -> None:
         )
     except Exception as e:
         click.echo(f"[verify-stops] alpaca query failed: {e}")
-        raise SystemExit(1)
+        return  # do not raise SystemExit — would kill the APScheduler worker thread inside the daemon
 
     stops_by_symbol: dict[str, list] = {}
     for o in open_orders:
