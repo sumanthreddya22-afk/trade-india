@@ -93,6 +93,10 @@ class Leaderboard(Base):
     folds_total = Column(Integer, nullable=False)
     fitness_score = Column(Float, nullable=False, index=True)
     recorded_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    # Per-trade predicted P&L from the most recent test fold's trades.
+    # Used by Calibrator to compare against realized paper P&L. JSON list:
+    # [{"symbol": "...", "entry_date": "ISO", "predicted_pnl": float}, ...]
+    per_trade_predictions_json = Column(Text, nullable=True)
 
 
 class EvolutionRun(Base):
@@ -106,6 +110,25 @@ class EvolutionRun(Base):
     best_params_hash = Column(String(64), nullable=True)
     auto_promoted = Column(Integer, nullable=False, default=0)
     promotion_gate_pass = Column(Text, nullable=True)
+
+
+class CalibrationRun(Base):
+    __tablename__ = "calibration_runs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    recorded_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    template_name = Column(String(64), nullable=False)
+    n_trades = Column(Integer, nullable=False)
+    spearman_corr = Column(Float, nullable=True)  # null when n < 10
+    severity = Column(String(16), nullable=False)  # ok|warning|high|insufficient_data
+
+
+class PromoterHalt(Base):
+    __tablename__ = "promoter_halts"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    halted_until = Column(DateTime(timezone=True), nullable=False, index=True)
+    reason = Column(Text, nullable=False)
+    set_by = Column(String(64), nullable=False)
+    set_at = Column(DateTime(timezone=True), nullable=False)
 
 
 def get_engine(db_path: str | Path = "data/state.db"):

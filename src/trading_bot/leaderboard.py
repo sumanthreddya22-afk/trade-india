@@ -29,6 +29,7 @@ def record_run(
     dd: float,
     folds_passed: int,
     folds_total: int,
+    per_trade_predictions: list[dict] | None = None,
 ) -> None:
     score = compute_fitness(alpha_vs_spy_x=alpha, sortino=sortino, max_dd_pct=dd)
     session.add(
@@ -43,6 +44,9 @@ def record_run(
             folds_total=folds_total,
             fitness_score=score.fitness_score,
             recorded_at=dt.datetime.now(dt.timezone.utc),
+            per_trade_predictions_json=(
+                json.dumps(per_trade_predictions) if per_trade_predictions else None
+            ),
         )
     )
     session.commit()

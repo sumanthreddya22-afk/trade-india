@@ -91,6 +91,7 @@ class ParamOptimizerRole(BaseRole):
                     dd=outputs["max_dd_pct"],
                     folds_passed=outputs["folds_passed"],
                     folds_total=outputs["folds_total"],
+                    per_trade_predictions=outputs.get("per_trade_predictions"),
                 )
             nonlocal best_fitness, best_params, successful_trials
             successful_trials += 1

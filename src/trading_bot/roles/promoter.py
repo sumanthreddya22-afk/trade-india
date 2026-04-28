@@ -19,7 +19,7 @@ from trading_bot.promotion import (
     should_promote,
 )
 from trading_bot.roles.runner import BaseRole
-from trading_bot.state_db import EvolutionRun, RoleRun
+from trading_bot.state_db import EvolutionRun, PromoterHalt, RoleRun
 
 
 class PromoterRole(BaseRole):
@@ -38,7 +38,35 @@ class PromoterRole(BaseRole):
         super().__init__(engine=engine)
         self.active_path = Path(active_path)
 
+    def _active_halt(self) -> dict | None:
+        """Return halt info dict if any active halt window covers now, else None."""
+        now = dt.datetime.now(dt.timezone.utc)
+        with Session(self.engine) as session:
+            row = (
+                session.query(PromoterHalt)
+                .filter(PromoterHalt.halted_until > now)
+                .order_by(PromoterHalt.set_at.desc())
+                .first()
+            )
+            if row is None:
+                return None
+            return {
+                "halted_until": row.halted_until,
+                "reason": row.reason,
+                "set_by": row.set_by,
+            }
+
     def _do_work(self, ctx):
+        # Phase 3.5: respect Calibrator's halt window.
+        halt = self._active_halt()
+        if halt is not None:
+            return {
+                "promoted": False,
+                "reason": "halted_by_calibrator",
+                "halted_until": halt["halted_until"].isoformat(),
+                "halt_reason": halt["reason"],
+            }
+
         with Session(self.engine) as session:
             best = current_best(session)
         if best is None:

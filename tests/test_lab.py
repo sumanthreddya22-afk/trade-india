@@ -92,14 +92,18 @@ def test_lab_cli_subcommand_registered():
     assert "lab" in cmd_names
 
 
-def test_lab_register_jobs_creates_two_jobs():
-    """The lab scheduler should have param_search + auto_promote jobs."""
+def test_lab_register_jobs_creates_three_jobs():
+    """Lab scheduler should have param_search + auto_promote + calibrate jobs."""
     from apscheduler.schedulers.background import BackgroundScheduler
 
     from trading_bot.lab import _register_lab_jobs
 
     sched = BackgroundScheduler()
-    runners = {"param_search": lambda: None, "auto_promote": lambda: None}
+    runners = {
+        "param_search": lambda: None,
+        "auto_promote": lambda: None,
+        "calibrate": lambda: None,
+    }
     _register_lab_jobs(sched, runners)
     job_ids = {j.id for j in sched.get_jobs()}
-    assert job_ids == {"param_search", "auto_promote"}
+    assert job_ids == {"param_search", "auto_promote", "calibrate"}

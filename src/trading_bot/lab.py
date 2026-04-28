@@ -4,10 +4,11 @@ Usage:
     python -m trading_bot.lab
 
 Runs nightly param search + auto-promote alongside daemon and supervisor.
-SIGTERM gracefully stops the scheduler. Phase 3 wires two jobs:
+SIGTERM gracefully stops the scheduler. Three cron jobs:
 
     02:00 ET daily — param_search (ParamOptimizerRole)
     02:45 ET daily — auto_promote (PromoterRole)
+    05:00 ET daily — calibrate    (CalibratorRole, Phase 3.5)
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ STATE_DB = Path(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
 
 
 def _build_runners(log: StructuredLogger):
+    from trading_bot.roles.calibrator import CalibratorRole
     from trading_bot.roles.param_optimizer import ParamOptimizerRole
     from trading_bot.roles.promoter import PromoterRole
     from trading_bot.state_db import get_engine
@@ -35,6 +37,7 @@ def _build_runners(log: StructuredLogger):
     engine = get_engine(STATE_DB)
     optimizer = ParamOptimizerRole(engine=engine)
     promoter = PromoterRole(engine=engine, active_path=CONFIG_PATH)
+    calibrator = CalibratorRole(engine=engine, config_path=CONFIG_PATH)
 
     def _wrap(name: str, fn):
         def runner():
@@ -58,6 +61,9 @@ def _build_runners(log: StructuredLogger):
         "auto_promote": _wrap(
             "auto_promote", lambda: promoter.safe_run(ctx={})
         ),
+        "calibrate": _wrap(
+            "calibrate", lambda: calibrator.safe_run(ctx={})
+        ),
     }
 
 
@@ -72,6 +78,12 @@ def _register_lab_jobs(scheduler: BackgroundScheduler, runners: dict) -> None:
         runners["auto_promote"],
         trigger=CronTrigger(hour=2, minute=45, timezone="America/New_York"),
         id="auto_promote",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        runners["calibrate"],
+        trigger=CronTrigger(hour=5, minute=0, timezone="America/New_York"),
+        id="calibrate",
         replace_existing=True,
     )
 

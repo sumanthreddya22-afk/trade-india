@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from trading_bot.roles.base import RoleStatus
 from trading_bot.roles.promoter import PromoterRole
-from trading_bot.state_db import Base, Leaderboard
+from trading_bot.state_db import Base, Leaderboard, PromoterHalt
 
 
 @pytest.fixture
@@ -99,3 +99,50 @@ def test_promoter_handles_empty_leaderboard(engine, active_path):
     assert result.status == RoleStatus.OK
     assert result.outputs["promoted"] is False
     assert "no_candidate" in result.outputs.get("reason", "")
+
+
+def test_promoter_respects_calibrator_halt(engine, active_path):
+    """Even with a winning leaderboard row, an active PromoterHalt blocks promotion."""
+    role = PromoterRole(engine=engine, active_path=active_path)
+    now = dt.datetime.now(dt.timezone.utc)
+    with Session(engine) as s:
+        # Plant a leaderboard winner that would otherwise promote
+        _add_leaderboard_row(s, fitness=1.5, alpha=1.7, sortino=1.3, dd=15.0)
+        # And a calibrator halt active for the next 7 days
+        s.add(
+            PromoterHalt(
+                halted_until=now + dt.timedelta(days=7),
+                reason="calibrator drift: spearman_corr=-0.5",
+                set_by="calibrator",
+                set_at=now,
+            )
+        )
+        s.commit()
+
+    result = role.safe_run(ctx={})
+    assert result.status == RoleStatus.OK
+    assert result.outputs["promoted"] is False
+    assert result.outputs["reason"] == "halted_by_calibrator"
+    # Active config not touched
+    written = json.loads(active_path.read_text())
+    assert written["params"]["rsi_lower"] == 55.0
+
+
+def test_promoter_ignores_expired_halt(engine, active_path):
+    """An expired halt should not block promotion."""
+    role = PromoterRole(engine=engine, active_path=active_path)
+    now = dt.datetime.now(dt.timezone.utc)
+    with Session(engine) as s:
+        _add_leaderboard_row(s, fitness=1.5, alpha=1.7, sortino=1.3, dd=15.0)
+        # Halt that ended 1 day ago
+        s.add(
+            PromoterHalt(
+                halted_until=now - dt.timedelta(days=1),
+                reason="old halt",
+                set_by="calibrator",
+                set_at=now - dt.timedelta(days=8),
+            )
+        )
+        s.commit()
+    result = role.safe_run(ctx={})
+    assert result.outputs["promoted"] is True
