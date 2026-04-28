@@ -41,4 +41,12 @@ launchctl list | grep -E "${DAEMON_LABEL}|${SUPERVISOR_LABEL}|${LAB_LABEL}" || t
 echo
 echo "Logs at: $REPO_ROOT/runs/_launchd/"
 echo "Heartbeat: $REPO_ROOT/data/heartbeat.json"
+echo
+echo "Paper trading is now active."
+echo
+echo "To graduate to LIVE trading (real money), the operator runs:"
+echo "  bot promote --target=live --i-know-this-is-real-money   # types confirmation"
+echo "  ops/install_live.sh                                       # types second confirmation"
+echo "Both commands require typed confirmations. They cannot be bypassed via flag, env, or alias."
+echo
 echo "Done."

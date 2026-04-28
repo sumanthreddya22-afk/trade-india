@@ -907,6 +907,12 @@ def lab_backfill(symbols: str, months: int, db_path: str) -> None:
         click.echo(f"  {sym}: {note}")
 
 
+# Phase 6: bot promote — manual gate for paper → live trading.
+from trading_bot.promote_cli import register_promote_command  # noqa: E402
+
+register_promote_command(main)
+
+
 @main.command("massive-refresh")
 @click.option("--days", default=5, show_default=True, type=int,
               help="How many trading days back to ensure are cached.")
