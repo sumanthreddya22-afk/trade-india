@@ -80,6 +80,34 @@ class ConfigHistory(Base):
     payload_json = Column(Text, nullable=False)
 
 
+class Leaderboard(Base):
+    __tablename__ = "leaderboard"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    template_name = Column(String(64), nullable=False, index=True)
+    params_hash = Column(String(64), nullable=False, index=True)
+    params_json = Column(Text, nullable=False)
+    alpha_vs_spy_x = Column(Float, nullable=False)
+    sortino = Column(Float, nullable=False)
+    max_dd_pct = Column(Float, nullable=False)
+    folds_passed = Column(Integer, nullable=False)
+    folds_total = Column(Integer, nullable=False)
+    fitness_score = Column(Float, nullable=False, index=True)
+    recorded_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class EvolutionRun(Base):
+    __tablename__ = "evolution_runs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    started_at = Column(DateTime(timezone=True), nullable=False)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    template_name = Column(String(64), nullable=False)
+    n_trials = Column(Integer, nullable=False)
+    best_fitness = Column(Float, nullable=True)
+    best_params_hash = Column(String(64), nullable=True)
+    auto_promoted = Column(Integer, nullable=False, default=0)
+    promotion_gate_pass = Column(Text, nullable=True)
+
+
 def get_engine(db_path: str | Path = "data/state.db"):
     engine = create_engine(f"sqlite:///{db_path}", future=True)
 
