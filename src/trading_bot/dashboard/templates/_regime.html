@@ -1,0 +1,23 @@
+<section id="regime" class="card p-6 lg:p-8 flex flex-col lg:flex-row lg:items-center justify-between gap-6"
+         hx-get="/fragment/regime" hx-trigger="every 60s" hx-swap="outerHTML">
+  <div class="space-y-2">
+    <div class="label">Regime</div>
+    <h2 class="text-3xl lg:text-5xl font-bold capitalize gradient-text">
+      {{ s.regime.replace('_', ' ') }}
+    </h2>
+    <p class="text-sm text-slate-400 max-w-2xl">{{ s.regime_notes or "—" }}</p>
+    <div class="flex flex-wrap gap-3 text-xs text-slate-500 mt-2">
+      {% if s.vix is not none %}<span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700">VIX {{ "%.2f"|format(s.vix) }}</span>{% endif %}
+      <span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700">20d vol {{ "%.1f"|format(s.vol_pct) }}%</span>
+      <span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700">Universe {{ s.universe_size }} ({{ s.universe_source }})</span>
+    </div>
+  </div>
+  <div class="text-right shrink-0">
+    <div class="label mb-2">Automation</div>
+    {% set color = "emerald" if s.automation_status == "OK" else ("amber" if s.automation_status == "WARN" else "rose") %}
+    <div class="px-5 py-3 rounded-xl border border-{{ color }}-500/40 bg-{{ color }}-500/10 inline-block">
+      <div class="text-3xl font-bold text-{{ color }}-400">{{ s.automation_status }}</div>
+    </div>
+    <div class="text-xs text-slate-500 mt-1">{{ s.automation_note }}</div>
+  </div>
+</section>

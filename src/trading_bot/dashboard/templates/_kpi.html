@@ -1,0 +1,33 @@
+<section id="kpi" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"
+         hx-get="/fragment/kpi" hx-trigger="every 60s" hx-swap="outerHTML">
+  <div class="card p-5">
+    <div class="label">Equity</div>
+    <div class="kpi-num text-emerald-400 mt-2">{{ fmt.usd(s.kpi.equity) }}</div>
+    <div class="kpi-sub">{{ s.kpi.open_position_count }} open position{{ "" if s.kpi.open_position_count == 1 else "s" }}</div>
+  </div>
+  <div class="card p-5">
+    <div class="label">Today P&amp;L</div>
+    <div class="kpi-num text-{{ fmt.pnl_color(s.kpi.today_pnl_pct) }}-400 mt-2">{{ fmt.pct(s.kpi.today_pnl_pct, sign=true) }}</div>
+    <div class="kpi-sub">vs prior close</div>
+  </div>
+  <div class="card p-5">
+    <div class="label">Open P&amp;L</div>
+    <div class="kpi-num text-{{ fmt.pnl_color(s.kpi.open_pnl) }}-400 mt-2">{{ fmt.usd(s.kpi.open_pnl, sign=true) }}</div>
+    <div class="kpi-sub">unrealised on open</div>
+  </div>
+  <div class="card p-5">
+    <div class="label">Cash</div>
+    <div class="kpi-num text-cyan-400 mt-2">{{ fmt.pct(s.kpi.cash_pct) }}</div>
+    <div class="kpi-sub">{{ fmt.usd(s.kpi.cash) }} dry powder</div>
+  </div>
+  <div class="card p-5">
+    <div class="label">Invested</div>
+    <div class="kpi-num text-cyan-400 mt-2">{{ fmt.pct(s.kpi.invested_pct) }}</div>
+    <div class="kpi-sub">deployed capital</div>
+  </div>
+  <div class="card p-5">
+    <div class="label">Max Drawdown</div>
+    <div class="kpi-num text-rose-400 mt-2">{{ fmt.pct(s.kpi.max_drawdown_pct) }}</div>
+    <div class="kpi-sub">30d trailing</div>
+  </div>
+</section>

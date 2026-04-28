@@ -1,17 +1,32 @@
 """FastAPI app for the local trading dashboard.
 
-Single page (`GET /`). Auto-refreshes via HTMX `hx-get="/"` every 60s,
-swapping the entire `<main>` body. The snapshot is cached server-side
-for 30s so 10+ concurrent section reloads don't hammer Alpaca.
+Per-section HTMX refresh: each card auto-refreshes its own fragment so
+the user keeps scroll position, focus, and chart instances. A single
+DashboardSnapshot is built every ~25s by a background thread; requests
+serve from cache. Concurrent cache misses are coalesced behind a lock.
+
+Routes
+------
+- GET /                            full page
+- GET /architecture                static page
+- GET /fragment/{name}             one section (HTMX target)
+- GET /api/snapshot                JSON
+- GET /api/equity-curve?range=...  JSON; range ∈ 1w|1m|3m|ytd|all
+- GET /api/market-session          JSON; pre|rth|after|closed
+- GET /refresh                     forced re-render (full page)
 """
 from __future__ import annotations
 
+import threading
 import time
+from datetime import datetime, time as dtime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from trading_bot.config import Settings, load_config
@@ -22,47 +37,173 @@ WATCHLIST_PATH = Path("strategy/watchlist.yaml")
 OPPORTUNITIES_PATH = Path("strategy/opportunities.md")
 CLOSED_DB_PATH = Path("data/closed_trades.db")
 
-CACHE_TTL_SECONDS = 30
+CACHE_TTL_SECONDS = 25
+BG_REFRESH_INTERVAL = 25
+
+# Whitelist of fragment names → partial template files.
+FRAGMENTS: dict[str, str] = {
+    "header": "_header.html",
+    "regime": "_regime.html",
+    "kpi": "_kpi.html",
+    "risk": "_risk.html",
+    "macro_alloc": "_macro_alloc.html",
+    "last_scan": "_last_scan.html",
+    "exposure": "_exposure.html",
+    "equity": "_equity.html",
+    "stats": "_stats.html",
+    "opportunities": "_opportunities.html",
+    "orders": "_orders.html",
+    "scheduled": "_scheduled.html",
+    "errors": "_errors.html",
+    "sidebar_status": "_sidebar_status.html",
+}
 
 
 class _SnapshotCache:
+    """Thread-safe snapshot cache with single-flight semantics."""
+
     def __init__(self, ttl: float) -> None:
         self._ttl = ttl
         self._stamp: float = 0.0
         self._snap: DashboardSnapshot | None = None
+        self._lock = threading.Lock()
+        self._build_lock = threading.Lock()
+
+    def _is_fresh(self, now: float) -> bool:
+        return self._snap is not None and (now - self._stamp) <= self._ttl
 
     def get(self) -> DashboardSnapshot:
         now = time.time()
-        if self._snap is None or (now - self._stamp) > self._ttl:
-            self._snap = build_snapshot(
-                settings=Settings(),
-                config=load_config(CONFIG_PATH),
-                opportunities_path=OPPORTUNITIES_PATH,
-                watchlist_path=WATCHLIST_PATH,
-                closed_db_path=CLOSED_DB_PATH,
-            )
-            self._stamp = now
-        return self._snap
+        with self._lock:
+            if self._is_fresh(now):
+                return self._snap  # type: ignore[return-value]
+
+        # Single-flight: only one thread builds; others wait then re-read.
+        with self._build_lock:
+            with self._lock:
+                if self._is_fresh(time.time()):
+                    return self._snap  # type: ignore[return-value]
+            snap = self._build()
+            with self._lock:
+                self._snap = snap
+                self._stamp = time.time()
+            return snap
+
+    def force_refresh(self) -> DashboardSnapshot:
+        with self._build_lock:
+            snap = self._build()
+            with self._lock:
+                self._snap = snap
+                self._stamp = time.time()
+            return snap
 
     def invalidate(self) -> None:
-        self._snap = None
-        self._stamp = 0.0
+        with self._lock:
+            self._snap = None
+            self._stamp = 0.0
+
+    def _build(self) -> DashboardSnapshot:
+        return build_snapshot(
+            settings=Settings(),
+            config=load_config(CONFIG_PATH),
+            opportunities_path=OPPORTUNITIES_PATH,
+            watchlist_path=WATCHLIST_PATH,
+            closed_db_path=CLOSED_DB_PATH,
+        )
+
+
+def _start_background_refresher(cache: _SnapshotCache, interval: float) -> threading.Event:
+    """Spawn a daemon thread that keeps the cache warm. Returns a stop event."""
+    stop = threading.Event()
+
+    def _loop() -> None:
+        while not stop.wait(interval):
+            try:
+                cache.force_refresh()
+            except Exception:
+                # Snapshot builder is supposed to never raise, but be defensive.
+                pass
+
+    t = threading.Thread(target=_loop, name="dashboard-cache-refresher", daemon=True)
+    t.start()
+    return stop
+
+
+# ---------- market session ------------------------------------------------
+
+_NY = ZoneInfo("America/New_York")
+
+
+def _market_session(now_utc: datetime | None = None) -> tuple[str, str]:
+    """Return (code, label). code ∈ pre|rth|after|closed. Treats holidays as
+    plain weekday hours — we don't have a holiday calendar handy and the chip
+    is informational, not gating logic."""
+    now = (now_utc or datetime.now(timezone.utc)).astimezone(_NY)
+    wd = now.weekday()  # Mon=0
+    if wd >= 5:
+        return "closed", "Market closed (weekend)"
+    t = now.time()
+    if dtime(4, 0) <= t < dtime(9, 30):
+        return "pre", "Pre-market"
+    if dtime(9, 30) <= t < dtime(16, 0):
+        return "rth", "Regular hours"
+    if dtime(16, 0) <= t < dtime(20, 0):
+        return "after", "After-hours"
+    return "closed", "Market closed"
+
+
+# ---------- equity range filtering ---------------------------------------
+
+_RANGE_DAYS = {"1w": 7, "1m": 30, "3m": 90, "ytd": -1, "all": -2}
+
+
+def _filter_equity_range(points: list[Any], range_key: str) -> list[Any]:
+    """Slice equity_curve to the requested range. `points` are EquityPoint."""
+    if not points:
+        return points
+    if range_key == "all":
+        return points
+    now = datetime.now(timezone.utc)
+    if range_key == "ytd":
+        cutoff = datetime(now.year, 1, 1, tzinfo=timezone.utc)
+        return [p for p in points if p.ts >= cutoff]
+    days = _RANGE_DAYS.get(range_key, 30)
+    if days <= 0:
+        return points
+    cutoff_ts = now.timestamp() - days * 86400
+    return [p for p in points if p.ts.timestamp() >= cutoff_ts]
+
+
+# ---------- app factory ---------------------------------------------------
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Trading Bot Dashboard", docs_url=None, redoc_url=None)
-    templates_dir = Path(__file__).parent / "templates"
-    templates = Jinja2Templates(directory=str(templates_dir))
-    cache = _SnapshotCache(ttl=CACHE_TTL_SECONDS)
+    base = Path(__file__).parent
+    templates = Jinja2Templates(directory=str(base / "templates"))
+    app.mount("/static", StaticFiles(directory=str(base / "static")), name="static")
 
-    def _ctx(snap: DashboardSnapshot) -> dict[str, Any]:
+    cache = _SnapshotCache(ttl=CACHE_TTL_SECONDS)
+    # Build once eagerly so the first request is fast.
+    try:
+        cache.force_refresh()
+    except Exception:
+        pass
+    _start_background_refresher(cache, BG_REFRESH_INTERVAL)
+
+    def _ctx(snap: DashboardSnapshot, range_key: str = "1m") -> dict[str, Any]:
+        session_code, session_label = _market_session()
+        curve = _filter_equity_range(list(snap.equity_curve), range_key)
         return {
             "s": snap,
             "fmt": _formatters(),
             "equity_points": [
-                {"ts": p.ts.isoformat(), "equity": float(p.equity)}
-                for p in snap.equity_curve
+                {"ts": p.ts.isoformat(), "equity": float(p.equity)} for p in curve
             ],
+            "equity_range": range_key,
+            "market_session": {"code": session_code, "label": session_label},
+            "fragments": list(FRAGMENTS.keys()),
+            "scan_age_seconds": _scan_age_seconds(snap),
         }
 
     @app.get("/", response_class=HTMLResponse)
@@ -76,9 +217,15 @@ def create_app() -> FastAPI:
 
     @app.get("/refresh", response_class=HTMLResponse)
     def refresh(request: Request) -> Any:
-        cache.invalidate()
-        snap = cache.get()
+        snap = cache.force_refresh()
         return templates.TemplateResponse(request, "dashboard.html", _ctx(snap))
+
+    @app.get("/fragment/{name}", response_class=HTMLResponse)
+    def fragment(request: Request, name: str, range: str = "1m") -> Any:
+        if name not in FRAGMENTS:
+            raise HTTPException(status_code=404, detail=f"unknown fragment: {name}")
+        snap = cache.get()
+        return templates.TemplateResponse(request, FRAGMENTS[name], _ctx(snap, range))
 
     @app.get("/api/snapshot")
     def api_snapshot() -> Any:
@@ -86,16 +233,34 @@ def create_app() -> FastAPI:
         return JSONResponse(_snapshot_to_dict(snap))
 
     @app.get("/api/equity-curve")
-    def api_equity_curve() -> Any:
+    def api_equity_curve(range: str = "1m") -> Any:
         snap = cache.get()
+        curve = _filter_equity_range(list(snap.equity_curve), range)
         return JSONResponse({
+            "range": range,
             "points": [
-                {"ts": p.ts.isoformat(), "equity": float(p.equity)}
-                for p in snap.equity_curve
+                {"ts": p.ts.isoformat(), "equity": float(p.equity)} for p in curve
             ],
         })
 
+    @app.get("/api/market-session")
+    def api_market_session() -> Any:
+        code, label = _market_session()
+        return JSONResponse({"code": code, "label": label})
+
     return app
+
+
+# ---------- helpers exposed to templates ---------------------------------
+
+
+def _scan_age_seconds(snap: DashboardSnapshot) -> int | None:
+    if snap.last_scan is None:
+        return None
+    ts = snap.last_scan.timestamp
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return int((datetime.now(timezone.utc) - ts).total_seconds())
 
 
 def _formatters() -> dict[str, Any]:
@@ -142,6 +307,41 @@ def _formatters() -> dict[str, Any]:
             return "rose"
         return "slate"
 
+    def clamp_pct(v: Any) -> float:
+        """Clamp 0..100 for width styling; tolerates None/NaN."""
+        try:
+            x = float(v)
+        except Exception:
+            return 0.0
+        if x != x:  # NaN
+            return 0.0
+        return max(0.0, min(100.0, x))
+
+    def short_dt(v: Any) -> str:
+        """Locale-portable short date/time. Avoids %-I/%-d (GNU/BSD only)."""
+        try:
+            if isinstance(v, datetime):
+                d = v
+            else:
+                d = datetime.fromisoformat(str(v))
+        except Exception:
+            return "—"
+        s = d.strftime("%b %d at %I:%M %p UTC")
+        return s.replace(" 0", " ")  # strip leading zeros portably
+
+    def relative_age(seconds: Any) -> str:
+        try:
+            n = int(seconds)
+        except Exception:
+            return "—"
+        if n < 60:
+            return f"{n}s ago"
+        if n < 3600:
+            return f"{n // 60}m ago"
+        if n < 86400:
+            return f"{n // 3600}h {(n % 3600) // 60}m ago"
+        return f"{n // 86400}d ago"
+
     class _Fmt:
         pass
 
@@ -151,6 +351,9 @@ def _formatters() -> dict[str, Any]:
     f.num_or_dash = num_or_dash
     f.regime_color = regime_color
     f.pnl_color = pnl_color
+    f.clamp_pct = clamp_pct
+    f.short_dt = short_dt
+    f.relative_age = relative_age
     return f  # type: ignore[return-value]
 
 
@@ -215,6 +418,7 @@ def _snapshot_to_dict(s: DashboardSnapshot) -> dict[str, Any]:
         "universe_size": s.universe_size,
         "universe_source": s.universe_source,
         "errors": s.errors,
+        "market_session": dict(zip(("code", "label"), _market_session())),
     }
 
 

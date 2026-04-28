@@ -240,19 +240,26 @@ def _build_kpi(alpaca: AlpacaClient, errors: list[str]) -> tuple[KpiBlock, list[
     rows: list[PositionRow] = []
     open_pnl = Decimal("0")
     for p in positions:
-        ue = _safe_decimal(p.unrealized_pl)
-        open_pnl += ue
-        avg_e = _safe_decimal(p.avg_entry_price)
-        last = _safe_decimal(p.current_price)
-        mv = _safe_decimal(p.market_value)
-        pct = ((last / avg_e - 1) * 100).quantize(Decimal("0.01")) if avg_e > 0 else Decimal("0")
-        rows.append(PositionRow(
-            symbol=p.symbol,
-            asset_class=str(p.asset_class),
-            qty=_safe_decimal(p.qty),
-            avg_entry=avg_e, last_price=last,
-            market_value=mv, unrealized_pl=ue, unrealized_pl_pct=pct,
-        ))
+        try:
+            ue = _safe_decimal(p.unrealized_pl)
+            open_pnl += ue
+            avg_e = _safe_decimal(p.avg_entry_price)
+            qty = _safe_decimal(p.qty)
+            mv = _safe_decimal(p.market_value)
+            # Local Position dataclass doesn't expose last/current price;
+            # derive it from market_value / qty (signed for shorts).
+            last = (mv / qty) if qty != 0 else avg_e
+            pct = ((last / avg_e - 1) * 100).quantize(Decimal("0.01")) if avg_e > 0 else Decimal("0")
+            rows.append(PositionRow(
+                symbol=p.symbol,
+                asset_class=str(p.asset_class),
+                qty=qty,
+                avg_entry=avg_e, last_price=last,
+                market_value=mv, unrealized_pl=ue, unrealized_pl_pct=pct,
+            ))
+        except Exception as e:
+            errors.append(f"position {getattr(p, 'symbol', '?')}: {e}")
+            continue
 
     return KpiBlock(
         equity=equity, cash=cash,

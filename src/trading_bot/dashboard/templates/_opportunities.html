@@ -1,0 +1,30 @@
+<div id="opportunities" class="card p-6"
+     hx-get="/fragment/opportunities" hx-trigger="every 60s" hx-swap="outerHTML">
+  <div class="flex items-baseline justify-between">
+    <div>
+      <div class="label">Today's Watchlist</div>
+      <h3 class="text-xl font-semibold mt-1">Top Opportunities</h3>
+    </div>
+    <span class="text-xs text-slate-500">{{ s.opportunities|length }} of {{ s.universe_size }} ranked</span>
+  </div>
+  <div class="mt-4 max-h-96 overflow-y-auto scroll-thin">
+    {% if s.opportunities %}
+    <table class="w-full text-sm">
+      <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-slate-950/95">
+        <tr><th class="text-left py-2 pr-2">#</th><th class="text-left py-2 pr-2">Symbol</th><th class="text-left py-2">Class</th></tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800/60">
+        {% for o in s.opportunities %}
+        <tr class="pos-row">
+          <td class="py-2 pr-2 text-slate-500">{{ o.rank }}</td>
+          <td class="py-2 pr-2 font-mono">{{ o.symbol }}</td>
+          <td class="py-2 text-slate-400 capitalize">{{ o.asset_class.replace('_', ' ') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="text-sm text-slate-500 italic">opportunities.md is empty — premarket rank job hasn't run yet (next: 8:07 ET tomorrow).</div>
+    {% endif %}
+  </div>
+</div>

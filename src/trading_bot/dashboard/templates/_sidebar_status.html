@@ -1,0 +1,10 @@
+<div id="sidebar_status" class="px-2 text-xs flex items-center gap-2"
+     hx-get="/fragment/sidebar_status" hx-trigger="every 60s" hx-swap="outerHTML">
+  {% if s.automation_status == "OK" %}
+    <span class="pulse-dot"></span><span class="text-emerald-400">Automation healthy</span>
+  {% elif s.automation_status == "WARN" %}
+    <span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="text-amber-400">{{ s.automation_note }}</span>
+  {% else %}
+    <span class="w-2 h-2 rounded-full bg-rose-500"></span><span class="text-rose-400">{{ s.automation_note }}</span>
+  {% endif %}
+</div>

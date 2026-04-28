@@ -1,0 +1,29 @@
+<header id="frag-header" class="flex items-start justify-between flex-wrap gap-3"
+        hx-get="/fragment/header" hx-trigger="every 60s" hx-swap="outerHTML">
+  <div>
+    <div class="flex items-center gap-2 text-xs tracking-[.2em] uppercase text-cyan-400/80 font-semibold">
+      Alpaca Paper Account
+      {% set sc = market_session.code %}
+      {% set sess_color = "emerald" if sc == "rth" else ("amber" if sc in ("pre","after") else "slate") %}
+      <span class="px-2 py-0.5 rounded-full bg-{{ sess_color }}-500/10 border border-{{ sess_color }}-500/30 text-{{ sess_color }}-300 normal-case tracking-normal text-[11px]">
+        {{ market_session.label }}
+      </span>
+      {% if s.errors %}
+      <a href="#errors" class="px-2 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/40 text-amber-300 normal-case tracking-normal text-[11px]">
+        ⚠ {{ s.errors|length }} error{{ "" if s.errors|length == 1 else "s" }}
+      </a>
+      {% endif %}
+    </div>
+    <h1 class="text-3xl lg:text-4xl font-bold mt-1">Today's Trading Command Center</h1>
+  </div>
+  <div class="text-right">
+    <div class="text-xs text-slate-500">Cache 25s · per-section refresh 60s</div>
+    <div class="mt-1 flex items-center gap-2 justify-end">
+      <button hx-get="/refresh" hx-target="body" hx-select="body" hx-swap="outerHTML"
+              class="px-3 py-1.5 rounded-md border border-slate-700 hover:border-cyan-500 hover:text-cyan-300 text-sm">
+        ↻ Refresh
+      </button>
+      <span class="text-xs text-slate-500">Generated {{ fmt.short_dt(s.generated_at) }}</span>
+    </div>
+  </div>
+</header>
