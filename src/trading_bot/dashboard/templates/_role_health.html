@@ -1,0 +1,44 @@
+<section id="role_health"
+         class="card p-5"
+         hx-get="/fragment/role_health"
+         hx-trigger="every 60s"
+         hx-swap="outerHTML">
+  <div class="flex items-center justify-between mb-4">
+    <span class="label">Role Health</span>
+    <span class="text-[11px] text-slate-500">last 30 days · success rate</span>
+  </div>
+
+  {% if not lab.role_health %}
+    <div class="text-sm text-slate-500">No role runs in last 30 days.</div>
+  {% else %}
+    <div class="grid grid-cols-2 lg:grid-cols-3 gap-2">
+      {% for r in lab.role_health %}
+        {% set rate = r.success_rate_pct %}
+        {% if rate >= 95 %}
+          {% set tone_bg = "bg-emerald-950/40" %}
+          {% set tone_border = "border-emerald-800/50" %}
+          {% set tone_text = "text-emerald-300" %}
+        {% elif rate >= 70 %}
+          {% set tone_bg = "bg-amber-950/40" %}
+          {% set tone_border = "border-amber-800/50" %}
+          {% set tone_text = "text-amber-300" %}
+        {% else %}
+          {% set tone_bg = "bg-rose-950/40" %}
+          {% set tone_border = "border-rose-800/50" %}
+          {% set tone_text = "text-rose-300" %}
+        {% endif %}
+        <div class="rounded-lg border {{ tone_border }} {{ tone_bg }} px-3 py-2"
+             title="{% if r.last_error %}Last error: {{ r.last_error }}{% else %}Last run: {{ r.last_status }}{% endif %}">
+          <div class="flex items-baseline justify-between gap-2">
+            <span class="text-[12px] font-mono text-slate-300 truncate">{{ r.role_name }}</span>
+            <span class="text-sm font-semibold font-mono {{ tone_text }}">{{ "%.0f"|format(rate) }}%</span>
+          </div>
+          <div class="text-[10px] text-slate-500 mt-1 flex justify-between">
+            <span>{{ r.runs_today }} today</span>
+            <span>{{ r.runs_30d }} in 30d</span>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</section>

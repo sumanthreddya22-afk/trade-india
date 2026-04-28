@@ -1,0 +1,59 @@
+<section id="llm_spend"
+         class="card p-5"
+         hx-get="/fragment/llm_spend"
+         hx-trigger="every 300s"
+         hx-swap="outerHTML">
+  <div class="flex items-center justify-between mb-3">
+    <span class="label">LLM Spend</span>
+    <span class="text-[11px] text-slate-500">Anthropic · month-to-date</span>
+  </div>
+
+  {% set sp = lab.llm_spend %}
+  {% if sp is none or sp.n_calls_mtd == 0 %}
+    <div class="space-y-2">
+      <div class="text-sm text-slate-500">No Anthropic API calls this month.</div>
+      <div class="text-[11px] text-slate-600">First call fires Saturday 06:00 ET (Strategy Architect)</div>
+      {% if sp %}
+      <div class="text-[11px] text-slate-600">Cap: ${{ "%.0f"|format(sp.monthly_cap_usd) }}/mo</div>
+      {% endif %}
+    </div>
+  {% else %}
+    {% set pct = sp.pct_used %}
+    {% set bar_color = "bg-emerald-400" if pct < 70 else ("bg-amber-400" if pct < 90 else "bg-rose-400") %}
+    <div class="flex items-baseline gap-3">
+      <span class="text-3xl font-bold font-mono text-slate-100">${{ "%.2f"|format(sp.month_to_date_usd) }}</span>
+      <span class="text-xs text-slate-500">of ${{ "%.0f"|format(sp.monthly_cap_usd) }} cap</span>
+    </div>
+    <div class="mt-3 h-2 bg-slate-800 rounded-full overflow-hidden">
+      <div class="{{ bar_color }} h-full transition-all" style="width: {{ pct if pct <= 100 else 100 }}%"></div>
+    </div>
+    <div class="grid grid-cols-3 gap-3 mt-4">
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Calls MTD</div>
+        <div class="text-sm font-semibold text-slate-200 mt-1">{{ sp.n_calls_mtd }}</div>
+      </div>
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Calls 30d</div>
+        <div class="text-sm font-semibold text-slate-200 mt-1">{{ sp.n_calls_30d }}</div>
+      </div>
+      <div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Top Model</div>
+        <div class="text-[12px] font-mono text-slate-300 mt-1 truncate" title="{{ sp.most_used_model }}">{{ sp.most_used_model or '—' }}</div>
+      </div>
+    </div>
+    {% if sp.last_call_at %}
+    <div class="text-[11px] text-slate-500 mt-3">
+      Last call: {{ sp.last_call_at.strftime('%b %d %H:%M UTC') }}
+    </div>
+    {% endif %}
+    {% if pct >= 80 and pct < 100 %}
+    <div class="mt-3 p-2 rounded bg-amber-900/30 border border-amber-700/40 text-xs text-amber-200">
+      ⚠ Spend approaching cap. Architect will refuse calls at 100%.
+    </div>
+    {% elif pct >= 100 %}
+    <div class="mt-3 p-2 rounded bg-rose-900/30 border border-rose-700/40 text-xs text-rose-200">
+      🛑 Cap hit. Architect halted until next month.
+    </div>
+    {% endif %}
+  {% endif %}
+</section>

@@ -1,0 +1,38 @@
+<section id="strategy_mode"
+         class="card p-5"
+         hx-get="/fragment/strategy_mode"
+         hx-trigger="every 60s"
+         hx-swap="outerHTML">
+  <div class="flex items-center justify-between mb-3">
+    <span class="label">Strategy Mode</span>
+    {% if lab.hold_spy_transition %}
+      <span class="text-xs text-amber-300">↻ {{ lab.hold_spy_transition.phase }} day {{ lab.hold_spy_transition.day_index }}/5</span>
+    {% endif %}
+  </div>
+  {% if lab.strategy_mode is none %}
+    <div class="text-sm text-slate-500">Strategy mode not yet bootstrapped.</div>
+  {% else %}
+    {% set m = lab.strategy_mode %}
+    {% if m.is_fallback %}
+      <div class="flex items-baseline gap-3">
+        <span class="text-3xl font-bold text-amber-300 tracking-wider">FALLBACK</span>
+        <span class="text-xs text-amber-200/70">hold-SPY mode</span>
+      </div>
+    {% else %}
+      <div class="flex items-baseline gap-3">
+        <span class="text-3xl font-bold text-emerald-300 tracking-wider">ACTIVE</span>
+        <span class="text-xs text-emerald-200/70">trading {{ m.set_by }}</span>
+      </div>
+    {% endif %}
+    <div class="text-xs text-slate-500 mt-2">
+      {% if m.days_in_state == 0 %}Set today
+      {% elif m.days_in_state == 1 %}1 day in state
+      {% else %}{{ m.days_in_state }} days in state
+      {% endif %}
+      · {{ m.set_at.strftime('%Y-%m-%d %H:%M UTC') }}
+    </div>
+    {% if m.reason %}
+      <div class="text-xs text-slate-400 mt-1">{{ m.reason }}</div>
+    {% endif %}
+  {% endif %}
+</section>

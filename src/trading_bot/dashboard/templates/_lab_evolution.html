@@ -1,0 +1,69 @@
+<section id="lab_evolution"
+         class="card p-5"
+         hx-get="/fragment/lab_evolution"
+         hx-trigger="every 120s"
+         hx-swap="outerHTML">
+  <div class="flex items-center justify-between mb-4">
+    <span class="label">Lab Evolution</span>
+    <span class="text-[11px] text-slate-500">nightly param search · top variants</span>
+  </div>
+
+  {% set ev = lab.lab_evolution %}
+  {% if ev is none or (ev.last_run_started_at is none and not ev.top_leaderboard) %}
+    <div class="text-sm text-slate-500">Lab has not produced any leaderboard rows yet. First successful nightly run will populate this.</div>
+  {% else %}
+    {# Last run summary KPIs #}
+    {% if ev.last_run_started_at %}
+    <div class="grid grid-cols-2 gap-3 mb-4">
+      <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Last Search</div>
+        <div class="text-lg font-semibold mt-0.5">{{ ev.last_run_n_trials }} trials</div>
+        <div class="text-[11px] text-slate-500 mt-0.5">{{ ev.last_run_template }} · {{ ev.last_run_started_at.strftime('%b %d %H:%M UTC') }}</div>
+      </div>
+      <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Best Fitness</div>
+        <div class="text-lg font-semibold mt-0.5 {% if ev.last_run_promoted %}text-emerald-300{% else %}text-slate-100{% endif %}">
+          {% if ev.last_run_best_fitness is not none %}{{ "%.2f"|format(ev.last_run_best_fitness) }}{% else %}—{% endif %}
+        </div>
+        <div class="text-[11px] mt-0.5 {% if ev.last_run_promoted %}text-emerald-400{% else %}text-slate-500{% endif %}">
+          {% if ev.last_run_promoted %}auto-promoted{% else %}no promotion{% endif %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {# Top leaderboard table #}
+    {% if ev.top_leaderboard %}
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
+            <th class="py-2 pr-3 font-semibold">Template</th>
+            <th class="py-2 pr-3 font-semibold text-right">α vs SPY</th>
+            <th class="py-2 pr-3 font-semibold text-right">Sortino</th>
+            <th class="py-2 pr-3 font-semibold text-right">Max DD</th>
+            <th class="py-2 pr-3 font-semibold text-right">Folds</th>
+            <th class="py-2 font-semibold text-right">Fitness</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in ev.top_leaderboard %}
+          <tr class="border-b border-slate-800/40 hover:bg-slate-900/40">
+            <td class="py-2 pr-3 font-mono text-slate-200">{{ r.template }}</td>
+            <td class="py-2 pr-3 text-right font-mono {% if r.alpha_vs_spy_x >= 1.5 %}text-emerald-300{% elif r.alpha_vs_spy_x >= 1.0 %}text-slate-100{% else %}text-rose-300{% endif %}">
+              {{ "%.2f"|format(r.alpha_vs_spy_x) }}x
+            </td>
+            <td class="py-2 pr-3 text-right font-mono">{{ "%.2f"|format(r.sortino) }}</td>
+            <td class="py-2 pr-3 text-right font-mono {% if r.max_dd_pct > 20 %}text-rose-300{% else %}text-slate-200{% endif %}">{{ "%.1f"|format(r.max_dd_pct) }}%</td>
+            <td class="py-2 pr-3 text-right font-mono text-slate-400">{{ r.folds }}</td>
+            <td class="py-2 text-right font-mono font-semibold">{{ "%.2f"|format(r.fitness_score) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <div class="text-sm text-slate-500">No leaderboard rows yet.</div>
+    {% endif %}
+  {% endif %}
+</section>
