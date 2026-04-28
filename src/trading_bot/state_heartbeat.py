@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import time
 from pathlib import Path
 
 
@@ -32,5 +33,5 @@ def is_stale(path: str | Path, *, max_age_seconds: int) -> bool:
     p = Path(path)
     if not p.exists():
         return True
-    age = dt.datetime.now().timestamp() - p.stat().st_mtime
+    age = time.time() - p.stat().st_mtime
     return age > max_age_seconds

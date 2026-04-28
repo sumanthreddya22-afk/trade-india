@@ -5,8 +5,8 @@
 """
 from __future__ import annotations
 
-import datetime as dt
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,7 +35,7 @@ class StallDetector:
         p = self.heartbeat_path
         if not p.exists():
             return StallVerdict(is_stalled=True, age_seconds=float("inf"))
-        age = dt.datetime.now().timestamp() - p.stat().st_mtime
+        age = time.time() - p.stat().st_mtime
         return StallVerdict(
             is_stalled=age > self.max_age_seconds,
             age_seconds=age,

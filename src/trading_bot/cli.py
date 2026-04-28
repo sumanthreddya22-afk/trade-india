@@ -886,6 +886,20 @@ def dashboard(host: str, port: int, reload: bool) -> None:
     run(host=host, port=port, reload=reload)
 
 
+@main.command("daemon")
+def daemon_cmd() -> None:
+    """Run the trading bot daemon (long-running APScheduler-driven process)."""
+    from trading_bot.daemon import main as daemon_main
+    raise SystemExit(daemon_main())
+
+
+@main.command("supervisor")
+def supervisor_cmd() -> None:
+    """Run the trading bot supervisor (watchdog + drawdown sentinel)."""
+    from trading_bot.supervisor import main as supervisor_main
+    raise SystemExit(supervisor_main())
+
+
 @main.command("massive-refresh")
 @click.option("--days", default=5, show_default=True, type=int,
               help="How many trading days back to ensure are cached.")

@@ -28,32 +28,58 @@ CONFIG_PATH = Path(os.environ.get("TRADING_BOT_CONFIG", "data/paper_active.json"
 HEARTBEAT_PATH = Path(os.environ.get("TRADING_BOT_HEARTBEAT", "data/heartbeat.json"))
 PAUSE_PATH = Path(os.environ.get("TRADING_BOT_PAUSE", "data/pause.flag"))
 RUNS_DIR = Path(os.environ.get("TRADING_BOT_RUNS", "runs"))
+STATE_DB = Path(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
 
 
 def _load_runners(log: StructuredLogger):
-    """Wraps existing CLI command functions, plus heartbeat."""
-    # Lazy imports so daemon module can be imported in tests without side effects
-    from trading_bot import cli as cli_mod
+    """Instantiate Role objects and return runner callables that wrap role.safe_run(ctx)."""
+    from trading_bot.state_db import get_engine
+    from trading_bot.roles.health_pulse import HealthPulseRole
+    from trading_bot.roles.stock_scanner import StockScannerRole
+    from trading_bot.roles.crypto_scanner import CryptoScannerRole
+    from trading_bot.roles.portfolio_monitor import PortfolioMonitorRole
+    from trading_bot.roles.order_steward import OrderStewardRole
+    from trading_bot.roles.sentiment_analyst import SentimentAnalystRole
+    from trading_bot.roles.universe_curator import UniverseCuratorRole
+    from trading_bot.roles.vip_listener import VipListenerRole
+    from trading_bot.roles.reporter import ReporterRole
+    from trading_bot.log_rotation import rotate_logs
 
-    config_version = "phase1-v1"
+    config_version = "phase2-v1"
+
+    # Build the engine once — roles hold it for KPI persistence across calls.
+    engine = get_engine(STATE_DB)
+
+    # Instantiate Role objects once (not per call) so SQLAlchemy engine is stable.
+    health_pulse = HealthPulseRole(engine=engine, heartbeat_path=HEARTBEAT_PATH, version=config_version)
+    stock_scanner = StockScannerRole(engine=engine)
+    crypto_scanner = CryptoScannerRole(engine=engine)
+    portfolio_monitor = PortfolioMonitorRole(engine=engine)
+    order_steward = OrderStewardRole(engine=engine)
+    sentiment_analyst = SentimentAnalystRole(engine=engine)
+    universe_curator = UniverseCuratorRole(engine=engine)
+    vip_listener = VipListenerRole(engine=engine)
+    reporter = ReporterRole(engine=engine)
 
     def _heartbeat():
+        health_pulse.safe_run(ctx={})
+        # Also write the legacy heartbeat file so supervisor's StallDetector still works.
         write_heartbeat(HEARTBEAT_PATH, version=config_version, last_action="heartbeat")
 
-    def _wrap(name: str, fn: callable):
+    def _wrap(name: str, role_fn):
+        """Wrap a role callable with pause-flag check and heartbeat update."""
         def runner():
             log.event(f"{name}_start")
-            # Block any job that may place orders. daily_digest invokes full_run which scans + trades.
-            # Block any job that may place orders. midday_report invokes rich-report
-            # which scans + trades. daily_digest invokes eod-report (read-only) so it
-            # is safe to run during pause.
+            # Block any job that may place orders.
+            # midday_report invokes rich-report which scans + trades.
+            # daily_digest invokes eod-report (read-only) so it is safe during pause.
             if is_paused(PAUSE_PATH) and name in {"intel_scan", "crypto_scan", "midday_report"}:
                 log.event(f"{name}_skipped", reason="pause.flag set")
                 write_heartbeat(HEARTBEAT_PATH, version=config_version,
                                 last_action=f"{name}_skipped_paused")
                 return
             try:
-                fn()
+                role_fn()
                 log.event(f"{name}_finish")
             except Exception as e:
                 log.error(f"{name}_failed", error=e)
@@ -61,27 +87,48 @@ def _load_runners(log: StructuredLogger):
                 write_heartbeat(HEARTBEAT_PATH, version=config_version, last_action=name)
         return runner
 
-    # Click command callbacks. Each is a callable that does its work.
-    # NOTE: rank is registered as @main.command("rank") but the Python function is
-    # rank_command — use cli_mod.rank_command.callback() not cli_mod.rank.callback().
-    # news_warm and massive_refresh have CLI options with defaults; pass them explicitly.
     return {
         "heartbeat": _heartbeat,
-        "intel_scan": _wrap("intel_scan", lambda: cli_mod.intel_scan.callback()),
-        "crypto_scan": _wrap("crypto_scan", lambda: cli_mod.crypto_scan.callback()),
-        "portfolio_watch": _wrap("portfolio_watch", lambda: cli_mod.portfolio_watch.callback()),
-        "verify_stops": _wrap("verify_stops", lambda: cli_mod.verify_stops.callback()),
-        "news_warm": _wrap("news_warm", lambda: cli_mod.news_warm.callback(lookback_days=3)),
-        "massive_refresh": _wrap("massive_refresh", lambda: cli_mod.massive_refresh.callback(days=5, news=False)),
-        "premarket_rank": _wrap("premarket_rank", lambda: cli_mod.rank_command.callback()),
-        "vip_scan": _wrap("vip_scan", lambda: cli_mod.vip_scan.callback()),
-        "midday_report": _wrap("midday_report", lambda: cli_mod.rich_report.callback(period="mid")),
-        "daily_digest": _wrap("daily_digest", lambda: cli_mod.eod_report.callback()),
+        "intel_scan": _wrap("intel_scan", lambda: stock_scanner.safe_run(ctx={})),
+        "crypto_scan": _wrap("crypto_scan", lambda: crypto_scanner.safe_run(ctx={})),
+        "portfolio_watch": _wrap("portfolio_watch", lambda: portfolio_monitor.safe_run(ctx={})),
+        "verify_stops": _wrap("verify_stops", lambda: order_steward.safe_run(ctx={})),
+        "news_warm": _wrap("news_warm", lambda: sentiment_analyst.safe_run(ctx={})),
+        "massive_refresh": _wrap("massive_refresh", lambda: universe_curator.run_refresh(ctx={})),
+        "premarket_rank": _wrap("premarket_rank", lambda: universe_curator.run_rank(ctx={})),
+        "vip_scan": _wrap("vip_scan", lambda: vip_listener.safe_run(ctx={})),
+        "midday_report": _wrap("midday_report", lambda: reporter.run_midday(ctx={})),
+        "daily_digest": _wrap("daily_digest", lambda: reporter.run_eod(ctx={})),
+        "log_rotation": _wrap("log_rotation", lambda: rotate_logs(runs_dir=RUNS_DIR, keep_days=90)),
     }
 
 
 def main() -> int:
     log = StructuredLogger(base=RUNS_DIR, role="daemon")
+
+    # Auto-apply pending migrations on boot. Idempotent — exits clean if up-to-date.
+    # Set TRADING_BOT_SKIP_MIGRATIONS=1 to skip (used by integration tests that
+    # set up their own schema via SQLAlchemy directly).
+    if os.environ.get("TRADING_BOT_SKIP_MIGRATIONS") != "1":
+        try:
+            import subprocess
+            repo_root = Path(__file__).parent.parent.parent  # src/trading_bot/daemon.py → repo root
+            result = subprocess.run(
+                [str(repo_root / ".venv" / "bin" / "alembic"),
+                 "-c", str(repo_root / "migrations" / "alembic.ini"),
+                 "upgrade", "head"],
+                capture_output=True, text=True, timeout=30, cwd=str(repo_root),
+            )
+            if result.returncode != 0:
+                log.error("alembic_upgrade_failed", error=RuntimeError(result.stderr))
+                return 1
+            log.event("alembic_upgrade", result="ok")
+        except Exception as e:
+            log.error("alembic_upgrade_exception", error=e)
+            return 1
+    else:
+        log.event("alembic_upgrade_skipped", reason="TRADING_BOT_SKIP_MIGRATIONS=1")
+
     log.event("daemon_boot", config_path=str(CONFIG_PATH))
 
     if not CONFIG_PATH.exists():

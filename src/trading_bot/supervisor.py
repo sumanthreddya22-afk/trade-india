@@ -22,8 +22,8 @@ from trading_bot.cadence import load_cadence
 from trading_bot.log_structured import StructuredLogger
 from trading_bot.email_critical import build_critical_email
 from trading_bot.state_db import get_engine
-from trading_bot.watchdog_account import AccountSentinel
-from trading_bot.watchdog_stall import StallDetector
+from trading_bot.roles.watchdog import WatchdogRole
+from trading_bot.roles.account_sentinel import AccountSentinelRole
 
 
 CONFIG_PATH = Path(os.environ.get("TRADING_BOT_CONFIG", "data/paper_active.json"))
@@ -89,16 +89,26 @@ def main() -> int:
     log = StructuredLogger(base=RUNS_DIR, role="supervisor")
     log.event("supervisor_boot")
 
+    boot_ts = _time_module.monotonic()
+    GRACE_SECONDS = 60
+
     cadence = load_cadence(CONFIG_PATH)
     stall_max_age = 5 * 60  # spec: > 5 min stale triggers kickstart
 
-    stall_detector = StallDetector(
+    engine = get_engine(STATE_DB)
+
+    watchdog_role = WatchdogRole(
+        engine=engine,
         heartbeat_path=HEARTBEAT_PATH,
         max_age_seconds=stall_max_age,
         plist_label=DAEMON_PLIST_LABEL,
     )
+    account_sentinel_role = AccountSentinelRole(
+        engine=engine, alpaca=_alpaca(),
+        pause_flag_path=PAUSE_PATH,
+        max_dd_pct=20.0, account="paper",
+    )
 
-    engine = get_engine(STATE_DB)
     last_account_check = 0.0
 
     stop = {"flag": False}
@@ -112,28 +122,34 @@ def main() -> int:
 
     while not stop["flag"]:
         try:
-            # 1. Watchdog: every 60s
-            verdict = stall_detector.check()
-            if verdict.is_stalled:
-                log.event("stall_detected", age_seconds=verdict.age_seconds)
-                kicked = stall_detector.kickstart_daemon()
-                log.event("kickstart_attempted", success=kicked)
-                email = build_critical_email(
-                    title="Daemon stalled",
-                    detail=(
-                        f"Heartbeat last seen {verdict.age_seconds:.0f}s ago "
-                        f"(threshold {stall_max_age}s).\n"
-                        f"Auto-restart attempted via launchctl: "
-                        f"{'success' if kicked else 'failed'}."
-                    ),
-                )
-                _send_alert(
-                    log,
-                    kind="daemon_stall",
-                    to=ALERT_RECIPIENT,
-                    subject=email.subject,
-                    html_body=email.html_body,
-                )
+            # 1. Watchdog: every 60s, but skip first GRACE_SECONDS for boot-race avoidance
+            now_mono = _time_module.monotonic()
+            if now_mono - boot_ts < GRACE_SECONDS:
+                # Still in boot grace window — skip watchdog stall check
+                pass
+            else:
+                result = watchdog_role.safe_run(ctx={})
+                if result.outputs.get("stalled"):
+                    age_seconds = result.outputs.get("age_seconds", 0)
+                    log.event("stall_detected", age_seconds=age_seconds)
+                    kicked = result.outputs.get("kickstart_attempted", False)
+                    log.event("kickstart_attempted", success=kicked)
+                    email = build_critical_email(
+                        title="Daemon stalled",
+                        detail=(
+                            f"Heartbeat last seen {age_seconds:.0f}s ago "
+                            f"(threshold {stall_max_age}s).\n"
+                            f"Auto-restart attempted via launchctl: "
+                            f"{'success' if kicked else 'failed'}."
+                        ),
+                    )
+                    _send_alert(
+                        log,
+                        kind="daemon_stall",
+                        to=ALERT_RECIPIENT,
+                        subject=email.subject,
+                        html_body=email.html_body,
+                    )
 
             # 2. Account Sentinel: 5 min during market hours, 30 min off-hours
             interval = (
@@ -144,27 +160,24 @@ def main() -> int:
             now = time.time()
             if now - last_account_check >= interval * 60:
                 try:
-                    acct_sentinel = AccountSentinel(
-                        engine=engine,
-                        alpaca=_alpaca(),
-                        pause_flag_path=PAUSE_PATH,
-                        max_dd_pct=20.0,
-                        account="paper",
-                    )
-                    av = acct_sentinel.check()
+                    result = account_sentinel_role.safe_run(ctx={})
+                    equity = result.outputs.get("equity", "0")
+                    hwm = result.outputs.get("hwm", 0.0)
+                    drawdown_pct = result.outputs.get("drawdown_pct", 0.0)
+                    paused = result.outputs.get("paused", False)
                     log.event(
                         "account_check",
-                        equity=str(av.equity),
-                        hwm=av.hwm,
-                        drawdown_pct=av.drawdown_pct,
-                        paused=av.paused,
+                        equity=str(equity),
+                        hwm=hwm,
+                        drawdown_pct=drawdown_pct,
+                        paused=paused,
                     )
-                    if av.paused:
+                    if paused:
                         email = build_critical_email(
                             title="Drawdown breach — trading paused",
                             detail=(
-                                f"Drawdown {av.drawdown_pct:.2f}% from HWM ${av.hwm:,.2f}.\n"
-                                f"Current equity ${av.equity:,.2f}.\n"
+                                f"Drawdown {drawdown_pct:.2f}% from HWM ${hwm:,.2f}.\n"
+                                f"Current equity ${equity}.\n"
                                 f"pause.flag written. Daemon will not place new orders."
                             ),
                         )
