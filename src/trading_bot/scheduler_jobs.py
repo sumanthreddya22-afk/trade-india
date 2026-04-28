@@ -133,3 +133,11 @@ def register_jobs(
         id="daily_digest",
         replace_existing=True,
     )
+
+    # Log rotation: weekly Sun 03:00 ET
+    scheduler.add_job(
+        runners["log_rotation"],
+        trigger=CronTrigger(hour=3, minute=0, day_of_week="sun", timezone=et),
+        id="log_rotation",
+        replace_existing=True,
+    )

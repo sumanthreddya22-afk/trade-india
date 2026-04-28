@@ -43,6 +43,7 @@ def _load_runners(log: StructuredLogger):
     from trading_bot.roles.universe_curator import UniverseCuratorRole
     from trading_bot.roles.vip_listener import VipListenerRole
     from trading_bot.roles.reporter import ReporterRole
+    from trading_bot.log_rotation import rotate_logs
 
     config_version = "phase2-v1"
 
@@ -98,6 +99,7 @@ def _load_runners(log: StructuredLogger):
         "vip_scan": _wrap("vip_scan", lambda: vip_listener.safe_run(ctx={})),
         "midday_report": _wrap("midday_report", lambda: reporter.run_midday(ctx={})),
         "daily_digest": _wrap("daily_digest", lambda: reporter.run_eod(ctx={})),
+        "log_rotation": _wrap("log_rotation", lambda: rotate_logs(runs_dir=RUNS_DIR, keep_days=90)),
     }
 
 

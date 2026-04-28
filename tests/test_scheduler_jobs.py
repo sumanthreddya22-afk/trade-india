@@ -21,6 +21,7 @@ def test_register_jobs_creates_expected_jobs():
         "daily_digest": MagicMock(),
         "midday_report": MagicMock(),
         "heartbeat": MagicMock(),
+        "log_rotation": MagicMock(),
     }
     register_jobs(scheduler=sched, cadence=cadence, runners=runners)
     job_ids = {j.id for j in sched.get_jobs()}
@@ -37,6 +38,7 @@ def test_register_jobs_creates_expected_jobs():
         "premarket_rank",
         "midday_report",
         "daily_digest",
+        "log_rotation",
     }
     assert expected.issubset(job_ids)
 
@@ -51,6 +53,7 @@ def test_register_jobs_uses_cadence_minutes():
         "premarket_rank": MagicMock(), "vip_scan": MagicMock(),
         "daily_digest": MagicMock(), "midday_report": MagicMock(),
         "heartbeat": MagicMock(),
+        "log_rotation": MagicMock(),
     }
     register_jobs(scheduler=sched, cadence=cadence, runners=runners)
     crypto = next(j for j in sched.get_jobs() if j.id == "crypto_scanner")
@@ -68,6 +71,7 @@ def test_heartbeat_job_runs_every_60s():
         "premarket_rank": MagicMock(), "vip_scan": MagicMock(),
         "daily_digest": MagicMock(), "midday_report": MagicMock(),
         "heartbeat": MagicMock(),
+        "log_rotation": MagicMock(),
     }
     register_jobs(scheduler=sched, cadence=cadence, runners=runners)
     hb = next(j for j in sched.get_jobs() if j.id == "heartbeat")
