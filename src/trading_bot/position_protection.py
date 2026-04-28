@@ -9,6 +9,12 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Literal
 
+from trading_bot.alpaca_client import (
+    AlpacaClient, AssetClass, OrderSide, Position,
+)
+from trading_bot.exceptions import AlpacaClientError
+from trading_bot.market_data import MarketDataClient, compute_indicators
+
 
 def _decide(
     *, current_price: float, ema_20: float, stop_pct: Decimal,
@@ -28,13 +34,6 @@ def _decide(
         "protect" if stop < current_price else "flatten"
     )
     return decision, stop
-
-
-from trading_bot.alpaca_client import (
-    AlpacaClient, AssetClass, OrderSide, Position,
-)
-from trading_bot.exceptions import AlpacaClientError
-from trading_bot.market_data import MarketDataClient, compute_indicators
 
 
 @dataclass(frozen=True)
