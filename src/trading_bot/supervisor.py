@@ -14,6 +14,7 @@ import datetime as dt
 import os
 import signal
 import sys
+import time as _time_module
 import time
 from pathlib import Path
 
@@ -35,6 +36,9 @@ DAEMON_PLIST_LABEL = os.environ.get(
 )
 ALERT_RECIPIENT = os.environ.get("TRADING_BOT_ALERT_TO", "bharath8887@gmail.com")
 
+_last_alert_at: dict[str, float] = {}
+_ALERT_COOLDOWN_SECONDS = 3600
+
 
 def _is_market_hours_et() -> bool:
     """09:30-16:00 ET, Mon-Fri. Approximate via UTC offset; APScheduler handles DST."""
@@ -54,8 +58,21 @@ def _alpaca():
     return AlpacaClient(Settings())
 
 
-def _send_alert(log: StructuredLogger, *, to: str, subject: str, html_body: str) -> None:
-    """Send an alert email; log and swallow any transport failures."""
+def _send_alert(
+    log: StructuredLogger,
+    *,
+    kind: str,
+    to: str,
+    subject: str,
+    html_body: str,
+) -> None:
+    """Send an alert email, but suppress repeats of the same kind within _ALERT_COOLDOWN_SECONDS."""
+    now = _time_module.time()
+    last = _last_alert_at.get(kind, 0.0)
+    if now - last < _ALERT_COOLDOWN_SECONDS:
+        log.event("alert_suppressed", kind=kind, age_seconds=now - last)
+        return
+    _last_alert_at[kind] = now
     try:
         from trading_bot.config import Settings
         from trading_bot.email_sender import EmailSender
@@ -63,7 +80,7 @@ def _send_alert(log: StructuredLogger, *, to: str, subject: str, html_body: str)
         EmailSender(user=s.gmail_user, app_password=s.gmail_app_password, to=to).send(
             subject=subject, html_body=html_body
         )
-        log.event("alert_sent", to=to, subject=subject)
+        log.event("alert_sent", to=to, subject=subject, kind=kind)
     except Exception as e:
         log.error("alert_send_failed", error=e)
 
@@ -112,6 +129,7 @@ def main() -> int:
                 )
                 _send_alert(
                     log,
+                    kind="daemon_stall",
                     to=ALERT_RECIPIENT,
                     subject=email.subject,
                     html_body=email.html_body,
@@ -152,6 +170,7 @@ def main() -> int:
                         )
                         _send_alert(
                             log,
+                            kind="drawdown_breach",
                             to=ALERT_RECIPIENT,
                             subject=email.subject,
                             html_body=email.html_body,
