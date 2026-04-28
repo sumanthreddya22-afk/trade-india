@@ -148,6 +148,94 @@ def test_place_crypto_uses_market_then_stop(fake_settings):
         assert MockTC.return_value.submit_order.call_count == 2
 
 
+def test_place_crypto_uses_stop_limit_not_plain_stop(fake_settings):
+    """Alpaca rejects plain stop orders for crypto with 'invalid order type
+    for crypto order'. Regression: previously the bot used StopOrderRequest,
+    so every crypto stop silently failed and positions filled naked.
+    """
+    from alpaca.trading.requests import (
+        MarketOrderRequest as AlpacaMarketOrderRequest,
+        StopLimitOrderRequest as AlpacaStopLimitOrderRequest,
+    )
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        entry = MagicMock(id="entry-c", legs=[])
+        stop = MagicMock(id="stop-c")
+        MockTC.return_value.submit_order.side_effect = [entry, stop]
+        client = AlpacaClient(fake_settings)
+        req = OrderRequest(
+            symbol="BTC/USD",
+            qty=Decimal("0.001"),
+            side=OrderSide.BUY,
+            asset_class=AssetClass.CRYPTO,
+            limit_price=Decimal("70000"),
+            stop_loss_price=Decimal("68000"),
+        )
+        client.place_order_with_stop_loss(req)
+        calls = MockTC.return_value.submit_order.call_args_list
+        assert len(calls) == 2
+        entry_arg = calls[0].args[0]
+        stop_arg = calls[1].args[0]
+        assert isinstance(entry_arg, AlpacaMarketOrderRequest)
+        assert isinstance(stop_arg, AlpacaStopLimitOrderRequest)
+        # Trigger preserved; limit set below trigger to give fill room.
+        assert float(stop_arg.stop_price) == 68000.0
+        assert float(stop_arg.limit_price) < 68000.0
+
+
+def test_place_crypto_cancels_pending_entry_when_stop_fails(fake_settings):
+    """If the stop submission fails AND the entry hasn't filled yet, the
+    pending entry must be cancelled — otherwise it can fill later naked.
+    Regression: this was the second half of the naked-position bug.
+    """
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        entry = MagicMock(id="entry-c", legs=[])
+        MockTC.return_value.submit_order.side_effect = [
+            entry,
+            RuntimeError("invalid order type for crypto order"),
+        ]
+        # Verifier sees no live position (entry hasn't filled).
+        MockTC.return_value.get_all_positions.return_value = []
+
+        client = AlpacaClient(fake_settings)
+        req = OrderRequest(
+            symbol="BTC/USD",
+            qty=Decimal("0.001"),
+            side=OrderSide.BUY,
+            asset_class=AssetClass.CRYPTO,
+            limit_price=Decimal("70000"),
+            stop_loss_price=Decimal("68000"),
+        )
+        with pytest.raises(AlpacaClientError, match="pending entry has been cancelled"):
+            client.place_order_with_stop_loss(req)
+        MockTC.return_value.cancel_order_by_id.assert_called_once_with("entry-c")
+
+
+def test_verifier_recognises_stop_limit_as_protection(fake_settings):
+    """A live stop_limit order on the symbol must count as protection so
+    the verifier does NOT flatten an already-protected position."""
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        # One filled position and one live stop-limit on the same symbol.
+        live_pos = MagicMock(symbol="BTC/USD", qty="0.001")
+        live_stop = MagicMock(symbol="BTC/USD", type="OrderType.STOP_LIMIT")
+        MockTC.return_value.get_all_positions.return_value = [live_pos]
+        MockTC.return_value.get_orders.return_value = [live_stop]
+
+        client = AlpacaClient(fake_settings)
+        req = OrderRequest(
+            symbol="BTC/USD",
+            qty=Decimal("0.001"),
+            side=OrderSide.BUY,
+            asset_class=AssetClass.CRYPTO,
+            limit_price=Decimal("70000"),
+            stop_loss_price=Decimal("68000"),
+        )
+        action = client._verify_crypto_stop_or_flatten(req, entry_id="entry-c")
+        assert action == "has_stop"
+        # Critically, no flatten order should have been submitted.
+        MockTC.return_value.submit_order.assert_not_called()
+
+
 def test_get_active_assets_returns_tradable(monkeypatch):
     from trading_bot.alpaca_client import TradableAsset
 
