@@ -309,6 +309,30 @@ def test_place_protective_stop_short_uses_buy_side(fake_settings):
     assert str(call_arg.side).lower().endswith("buy")
 
 
+def test_place_protective_stop_crypto_short_limit_above_trigger(fake_settings):
+    """Crypto short → buy-stop_limit; Alpaca requires limit_price >= stop_price."""
+    from decimal import Decimal
+    from alpaca.trading.requests import StopLimitOrderRequest
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="stop-cs")
+        client = AlpacaClient(fake_settings)
+        client.place_protective_stop(
+            symbol="ETHUSD",
+            qty=Decimal("0.5"),
+            position_side=OrderSide.SELL,  # short
+            asset_class=AssetClass.CRYPTO,
+            stop_price=Decimal("3000.00"),
+        )
+
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert isinstance(call_arg, StopLimitOrderRequest)
+    assert str(call_arg.side).lower().endswith("buy")
+    assert call_arg.symbol == "ETH/USD"
+    assert float(call_arg.limit_price) >= float(call_arg.stop_price)
+
+
 def test_place_protective_stop_propagates_alpaca_errors(fake_settings):
     from decimal import Decimal
     from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
