@@ -41,9 +41,12 @@ class ParamOptimizerRole(BaseRole):
     def _do_work(self, ctx):
         template = ctx.get("template", "momentum")
         n_trials = ctx.get("n_trials", 100)
-        # Rolling 30-month window ending yesterday — covers 6 folds of
-        # (12mo train + 3mo test, walking quarterly). Caller can override.
-        end = ctx.get("end", dt.date.today() - dt.timedelta(days=1))
+        # Default end = latest bar actually present in the cache, since
+        # Alpaca's free historical data may lag the system clock by months.
+        # Caller can still override via ctx.
+        end = ctx.get("end") or _latest_cached_date() or (
+            dt.date.today() - dt.timedelta(days=1)
+        )
         start = ctx.get("start", end - dt.timedelta(days=30 * 31))
         n_folds = ctx.get("n_folds", 6)
 
@@ -143,6 +146,25 @@ class ParamOptimizerRole(BaseRole):
             float(count),
             f"{count} optuna search runs in last {lookback_days}d",
         )
+
+
+def _latest_cached_date(
+    db_path: str = "data/massive_grouped.db", symbol: str = "SPY"
+) -> dt.date | None:
+    """Return the most recent cached bar date for `symbol`, or None if cache empty.
+    Used as a sane upper bound when system clock outruns Alpaca's data window.
+    """
+    try:
+        from trading_bot.backtest.bar_store import BarStore
+
+        store = BarStore(db_path)
+        # cheap lookup: ask for an enormous lookback and read the tail
+        df = store.get(symbol, end_date=dt.date.today(), lookback_days=10_000)
+        if df.empty:
+            return None
+        return df.index[-1].date()
+    except Exception:
+        return None
 
 
 def _sample_params(trial: optuna.Trial, space: dict[str, tuple]) -> dict:
