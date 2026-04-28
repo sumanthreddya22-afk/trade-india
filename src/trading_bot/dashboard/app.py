@@ -185,10 +185,29 @@ def _filter_equity_range(points: list[Any], range_key: str) -> list[Any]:
 # ---------- app factory ---------------------------------------------------
 
 
+def _et_filter(value, fmt: str = "%b %d %-I:%M %p ET"):
+    """Jinja filter — render any datetime in America/New_York with given format.
+
+    Usage in templates: `{{ dt | et }}` or `{{ dt | et('%H:%M ET') }}`.
+    Naive datetimes are assumed UTC (matches state.db storage convention).
+    """
+    if value is None:
+        return ""
+    from datetime import datetime as _dt, timezone as _tz
+    from zoneinfo import ZoneInfo
+
+    if not isinstance(value, _dt):
+        return value
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=_tz.utc)
+    return value.astimezone(ZoneInfo("America/New_York")).strftime(fmt)
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Trading Bot Dashboard", docs_url=None, redoc_url=None)
     base = Path(__file__).parent
     templates = Jinja2Templates(directory=str(base / "templates"))
+    templates.env.filters["et"] = _et_filter
     app.mount("/static", StaticFiles(directory=str(base / "static")), name="static")
 
     cache = _SnapshotCache(ttl=CACHE_TTL_SECONDS)

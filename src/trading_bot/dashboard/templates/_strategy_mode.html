@@ -29,7 +29,7 @@
       {% elif m.days_in_state == 1 %}1 day in state
       {% else %}{{ m.days_in_state }} days in state
       {% endif %}
-      · {{ m.set_at.strftime('%Y-%m-%d %H:%M UTC') }}
+      · {{ m.set_at | et('%Y-%m-%d %-I:%M %p ET') }}
     </div>
     {% if m.reason %}
       <div class="text-xs text-slate-400 mt-1">{{ m.reason }}</div>
