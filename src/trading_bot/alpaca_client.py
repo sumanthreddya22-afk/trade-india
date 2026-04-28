@@ -260,6 +260,28 @@ class AlpacaClient:
         except Exception as e:
             raise AlpacaClientError(f"crypto entry order failed: {e}") from e
 
+        # Crypto market orders frequently fill at slightly LESS than the
+        # requested qty (rounding to the venue's increment). The stop-limit
+        # leg must use the ACTUAL filled qty — using req.qty would request
+        # more than the available balance and the stop would fail with
+        # "insufficient balance", leaving the position naked. Re-query the
+        # entry order to get filled_qty, briefly polling so the fill state
+        # has time to propagate.
+        actual_qty = float(req.qty)
+        try:
+            for _ in range(5):
+                refreshed = self._client.get_order_by_id(entry.id)
+                fq = float(getattr(refreshed, "filled_qty", 0) or 0)
+                if fq > 0:
+                    actual_qty = fq
+                    break
+                import time as _t
+                _t.sleep(0.5)
+        except Exception:
+            # If the re-query fails, fall through with req.qty — stop submission
+            # may then itself fail and the naked-position recovery path runs.
+            pass
+
         stop_side = _opposite(req.side)
         stop_trigger = float(req.stop_loss_price)
         # Sell-stop: limit must be ≤ trigger so the order is valid below the
@@ -274,7 +296,7 @@ class AlpacaClient:
         try:
             stop_req = StopLimitOrderRequest(
                 symbol=req.symbol,
-                qty=float(req.qty),
+                qty=actual_qty,
                 side=_to_alpaca_side(stop_side),
                 time_in_force=TimeInForce.GTC,
                 stop_price=stop_trigger,
