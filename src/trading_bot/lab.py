@@ -30,14 +30,18 @@ STATE_DB = Path(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
 
 def _build_runners(log: StructuredLogger):
     from trading_bot.roles.calibrator import CalibratorRole
+    from trading_bot.roles.code_reviewer import CodeReviewerRole
     from trading_bot.roles.param_optimizer import ParamOptimizerRole
     from trading_bot.roles.promoter import PromoterRole
+    from trading_bot.roles.strategy_architect import StrategyArchitectRole
     from trading_bot.state_db import get_engine
 
     engine = get_engine(STATE_DB)
     optimizer = ParamOptimizerRole(engine=engine)
     promoter = PromoterRole(engine=engine, active_path=CONFIG_PATH)
     calibrator = CalibratorRole(engine=engine, config_path=CONFIG_PATH)
+    architect = StrategyArchitectRole(engine=engine)
+    reviewer = CodeReviewerRole(engine=engine)
 
     def _wrap(name: str, fn):
         def runner():
@@ -54,6 +58,26 @@ def _build_runners(log: StructuredLogger):
 
         return runner
 
+    def _saturday_evolve():
+        """Run Architect, then Reviewer if Architect produced any proposals."""
+        log.event("saturday_evolve_start")
+        try:
+            arch_result = architect.safe_run(ctx={})
+            log.event(
+                "strategy_architect_finish",
+                status=getattr(arch_result.status, "value", str(arch_result.status)),
+                outputs=arch_result.outputs,
+            )
+            if arch_result.outputs.get("n_proposals", 0) > 0:
+                rev_result = reviewer.safe_run(ctx={})
+                log.event(
+                    "code_reviewer_finish",
+                    status=getattr(rev_result.status, "value", str(rev_result.status)),
+                    outputs=rev_result.outputs,
+                )
+        except Exception as e:
+            log.error("saturday_evolve_failed", error=e)
+
     return {
         "param_search": _wrap(
             "param_search", lambda: optimizer.safe_run(ctx={"template": "momentum"})
@@ -64,6 +88,7 @@ def _build_runners(log: StructuredLogger):
         "calibrate": _wrap(
             "calibrate", lambda: calibrator.safe_run(ctx={})
         ),
+        "saturday_evolve": _saturday_evolve,
     }
 
 
@@ -86,6 +111,16 @@ def _register_lab_jobs(scheduler: BackgroundScheduler, runners: dict) -> None:
         id="calibrate",
         replace_existing=True,
     )
+    # Phase 5: Saturday weekly Architect → Reviewer pipeline.
+    if "saturday_evolve" in runners:
+        scheduler.add_job(
+            runners["saturday_evolve"],
+            trigger=CronTrigger(
+                hour=6, minute=0, day_of_week="sat", timezone="America/New_York"
+            ),
+            id="saturday_evolve",
+            replace_existing=True,
+        )
 
 
 def main() -> int:
