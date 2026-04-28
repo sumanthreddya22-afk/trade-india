@@ -900,6 +900,13 @@ def supervisor_cmd() -> None:
     raise SystemExit(supervisor_main())
 
 
+@main.command("lab")
+def lab_cmd() -> None:
+    """Run the trading bot lab (nightly param search + auto-promote)."""
+    from trading_bot.lab import main as lab_main
+    raise SystemExit(lab_main())
+
+
 @main.command("massive-refresh")
 @click.option("--days", default=5, show_default=True, type=int,
               help="How many trading days back to ensure are cached.")
