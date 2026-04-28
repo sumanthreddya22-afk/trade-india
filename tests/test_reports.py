@@ -30,12 +30,13 @@ def _account(equity="15123.45", cash="12000", bp="24000", pv="15123.45"):
 
 
 def _position(symbol="AAPL", qty="3", mv="585", entry="195", pnl="12.50",
-              asset_class="us_equity"):
+              asset_class="us_equity", current_price="195"):
     return Position(
         symbol=symbol,
         qty=Decimal(qty),
         market_value=Decimal(mv),
         avg_entry_price=Decimal(entry),
+        current_price=Decimal(current_price),
         unrealized_pl=Decimal(pnl),
         asset_class=asset_class,
     )

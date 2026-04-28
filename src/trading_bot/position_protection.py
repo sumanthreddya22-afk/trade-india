@@ -102,7 +102,9 @@ def evaluate_and_act(
             continue
 
         decision, stop_level = _decide(
-            current_price=ind.last_close, ema_20=ind.ema_20, stop_pct=stop_pct,
+            current_price=float(pos.current_price),
+            ema_20=ind.ema_20,
+            stop_pct=stop_pct,
         )
 
         # Off-hours stock that needs flattening: defer.
@@ -127,7 +129,7 @@ def evaluate_and_act(
                 actions.append(ProtectionAction(
                     symbol=pos.symbol, qty=abs_qty, position_side=side,
                     asset_class=asset_class, outcome="stop_placed",
-                    stop_price=stop_level, current_price=ind.last_close,
+                    stop_price=stop_level, current_price=float(pos.current_price),
                 ))
             else:
                 close_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
@@ -138,7 +140,7 @@ def evaluate_and_act(
                 actions.append(ProtectionAction(
                     symbol=pos.symbol, qty=abs_qty, position_side=side,
                     asset_class=asset_class, outcome="flattened",
-                    fill_estimate=ind.last_close,
+                    fill_estimate=float(pos.current_price),
                 ))
         except AlpacaClientError as e:
             actions.append(ProtectionAction(

@@ -47,6 +47,7 @@ def test_get_positions_returns_list(fake_settings):
         mock_pos.qty = "10"
         mock_pos.market_value = "2000.00"
         mock_pos.avg_entry_price = "195.50"
+        mock_pos.current_price = "200.00"
         mock_pos.unrealized_pl = "50.00"
         mock_pos.asset_class = "us_equity"
         MockTC.return_value.get_all_positions.return_value = [mock_pos]
@@ -59,6 +60,7 @@ def test_get_positions_returns_list(fake_settings):
         assert p.symbol == "AAPL"
         assert p.qty == Decimal("10")
         assert p.market_value == Decimal("2000.00")
+        assert p.current_price == Decimal("200.00")
 
 
 def test_get_account_wraps_api_error(fake_settings):

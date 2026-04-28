@@ -41,6 +41,7 @@ class Position:
     qty: Decimal
     market_value: Decimal
     avg_entry_price: Decimal
+    current_price: Decimal
     unrealized_pl: Decimal
     asset_class: str
 
@@ -147,6 +148,7 @@ class AlpacaClient:
                 qty=Decimal(str(p.qty)),
                 market_value=Decimal(str(p.market_value)),
                 avg_entry_price=Decimal(str(p.avg_entry_price)),
+                current_price=Decimal(str(p.current_price)),
                 unrealized_pl=Decimal(str(p.unrealized_pl)),
                 asset_class=str(p.asset_class),
             )

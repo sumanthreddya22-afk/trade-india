@@ -36,6 +36,7 @@ def test_has_open_position_true():
         qty=Decimal("3"),
         market_value=Decimal("585"),
         avg_entry_price=Decimal("195"),
+        current_price=Decimal("195"),
         unrealized_pl=Decimal("0"),
         asset_class="us_equity",
     )
@@ -52,6 +53,7 @@ def test_has_open_position_normalizes_crypto_symbol():
         qty=Decimal("0.001"),
         market_value=Decimal("70"),
         avg_entry_price=Decimal("70000"),
+        current_price=Decimal("70000"),
         unrealized_pl=Decimal("0"),
         asset_class="crypto",
     )

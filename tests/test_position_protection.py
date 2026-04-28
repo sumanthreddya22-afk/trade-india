@@ -71,13 +71,15 @@ def _stub_indicators(*, last_close: float, ema_20: float):
     )
 
 
-def _make_position(symbol: str, qty: str, asset_class: str = "us_equity"):
+def _make_position(symbol: str, qty: str, asset_class: str = "us_equity",
+                   current_price: str = "100"):
     from trading_bot.alpaca_client import Position
     return Position(
         symbol=symbol,
         qty=Decimal(qty),
         market_value=Decimal("1000"),
         avg_entry_price=Decimal("100"),
+        current_price=Decimal(current_price),
         unrealized_pl=Decimal("0"),
         asset_class=asset_class,
     )
@@ -143,7 +145,7 @@ def test_evaluate_and_act_long_stock_broken_during_rth_flattens(monkeypatch):
 
     actions = pp.evaluate_and_act(
         client=client, market_data=md,
-        unprotected=[_make_position("AAPL", "10")],
+        unprotected=[_make_position("AAPL", "10", current_price="90")],
         stop_pct=Decimal("0.05"),
         now_in_market_hours=True,
     )
@@ -173,7 +175,7 @@ def test_evaluate_and_act_long_stock_broken_off_hours_defers(monkeypatch):
 
     actions = pp.evaluate_and_act(
         client=client, market_data=md,
-        unprotected=[_make_position("AAPL", "10")],
+        unprotected=[_make_position("AAPL", "10", current_price="90")],
         stop_pct=Decimal("0.05"),
         now_in_market_hours=False,
     )
@@ -229,7 +231,8 @@ def test_evaluate_and_act_crypto_off_hours_still_flattens(monkeypatch):
 
     actions = pp.evaluate_and_act(
         client=client, market_data=md,
-        unprotected=[_make_position("DOTUSD", "100", asset_class="crypto")],
+        unprotected=[_make_position("DOTUSD", "100", asset_class="crypto",
+                                   current_price="4")],
         stop_pct=Decimal("0.05"),
         now_in_market_hours=False,
     )
