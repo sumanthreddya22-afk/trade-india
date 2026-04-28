@@ -20,3 +20,6 @@ strategy/opportunities.md
 strategy/backtest_results.md
 .scratch/
 .worktrees/
+runs/
+.claude/scheduled_tasks.lock
+.claude/worktrees/
