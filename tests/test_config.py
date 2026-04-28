@@ -70,3 +70,31 @@ storage:
 def test_load_config_missing_file_raises(tmp_path: Path):
     with pytest.raises(ConfigError):
         load_config(tmp_path / "nonexistent.yaml")
+
+
+def test_risk_config_unprotected_stop_pct_default():
+    """Defaults to 0.05 (5%) when not present in yaml — matches MomentumStrategy default."""
+    from trading_bot.config import RiskConfig
+    cfg = RiskConfig(
+        daily_loss_limit_pct=2.0,
+        weekly_loss_limit_pct=5.0,
+        per_trade_risk_pct=1.0,
+        max_position_pct=10.0,
+        max_symbol_concentration_pct=5.0,
+        max_consecutive_losing_days=3,
+    )
+    assert cfg.unprotected_stop_pct == 0.05
+
+
+def test_risk_config_unprotected_stop_pct_override():
+    from trading_bot.config import RiskConfig
+    cfg = RiskConfig(
+        daily_loss_limit_pct=2.0,
+        weekly_loss_limit_pct=5.0,
+        per_trade_risk_pct=1.0,
+        max_position_pct=10.0,
+        max_symbol_concentration_pct=5.0,
+        max_consecutive_losing_days=3,
+        unprotected_stop_pct=0.03,
+    )
+    assert cfg.unprotected_stop_pct == 0.03

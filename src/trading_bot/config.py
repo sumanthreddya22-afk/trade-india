@@ -40,6 +40,7 @@ class RiskConfig(BaseModel):
     max_position_pct: float = Field(gt=0, le=25)
     max_symbol_concentration_pct: float = Field(gt=0, le=25)
     max_consecutive_losing_days: int = Field(gt=0, le=10)
+    unprotected_stop_pct: float = Field(default=0.05, gt=0, le=0.5)
 
 
 class AllocationConfig(BaseModel):

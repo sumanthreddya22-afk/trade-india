@@ -7,6 +7,7 @@ risk:
   max_position_pct: 10.0             # no single position > 10% of account
   max_symbol_concentration_pct: 5.0  # max 5% in any one symbol
   max_consecutive_losing_days: 3     # 3 losers → reduce sizing 50%
+  unprotected_stop_pct: 0.05            # protective stop for unprotected positions
 
 allocation:
   stocks_max_pct: 70.0
