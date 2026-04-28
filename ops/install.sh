@@ -12,6 +12,12 @@ mkdir -p "$LAUNCHD_DIR"
 mkdir -p "$REPO_ROOT/runs/_launchd"
 mkdir -p "$REPO_ROOT/data"
 
+# Copy initial config from template if missing (preserves any local edits on re-install)
+if [ ! -f "$REPO_ROOT/data/paper_active.json" ]; then
+  cp "$REPO_ROOT/ops/paper_active.template.json" "$REPO_ROOT/data/paper_active.json"
+  echo "Initialized data/paper_active.json from template"
+fi
+
 # Copy plists (source of truth in repo; runtime copy under LaunchAgents)
 cp "$REPO_ROOT/ops/launchd/${DAEMON_LABEL}.plist" "$LAUNCHD_DIR/"
 cp "$REPO_ROOT/ops/launchd/${SUPERVISOR_LABEL}.plist" "$LAUNCHD_DIR/"
