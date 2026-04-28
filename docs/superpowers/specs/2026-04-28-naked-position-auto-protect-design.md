@@ -46,12 +46,23 @@ This collapses Bharath's "good vs bad" framing into one comparison: if the price
 
 ## Asset-class gating
 
-- **Stocks:** act only inside US regular trading hours (09:30–16:00 ET, Mon–Fri). Reuse `_is_market_hours_et()` from [`supervisor.py:43`](../../src/trading_bot/supervisor.py:43). Outside RTH, skip stock symbols entirely (do not place stops either, to keep behavior consistent and avoid GTC stops resting overnight on positions we just decided to evaluate next session).
-- **Crypto:** act 24/7.
+Reuse `_is_market_hours_et()` from [`supervisor.py:43`](../../src/trading_bot/supervisor.py:43) to detect US regular trading hours (09:30–16:00 ET, Mon–Fri). Asset class is read from `position.asset_class` (already on the Alpaca position object).
 
-Asset class is read from `position.asset_class` (already on the Alpaca position object).
+The two actions have different off-hours feasibility on Alpaca:
 
-If a naked stock is encountered outside RTH, log it and include it in the email under a "Deferred to next session" section so the user knows nothing was actioned.
+- **Stop placement (`StopOrderRequest` / `StopLimitOrderRequest`, GTC):** can be submitted any time. A stop placed off-hours rests until the next session and triggers on the first qualifying trade. Run **24/7** for both stocks and crypto.
+- **Market flatten (`MarketOrderRequest`):** crypto fills 24/7. Stocks only fill during RTH — Alpaca rejects market orders on equities outside 09:30–16:00 ET. So the flatten path runs **24/7 for crypto, RTH-only for stocks**.
+
+Combined rule, per naked position:
+
+| Asset class | Decision | Action |
+|---|---|---|
+| Stock or crypto | `protect` (healthy) | Place stop now |
+| Crypto | `flatten` (broken) | Market-sell now |
+| Stock, RTH | `flatten` (broken) | Market-sell now |
+| Stock, off-hours | `flatten` (broken) | **Defer**: no order, record `outcome="deferred_off_hours"` so the next sweep during RTH retries |
+
+Deferred entries appear in the email under "Deferred to next session" so the user knows nothing was actioned for those.
 
 ## Configuration
 
@@ -103,7 +114,7 @@ If the Alpaca API rejects the stop or market order (rate limit, validation, tran
 
 If `MarketDataClient.get_daily_bars` fails for a symbol (e.g., delisted ticker, API outage), record as `failed` with reason, no action taken.
 
-If `_is_market_hours_et()` is false and the position is a stock, record as `deferred_off_hours`, no API calls made for that symbol.
+If `_is_market_hours_et()` is false, the decision is `flatten`, and the position is a stock, record as `deferred_off_hours` and skip the order submit. The next sweep during RTH will retry — and may find that the position has now drifted up to `protect` territory, in which case it gets a stop instead. (Either outcome is fine; what matters is we don't fire a market order that Alpaca will reject.)
 
 ## Module layout
 
@@ -133,8 +144,9 @@ In `tests/`, mirror existing patterns:
     - Long stock, healthy → places `StopOrderRequest`, `qty=position.qty`, `side=SELL`, `stop_price` matches formula.
     - Long stock, broken → places `MarketOrderRequest(side=SELL)`, no stop placed.
     - Crypto, healthy → places `StopLimitOrderRequest` with the existing trigger/limit buffer math.
-    - Stock encountered with `now_in_market_hours=False` → outcome `deferred_off_hours`, no API calls.
-    - Crypto encountered with `now_in_market_hours=False` → still acts.
+    - Stock decision=`protect`, `now_in_market_hours=False` → stop is still placed (GTC rests into next session).
+    - Stock decision=`flatten`, `now_in_market_hours=False` → outcome `deferred_off_hours`, no order submitted.
+    - Crypto decision=`flatten`, `now_in_market_hours=False` → still flattens (crypto trades 24/7).
     - Alpaca raises on order submit → outcome `failed`, exception captured, loop continues.
     - `get_daily_bars` raises → outcome `failed`, no order submitted.
 - `tests/test_email_open_positions.py`:
@@ -155,4 +167,4 @@ In `tests/`, mirror existing patterns:
 1. **Whipsaw on borderline positions.** A stock that's hovering right around EMA-20 could be flattened on a sweep that runs at a temporary dip. Mitigation: the EMA-20 is daily, so intraday noise doesn't cross it often; and once the position is closed, that's it for the day.
 2. **Stop placed at level immediately triggered.** The `protective_stop < current_price` check guarantees the stop is below current — but if the market drops between price-fetch and order-submit, the stop could trigger immediately. Acceptable: that's the same outcome as flattening, just via stop fill.
 3. **Crypto stop_limit slippage.** The existing `CRYPTO_STOP_LIMIT_BUFFER_PCT` math is reused — same risk profile as today's crypto entry path.
-4. **Off-hours-naked stock that gaps overnight.** If a stock goes naked at 16:30 ET on a Friday and gaps down 8% on Monday's open, we still won't act until 09:30 Mon. Acceptable: today's behavior is also "do nothing automatically", and the daily digest will surface the loss.
+4. **Off-hours-naked stock that needs flattening but gaps further down before RTH.** If a stock is in "broken" territory off-hours and we defer the flatten, it can drop further before Monday's open. Mitigation: the more common naked case (stop leg detached on a still-healthy position) gets the GTC stop placed immediately and is fine. Only positions already past the EMA-20 + 5% floor are deferred — and those are by definition already in trouble; another few hours of weekend exposure is a small marginal risk relative to the wider set of weekend-gap risks the bot already accepts.
