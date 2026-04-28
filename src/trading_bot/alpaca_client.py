@@ -305,10 +305,10 @@ class AlpacaClient:
             2) standalone stop-limit order
 
         Risk #4 from the trader's analysis: between (1) and (2), the price
-        can flash-crash leaving us with a naked position. Mitigation here:
+        can flash-crash leaving the position unprotected. Mitigation here:
         after both legs are placed, do a post-fill verification — re-query
         positions + open orders. If the stop didn't actually land:
-          - if the entry has filled → market-flatten the naked position
+          - if the entry has filled → market-flatten the unprotected position
           - if the entry is still pending → cancel the entry so it can't
             fill later without a stop
         Either way we never hold an unprotected crypto position past the
@@ -329,7 +329,7 @@ class AlpacaClient:
         # requested qty (rounding to the venue's increment). The stop-limit
         # leg must use the ACTUAL filled qty — using req.qty would request
         # more than the available balance and the stop would fail with
-        # "insufficient balance", leaving the position naked. Re-query the
+        # "insufficient balance", leaving the position unprotected. Re-query the
         # entry order to get filled_qty, briefly polling so the fill state
         # has time to propagate.
         actual_qty = float(req.qty)
@@ -344,7 +344,7 @@ class AlpacaClient:
                 _t.sleep(0.5)
         except Exception:
             # If the re-query fails, fall through with req.qty — stop submission
-            # may then itself fail and the naked-position recovery path runs.
+            # may then itself fail and the unprotected-position recovery path runs.
             pass
 
         stop_side = _opposite(req.side)
@@ -390,7 +390,7 @@ class AlpacaClient:
 
         if stop_error is not None:
             # Stop submission threw. If the entry hasn't filled yet, cancel
-            # it so it can't fill later naked. If it had filled, the
+            # it so it can't fill later unprotected. If it had filled, the
             # verifier would have raised already (flatten path).
             if verify_action == "no_position":
                 try:
@@ -424,8 +424,8 @@ class AlpacaClient:
             "has_stop"    — the position is protected by a live stop or
                 stop-limit order. Caller can proceed.
 
-        Raises AlpacaClientError if the position is naked. In the naked
-        case, this method market-flattens the position; the raise is the
+        Raises AlpacaClientError if the position is unprotected. In the
+        unprotected case, this method market-flattens the position; the raise is the
         signal back to the caller that something went wrong AND the
         recovery has already been performed.
         """
@@ -461,7 +461,7 @@ class AlpacaClient:
         if has_stop:
             return "has_stop"
 
-        # Naked position detected. Market-flatten.
+        # Unprotected position detected. Market-flatten.
         try:
             flatten_req = MarketOrderRequest(
                 symbol=req.symbol,
@@ -472,7 +472,7 @@ class AlpacaClient:
             self._client.submit_order(flatten_req)
         except Exception as e:
             raise AlpacaClientError(
-                f"NAKED CRYPTO POSITION ({req.symbol}, entry={entry_id}) "
+                f"UNPROTECTED CRYPTO POSITION ({req.symbol}, entry={entry_id}) "
                 f"AND FLATTEN FAILED: {e} — manually flatten in Alpaca UI immediately"
             ) from e
         raise AlpacaClientError(

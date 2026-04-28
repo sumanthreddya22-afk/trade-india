@@ -151,7 +151,7 @@ def test_place_crypto_uses_market_then_stop(fake_settings):
 def test_place_crypto_uses_stop_limit_not_plain_stop(fake_settings):
     """Alpaca rejects plain stop orders for crypto with 'invalid order type
     for crypto order'. Regression: previously the bot used StopOrderRequest,
-    so every crypto stop silently failed and positions filled naked.
+    so every crypto stop silently failed and positions filled unprotected.
     """
     from alpaca.trading.requests import (
         MarketOrderRequest as AlpacaMarketOrderRequest,
@@ -185,8 +185,8 @@ def test_place_crypto_uses_stop_limit_not_plain_stop(fake_settings):
 
 def test_place_crypto_cancels_pending_entry_when_stop_fails(fake_settings):
     """If the stop submission fails AND the entry hasn't filled yet, the
-    pending entry must be cancelled — otherwise it can fill later naked.
-    Regression: this was the second half of the naked-position bug.
+    pending entry must be cancelled — otherwise it can fill later unprotected.
+    Regression: this was the second half of the unprotected-position bug.
     """
     with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
         entry = MagicMock(id="entry-c", legs=[])
