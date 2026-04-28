@@ -34,7 +34,8 @@ def test_bot_status_runs_and_calls_email():
         sender.send.assert_called_once()
         kwargs = sender.send.call_args.kwargs
         assert "Status" in kwargs["subject"]
-        assert "100000" in kwargs["html_body"]
+        # Equity is formatted with thousands separator in the polished email shell.
+        assert "100,000.00" in kwargs["html_body"]
 
 
 def test_bot_dry_run_passes_risk_manager():
