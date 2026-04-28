@@ -70,6 +70,7 @@ def _run_simulator(
     *, template_name: str, params: dict, fold: FoldDefinition
 ) -> BacktestRunResult:
     """Run the existing Backtester for one fold's test window with the given params."""
+    from pathlib import Path
     from trading_bot.backtest.bar_store import BarStore
     from trading_bot.backtest.simulator import Backtester, fetch_vix_history
     from trading_bot.config import load_config
@@ -77,7 +78,7 @@ def _run_simulator(
     if template_name != "momentum":
         raise ValueError(f"Unknown template: {template_name}")
 
-    cfg = load_config()
+    cfg = load_config(Path("strategy/config.yaml"))
     universe = list(getattr(cfg, "lab_backtest_universe", []) or [])
     if not universe:
         # Fall back to a small SPY-tracking subset; real config supplies via
