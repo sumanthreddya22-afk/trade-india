@@ -1,5 +1,5 @@
 """Daily digest email builder. Sent at 18:00 ET Mon-Fri by Reporter role.
-Phase 1 version. Phase 2 will add role report cards; Phase 3 adds
+Phase 1 version. Phase 2 adds role report cards; Phase 3 adds
 leaderboard summary.
 """
 from __future__ import annotations
@@ -10,6 +10,7 @@ from decimal import Decimal
 from typing import Optional
 
 from trading_bot.email_fill import Email, _fmt_money
+from trading_bot.roles.base import ReportCard, HealthStatus
 
 
 @dataclass
@@ -34,10 +35,14 @@ class DigestContext:
     active_config_version: str
     trades: list[TradeRow] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    role_report_cards: list[ReportCard] = field(default_factory=list)
 
 
 def build_digest_email(ctx: DigestContext) -> Email:
-    pct = ((ctx.ending_equity - ctx.starting_equity) / ctx.starting_equity) * 100
+    if ctx.starting_equity == 0:
+        pct = Decimal("0")
+    else:
+        pct = ((ctx.ending_equity - ctx.starting_equity) / ctx.starting_equity) * 100
     sign = "+" if pct >= 0 else ""
     subject = (
         f"Daily Digest | {ctx.date.strftime('%b %d')} | "
@@ -70,6 +75,30 @@ def build_digest_email(ctx: DigestContext) -> Email:
         body.append("</table>")
     else:
         body.append("<p><i>No trades today (0 trades placed).</i></p>")
+
+    if ctx.role_report_cards:
+        body.append("<h3>Role Report Cards</h3><table>")
+        body.append("<tr><th>Status</th><th>Role</th><th>KPI</th><th>Value</th><th>Δ vs prior</th><th>Summary</th></tr>")
+        emoji = {
+            HealthStatus.OK: "✅",
+            HealthStatus.DEGRADED: "⚠️",
+            HealthStatus.BLOCKED: "🔒",
+            HealthStatus.FAIL: "❌",
+        }
+        for card in ctx.role_report_cards:
+            delta = (
+                f"{card.delta_vs_prior:+.3f}"
+                if card.delta_vs_prior is not None else "—"
+            )
+            body.append(
+                f"<tr><td>{emoji.get(card.health, '?')}</td>"
+                f"<td><b>{card.role_name}</b></td>"
+                f"<td>{card.kpi_name}</td>"
+                f"<td>{card.kpi_value:.3f}</td>"
+                f"<td>{delta}</td>"
+                f"<td>{card.summary}</td></tr>"
+            )
+        body.append("</table>")
 
     if ctx.errors:
         body.append("<h3>Errors today</h3><ul>")
