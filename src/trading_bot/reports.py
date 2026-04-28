@@ -38,22 +38,28 @@ from trading_bot.portfolio_monitor import Event
 # Design tokens — single source of truth so all emails feel like one product.
 # --------------------------------------------------------------------------
 
-_BG_PAGE = "#0b1220"      # outer page background
-_BG_CARD = "#131c30"      # card / table background
-_BG_ROW_ALT = "#1a2440"   # zebra row
-_BORDER = "#1f2a44"       # subtle dividers
-_TEXT_PRIMARY = "#e6edf7"
+_BG_PAGE = "#0a0f1c"      # dashboard --bg
+_BG_PAGE_GRAD_TOP = "#070b15"   # dashboard body gradient top
+_BG_CARD = "#0f172a"      # dashboard --card (flattened from rgba .85)
+_BG_ROW_ALT = "#131c30"   # subtle zebra
+_BORDER = "#1e293b"       # dashboard --border
+_TEXT_PRIMARY = "#e2e8f0"      # dashboard body color
 _TEXT_SECONDARY = "#94a3b8"
 _TEXT_MUTED = "#64748b"
-_ACCENT = "#22d3ee"       # cyan
-_GOOD = "#34d399"         # emerald
+_ACCENT = "#06b6d4"       # dashboard .label color (cyan-500)
+_ACCENT_BRIGHT = "#22d3ee"     # dashboard gradient stop (cyan-400)
+_GOOD = "#10b981"         # dashboard pulse-dot (emerald-500)
+_GOOD_LIGHT = "#34d399"   # text on tinted bg
 _BAD = "#fb7185"          # rose
 _WARN = "#fbbf24"         # amber
 _INFO = "#60a5fa"         # blue
+_PURPLE = "#a78bfa"       # dashboard gradient stop (violet-400)
+
+_CARD_RADIUS = "16px"     # dashboard .card border-radius
 
 _FONT_STACK = (
-    "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', "
-    "Helvetica, Arial, sans-serif"
+    "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', "
+    "Roboto, 'Inter', Helvetica, Arial, sans-serif"
 )
 _MONO_STACK = "'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace"
 
@@ -114,20 +120,20 @@ def _pnl_color(v) -> str:
 
 
 def _pill(text: str, kind: str = "neutral") -> str:
-    """Small colored badge for severity / regime / status labels."""
+    """Small colored badge — matches dashboard's `bg-X-900/40 text-X-300` pattern."""
     colors = {
-        "good":    (_GOOD,   "rgba(52,211,153,0.12)"),
-        "bad":     (_BAD,    "rgba(251,113,133,0.12)"),
-        "warn":    (_WARN,   "rgba(251,191,36,0.12)"),
-        "info":    (_INFO,   "rgba(96,165,250,0.12)"),
-        "accent":  (_ACCENT, "rgba(34,211,238,0.12)"),
-        "neutral": (_TEXT_SECONDARY, "rgba(148,163,184,0.10)"),
+        "good":    (_GOOD_LIGHT, "rgba(16,185,129,0.18)"),
+        "bad":     (_BAD,        "rgba(251,113,133,0.18)"),
+        "warn":    (_WARN,       "rgba(251,191,36,0.18)"),
+        "info":    (_INFO,       "rgba(96,165,250,0.18)"),
+        "accent":  (_ACCENT_BRIGHT, "rgba(34,211,238,0.16)"),
+        "neutral": (_TEXT_SECONDARY, "rgba(148,163,184,0.12)"),
     }
     fg, bg = colors.get(kind, colors["neutral"])
     return (
-        f"<span style=\"display:inline-block;padding:3px 10px;border-radius:999px;"
-        f"background:{bg};color:{fg};font-size:11px;font-weight:600;"
-        f"letter-spacing:0.5px;text-transform:uppercase;font-family:{_FONT_STACK}\">"
+        f"<span style=\"display:inline-block;padding:4px 10px;border-radius:999px;"
+        f"background:{bg};color:{fg};font-size:10px;font-weight:600;"
+        f"letter-spacing:1.65px;text-transform:uppercase;font-family:{_FONT_STACK}\">"
         f"{text}</span>"
     )
 
@@ -143,13 +149,15 @@ def _regime_pill(regime: str) -> str:
 
 
 def _section(title: str, body_html: str, *, accent_glyph: str = "◆") -> str:
+    """Section header matches dashboard `.label` exactly: 11px, 0.15em
+    letter-spacing, cyan, semibold, uppercase."""
     return (
         f"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
-        f"width=\"100%\" style=\"margin:24px 0 0\">"
+        f"width=\"100%\" style=\"margin:28px 0 0\">"
         f"<tr><td style=\"padding:0 0 12px\">"
-        f"<span style=\"color:{_ACCENT};font-size:12px;margin-right:8px\">{accent_glyph}</span>"
-        f"<span style=\"color:{_TEXT_PRIMARY};font-size:14px;font-weight:600;"
-        f"letter-spacing:0.4px;text-transform:uppercase;font-family:{_FONT_STACK}\">{title}</span>"
+        f"<span style=\"color:{_ACCENT};font-size:11px;margin-right:8px\">{accent_glyph}</span>"
+        f"<span style=\"color:{_ACCENT};font-size:11px;font-weight:600;"
+        f"letter-spacing:1.65px;text-transform:uppercase;font-family:{_FONT_STACK}\">{title}</span>"
         f"</td></tr>"
         f"<tr><td>{body_html}</td></tr>"
         f"</table>"
@@ -158,18 +166,21 @@ def _section(title: str, body_html: str, *, accent_glyph: str = "◆") -> str:
 
 def _kpi_card(label: str, value: str, *, value_color: str = _TEXT_PRIMARY,
               sub: str | None = None) -> str:
-    """Single KPI tile. Used inside _kpi_grid."""
+    """Single KPI tile. Matches dashboard `.kpi-num` (32px, 700, line-height 1.1,
+    letter-spacing -0.02em) and `.label` (11px, 0.15em letter-spacing, cyan,
+    semibold uppercase) and `.kpi-sub` (12px muted)."""
     sub_html = (
-        f"<div style=\"color:{_TEXT_MUTED};font-size:11px;margin-top:6px;"
+        f"<div style=\"color:{_TEXT_MUTED};font-size:12px;margin-top:4px;"
         f"font-family:{_FONT_STACK}\">{sub}</div>"
         if sub else ""
     )
     return (
-        f"<td valign=\"top\" style=\"padding:14px 16px;background:{_BG_CARD};"
-        f"border:1px solid {_BORDER};border-radius:10px;width:25%\">"
-        f"<div style=\"color:{_TEXT_SECONDARY};font-size:11px;letter-spacing:0.6px;"
+        f"<td valign=\"top\" style=\"padding:18px 20px;background:{_BG_CARD};"
+        f"border:1px solid {_BORDER};border-radius:{_CARD_RADIUS};width:25%\">"
+        f"<div style=\"color:{_ACCENT};font-size:11px;letter-spacing:1.65px;"
         f"text-transform:uppercase;font-weight:600;font-family:{_FONT_STACK}\">{label}</div>"
-        f"<div style=\"color:{value_color};font-size:22px;font-weight:700;margin-top:6px;"
+        f"<div style=\"color:{value_color};font-size:32px;font-weight:700;margin-top:10px;"
+        f"line-height:1.1;letter-spacing:-0.02em;"
         f"font-family:{_MONO_STACK}\">{value}</div>"
         f"{sub_html}"
         f"</td>"
@@ -194,7 +205,7 @@ def _kpi_grid(cells: list[str]) -> str:
 def _empty_state(text: str) -> str:
     return (
         f"<div style=\"padding:18px;background:{_BG_CARD};border:1px dashed {_BORDER};"
-        f"border-radius:10px;color:{_TEXT_MUTED};font-size:13px;text-align:center;"
+        f"border-radius:{_CARD_RADIUS};color:{_TEXT_MUTED};font-size:13px;text-align:center;"
         f"font-family:{_FONT_STACK}\">{text}</div>"
     )
 
@@ -223,7 +234,7 @@ def _data_table(headers: list[str], rows: list[list[str]]) -> str:
     return (
         f"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
         f"width=\"100%\" style=\"border-collapse:separate;border-spacing:0;"
-        f"background:{_BG_CARD};border:1px solid {_BORDER};border-radius:10px;"
+        f"background:{_BG_CARD};border:1px solid {_BORDER};border-radius:{_CARD_RADIUS};"
         f"overflow:hidden\">"
         f"<thead><tr>{th}</tr></thead>"
         f"<tbody>{''.join(body)}</tbody>"
@@ -248,56 +259,77 @@ def _shell(*, title: str, subtitle_html: str, body_html: str,
         f"Trading Bot · paper account · sent automatically · "
         f"<span style=\"color:{_TEXT_MUTED}\">{now_str}</span>"
     )
+    # Match the dashboard sidebar's "TB" badge — a small gradient logo block.
+    logo_block = (
+        f"<div style=\"display:inline-block;width:36px;height:36px;border-radius:10px;"
+        f"background:linear-gradient(135deg,{_ACCENT_BRIGHT} 0%,{_GOOD} 100%);"
+        f"text-align:center;line-height:36px;color:#0a0f1c;font-weight:800;"
+        f"font-size:14px;letter-spacing:0.5px;vertical-align:middle;font-family:{_FONT_STACK}\">"
+        f"TB</div>"
+    )
+    title_block = (
+        f"<span style=\"display:inline-block;margin-left:10px;vertical-align:middle\">"
+        f"<div style=\"color:{_TEXT_PRIMARY};font-size:14px;font-weight:600;line-height:1.1;"
+        f"font-family:{_FONT_STACK}\">Trading Bot</div>"
+        f"<div style=\"color:{_TEXT_MUTED};font-size:11px;margin-top:2px;"
+        f"font-family:{_FONT_STACK}\">Paper command</div>"
+        f"</span>"
+    )
     return f"""<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title}</title>
 </head>
 <body style="margin:0;padding:0;background:{_BG_PAGE};">
+<!-- Outer page: matches dashboard linear-gradient(180deg,#070b15 0%,#0a0f1c 100%) -->
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
-       style="background:{_BG_PAGE};">
-<tr><td align="center" style="padding:24px 12px">
+       style="background:{_BG_PAGE_GRAD_TOP};">
+<tr><td align="center" style="padding:32px 12px;
+       background:linear-gradient(180deg,{_BG_PAGE_GRAD_TOP} 0%,{_BG_PAGE} 100%)">
 <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
-       style="max-width:640px;background:{_BG_PAGE};font-family:{_FONT_STACK}">
+       style="max-width:680px;font-family:{_FONT_STACK}">
 
-  <!-- Header strip -->
-  <tr><td style="padding:0 0 4px">
+  <!-- Header strip: TB badge + title + timestamp on the right -->
+  <tr><td style="padding:0 4px 18px">
     <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
       <tr>
-        <td style="padding:6px 0">
-          <div style="display:inline-block;width:8px;height:8px;border-radius:999px;
-                      background:{accent};vertical-align:middle"></div>
-          <span style="color:{_TEXT_SECONDARY};font-size:12px;font-weight:600;
-                       letter-spacing:0.8px;text-transform:uppercase;margin-left:8px;
-                       vertical-align:middle">Trading Bot</span>
+        <td style="vertical-align:middle">
+          {logo_block}{title_block}
         </td>
-        <td align="right" style="color:{_TEXT_MUTED};font-size:11px;
-                                  font-family:{_MONO_STACK}">{now_str}</td>
+        <td align="right" style="vertical-align:middle;color:{_TEXT_MUTED};font-size:11px;
+                                  font-family:{_MONO_STACK}">
+          <span style="display:inline-block;width:8px;height:8px;border-radius:999px;
+                       background:{_GOOD};box-shadow:0 0 12px {_GOOD};vertical-align:middle;
+                       margin-right:6px"></span>
+          {now_str}
+        </td>
       </tr>
     </table>
   </td></tr>
 
-  <!-- Title block -->
-  <tr><td style="padding:8px 0 4px">
-    <h1 style="margin:0;color:{_TEXT_PRIMARY};font-size:24px;font-weight:700;
-               letter-spacing:-0.3px;font-family:{_FONT_STACK}">{title}</h1>
-  </td></tr>
-  <tr><td style="padding:0 0 12px;color:{_TEXT_SECONDARY};font-size:13px">
-    {subtitle_html}
-  </td></tr>
-
-  <!-- Accent rule -->
-  <tr><td style="padding:6px 0 0">
-    <div style="height:2px;background:linear-gradient(90deg,{accent},transparent);
-                border-radius:2px"></div>
+  <!-- Title card: matches dashboard's _header.html section -->
+  <tr><td style="padding:0;background:{_BG_CARD};border:1px solid {_BORDER};
+                  border-radius:{_CARD_RADIUS}">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+      <tr><td style="padding:22px 24px 8px">
+        <h1 style="margin:0;color:{_TEXT_PRIMARY};font-size:28px;font-weight:700;
+                   letter-spacing:-0.5px;line-height:1.15;font-family:{_FONT_STACK}">{title}</h1>
+      </td></tr>
+      <tr><td style="padding:0 24px 22px;color:{_TEXT_SECONDARY};font-size:13px;
+                      font-family:{_FONT_STACK}">
+        {subtitle_html}
+      </td></tr>
+    </table>
   </td></tr>
 
   <!-- Body -->
-  <tr><td style="padding:8px 0 0">{body_html}</td></tr>
+  <tr><td style="padding:0">{body_html}</td></tr>
 
   <!-- Footer -->
-  <tr><td style="padding:28px 0 4px;border-top:1px solid {_BORDER};margin-top:24px">
-    <div style="color:{_TEXT_MUTED};font-size:11px;text-align:center;padding-top:14px">
+  <tr><td style="padding:32px 4px 4px">
+    <div style="border-top:1px solid {_BORDER};padding-top:18px;
+                color:{_TEXT_MUTED};font-size:11px;text-align:center;
+                font-family:{_FONT_STACK}">
       {footer}
     </div>
   </td></tr>
@@ -580,26 +612,44 @@ def build_rich_report_html(
 
 
 def _strategy_mode_block(view) -> str:
+    """Mirrors dashboard `_strategy_mode.html` — large bold mode word with
+    matching emerald (active) or amber (fallback) tone on a tinted card."""
     if view is None:
         return _empty_state("Strategy mode not yet bootstrapped.")
-    color = _GOOD if not view.is_fallback else _WARN
-    bg = "rgba(52,211,153,0.10)" if not view.is_fallback else "rgba(251,191,36,0.10)"
+    if view.is_fallback:
+        color = _WARN
+        sub_color = "#fde68a"  # amber-200
+        bg_tint = "rgba(251,191,36,0.08)"
+        border_tint = "rgba(251,191,36,0.35)"
+        sub_text = "hold-SPY mode"
+    else:
+        color = _GOOD_LIGHT
+        sub_color = "#a7f3d0"  # emerald-200
+        bg_tint = "rgba(16,185,129,0.08)"
+        border_tint = "rgba(16,185,129,0.35)"
+        sub_text = f"trading {view.set_by}"
     set_at_str = view.set_at.strftime("%Y-%m-%d %H:%M UTC")
     days = view.days_in_state
-    days_str = "today" if days == 0 else (f"{days} day" if days == 1 else f"{days} days")
+    days_str = "Set today" if days == 0 else (f"{days} day in state" if days == 1 else f"{days} days in state")
     reason_html = (
-        f"<div style=\"color:{_TEXT_MUTED};font-size:12px;margin-top:6px;"
+        f"<div style=\"color:{_TEXT_SECONDARY};font-size:12px;margin-top:8px;"
         f"font-family:{_FONT_STACK}\">{view.reason}</div>"
         if view.reason else ""
     )
     return (
-        f"<div style=\"padding:16px 20px;background:{bg};border:1px solid {color};"
-        f"border-radius:10px\">"
-        f"<div style=\"display:inline-block;color:{color};font-size:18px;font-weight:700;"
-        f"letter-spacing:1px;font-family:{_FONT_STACK}\">{view.label}</div>"
-        f"<div style=\"color:{_TEXT_SECONDARY};font-size:12px;margin-top:4px;"
+        f"<div style=\"padding:20px 24px;background:{bg_tint};border:1px solid {border_tint};"
+        f"border-radius:{_CARD_RADIUS}\">"
+        f"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\">"
+        f"<tr><td style=\"vertical-align:baseline\">"
+        f"<span style=\"color:{color};font-size:28px;font-weight:700;letter-spacing:2px;"
+        f"font-family:{_FONT_STACK}\">{view.label}</span>"
+        f"</td><td style=\"vertical-align:baseline;padding-left:14px\">"
+        f"<span style=\"color:{sub_color};font-size:12px;"
+        f"font-family:{_FONT_STACK}\">{sub_text}</span>"
+        f"</td></tr></table>"
+        f"<div style=\"color:{_TEXT_MUTED};font-size:12px;margin-top:8px;"
         f"font-family:{_FONT_STACK}\">"
-        f"in this state for {days_str} (since {set_at_str}, set by {view.set_by})</div>"
+        f"{days_str} · {set_at_str}</div>"
         f"{reason_html}"
         f"</div>"
     )
@@ -675,17 +725,23 @@ def _calibrator_block(view) -> str:
     }.get(view.latest_severity, "neutral")
     corr_str = f"{view.latest_corr:.3f}" if view.latest_corr is not None else "—"
     when = view.latest_at.strftime("%b %d %H:%M UTC")
+    sev_color = {
+        "ok": _GOOD_LIGHT,
+        "warning": _WARN,
+        "high": _BAD,
+    }.get(view.latest_severity, _TEXT_SECONDARY)
     return (
-        f"<div style=\"padding:14px 16px;background:{_BG_CARD};border:1px solid {_BORDER};"
-        f"border-radius:10px\">"
+        f"<div style=\"padding:18px 22px;background:{_BG_CARD};border:1px solid {_BORDER};"
+        f"border-radius:{_CARD_RADIUS}\">"
         f"<div style=\"font-family:{_FONT_STACK}\">"
-        f"<span style=\"color:{_TEXT_PRIMARY};font-size:24px;font-weight:700;"
-        f"font-family:{_MONO_STACK}\">{corr_str}</span>"
-        f"<span style=\"margin-left:12px\">{_pill(view.latest_severity, sev_kind)}</span>"
+        f"<span style=\"color:{sev_color};font-size:32px;font-weight:700;line-height:1.1;"
+        f"letter-spacing:-0.02em;font-family:{_MONO_STACK}\">{corr_str}</span>"
+        f"<span style=\"margin-left:14px;vertical-align:middle\">"
+        f"{_pill(view.latest_severity.replace('_', ' '), sev_kind)}</span>"
         f"</div>"
-        f"<div style=\"color:{_TEXT_MUTED};font-size:12px;margin-top:6px;"
+        f"<div style=\"color:{_TEXT_MUTED};font-size:12px;margin-top:8px;"
         f"font-family:{_FONT_STACK}\">"
-        f"Spearman corr · {view.latest_n} trade pairs · last run {when}"
+        f"Spearman corr · {view.latest_n} trade pair{'' if view.latest_n == 1 else 's'} · last run {when}"
         f"</div>"
         f"</div>"
     )
@@ -704,19 +760,22 @@ def _llm_spend_block(view) -> str:
         f"</div>"
     )
     return (
-        f"<div style=\"padding:14px 16px;background:{_BG_CARD};border:1px solid {_BORDER};"
-        f"border-radius:10px\">"
+        f"<div style=\"padding:18px 22px;background:{_BG_CARD};border:1px solid {_BORDER};"
+        f"border-radius:{_CARD_RADIUS}\">"
         f"<div style=\"font-family:{_FONT_STACK}\">"
-        f"<span style=\"color:{_TEXT_PRIMARY};font-size:22px;font-weight:700;"
-        f"font-family:{_MONO_STACK}\">${view.month_to_date_usd:.2f}</span>"
-        f"<span style=\"color:{_TEXT_MUTED};font-size:13px;margin-left:8px\">"
-        f"of ${view.monthly_cap_usd:.0f} cap ({pct:.1f}%)</span>"
+        f"<span style=\"color:{_TEXT_PRIMARY};font-size:32px;font-weight:700;line-height:1.1;"
+        f"letter-spacing:-0.02em;font-family:{_MONO_STACK}\">${view.month_to_date_usd:.2f}</span>"
+        f"<span style=\"color:{_TEXT_MUTED};font-size:13px;margin-left:10px\">"
+        f"of ${view.monthly_cap_usd:.0f} cap</span>"
         f"</div>"
         f"{bar_html}"
-        f"<div style=\"color:{_TEXT_MUTED};font-size:12px;font-family:{_FONT_STACK}\">"
-        f"{view.n_calls_mtd} calls MTD · "
-        f"top model: {view.most_used_model or 'n/a'}"
-        f"</div>"
+        f"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
+        f"width=\"100%\" style=\"margin-top:6px\"><tr>"
+        f"<td style=\"color:{_TEXT_MUTED};font-size:12px;font-family:{_FONT_STACK}\">"
+        f"{view.n_calls_mtd} call{'' if view.n_calls_mtd == 1 else 's'} this month</td>"
+        f"<td align=\"right\" style=\"color:{_TEXT_MUTED};font-size:12px;font-family:{_MONO_STACK}\">"
+        f"{view.most_used_model or 'n/a'}</td>"
+        f"</tr></table>"
         f"</div>"
     )
 
