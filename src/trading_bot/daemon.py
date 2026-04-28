@@ -110,6 +110,16 @@ def _load_runners(log: StructuredLogger):
         "news_warm": _wrap("news_warm", lambda: sentiment_analyst.safe_run(ctx={})),
         "massive_refresh": _wrap("massive_refresh", lambda: universe_curator.run_refresh(ctx={})),
         "premarket_rank": _wrap("premarket_rank", lambda: universe_curator.run_rank(ctx={})),
+        # Midday rerank: re-pulls Polygon grouped (running intraday-aggregated daily
+        # bar for every US ticker) + re-runs Stage-1/2. Captures symbols that broke
+        # out this morning so the 12:30 stock scan can act on them.
+        "midday_rerank": _wrap(
+            "midday_rerank",
+            lambda: (
+                universe_curator.run_refresh(ctx={}),
+                universe_curator.run_rank(ctx={}),
+            ),
+        ),
         "vip_scan": _wrap("vip_scan", lambda: vip_listener.safe_run(ctx={})),
         "midday_report": _wrap("midday_report", lambda: reporter.run_midday(ctx={})),
         "daily_digest": _wrap("daily_digest", lambda: reporter.run_eod(ctx={})),
