@@ -117,6 +117,17 @@ def register_jobs(
         replace_existing=True,
     )
 
+    # Midday rerank: 12:00 ET weekdays. Refreshes opportunities.md with the
+    # running intraday-aggregated daily bar for every US ticker so symbols
+    # that broke out this morning enter the universe before the 12:30 scan.
+    if "midday_rerank" in runners:
+        scheduler.add_job(
+            runners["midday_rerank"],
+            trigger=CronTrigger(hour=12, minute=0, day_of_week="mon-fri", timezone=et),
+            id="midday_rerank",
+            replace_existing=True,
+        )
+
     # Midday report: 12:31 ET weekdays (offset 1 min from the 12:30 stock_scanner cycle
     # so the two jobs don't compete for the same APScheduler worker thread).
     scheduler.add_job(
