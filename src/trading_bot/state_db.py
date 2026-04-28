@@ -152,6 +152,44 @@ class HoldSpyTransitionState(Base):
     last_action_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class AnthropicCostLog(Base):
+    """Per-call Anthropic API usage + computed cost. Phase 5 Strategy Architect."""
+    __tablename__ = "anthropic_cost_log"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    called_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    role_name = Column(String(64), nullable=False)
+    model = Column(String(64), nullable=False)
+    input_tokens = Column(Integer, nullable=False)
+    output_tokens = Column(Integer, nullable=False)
+    cost_usd = Column(Float, nullable=False)
+    request_id = Column(String(128), nullable=True)
+
+
+class CostHalt(Base):
+    """Anthropic spend cap exceeded — halts LLM-driven roles until halted_until."""
+    __tablename__ = "cost_halts"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    halted_until = Column(DateTime(timezone=True), nullable=False, index=True)
+    reason = Column(Text, nullable=False)
+    set_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class TemplateProposal(Base):
+    """Strategy Architect's proposed templates, before/after Code Reviewer."""
+    __tablename__ = "template_proposals"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    proposed_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    name = Column(String(64), nullable=False, index=True)
+    rationale = Column(Text, nullable=False)
+    expected_regime = Column(String(32), nullable=False)
+    code = Column(Text, nullable=False)
+    tests = Column(Text, nullable=False)
+    params_to_search_json = Column(Text, nullable=False)
+    review_status = Column(String(32), nullable=False, index=True)  # pending|accepted|rejected
+    review_findings_json = Column(Text, nullable=True)
+    accepted_at = Column(DateTime(timezone=True), nullable=True)
+
+
 def get_engine(db_path: str | Path = "data/state.db"):
     engine = create_engine(f"sqlite:///{db_path}", future=True)
 
