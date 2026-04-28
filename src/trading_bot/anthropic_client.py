@@ -15,9 +15,15 @@ import os
 import time
 from dataclasses import dataclass
 
+from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
 from trading_bot.cost_tracker import is_halted, record_call
+
+# Lab is launchd-managed and doesn't inherit shell env, so explicitly load
+# .env at module-import time. Idempotent — load_dotenv won't override values
+# already set in the process env (so the plist still wins if set there).
+load_dotenv()
 
 
 class BudgetExceededError(RuntimeError):
