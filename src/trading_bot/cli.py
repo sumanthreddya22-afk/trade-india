@@ -33,7 +33,9 @@ from trading_bot.regime import detect_regime
 from trading_bot.reports import (
     build_alert_email_html,
     build_daily_report_html,
+    build_naked_stops_email_html,
     build_rich_report_html,
+    build_vip_alert_email_html,
 )
 from trading_bot.risk_manager import RiskManager, RiskState
 from trading_bot.state import load_watchlist
@@ -146,27 +148,15 @@ def status() -> None:
     account = client.get_account()
     positions = client.get_positions()
 
-    rows = "".join(
-        f"<tr><td>{p.symbol}</td><td>{p.qty}</td><td>${p.market_value}</td>"
-        f"<td>${p.unrealized_pl}</td></tr>"
-        for p in positions
-    ) or "<tr><td colspan='4'><i>No open positions</i></td></tr>"
-
-    html = f"""
-<h2>Trading Bot — Account Status</h2>
-<p>Generated {datetime.now().isoformat(timespec='seconds')}</p>
-<table border='1' cellpadding='6'>
-  <tr><th>Equity</th><td>${account.equity}</td></tr>
-  <tr><th>Cash</th><td>${account.cash}</td></tr>
-  <tr><th>Buying Power</th><td>${account.buying_power}</td></tr>
-  <tr><th>Portfolio Value</th><td>${account.portfolio_value}</td></tr>
-</table>
-<h3>Open Positions</h3>
-<table border='1' cellpadding='6'>
-  <tr><th>Symbol</th><th>Qty</th><th>Market Value</th><th>Unrealized P&amp;L</th></tr>
-  {rows}
-</table>
-"""
+    # Reuse the polished daily-report shell with an empty scan + 0 SPY move.
+    empty_scan = ScanResult(decisions=[], timestamp=datetime.now(timezone.utc))
+    html = build_daily_report_html(
+        account=account,
+        positions=positions,
+        scan=empty_scan,
+        spy_daily_change_pct=Decimal("0"),
+        regime="trending_up",
+    )
 
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
@@ -781,15 +771,24 @@ def verify_stops() -> None:
         click.echo(f"[verify-stops] alpaca query failed: {e}")
         return  # do not raise SystemExit — would kill the APScheduler worker thread inside the daemon
 
+    # Alpaca's REST surface returns crypto symbols differently between
+    # endpoints: get_all_positions → "DOTUSD", get_orders → "DOT/USD". We
+    # canonicalise by stripping "/" so the lookup works for both.
+    def _canon(sym: str) -> str:
+        return str(sym).replace("/", "").upper()
+
     stops_by_symbol: dict[str, list] = {}
     for o in open_orders:
-        if str(getattr(o, "type", "")).lower().endswith("stop"):
-            stops_by_symbol.setdefault(str(o.symbol), []).append(o)
+        # Recognise both `stop` and `stop_limit` types as protective. Plain
+        # `endswith("stop")` would miss stop-limit orders (used for crypto,
+        # which Alpaca rejects plain stops on) and produce false-naked alerts.
+        if str(getattr(o, "type", "")).lower().endswith(("stop", "stop_limit")):
+            stops_by_symbol.setdefault(_canon(o.symbol), []).append(o)
 
     naked: list[tuple[str, str, str]] = []  # (symbol, qty, side)
     for p in positions:
         sym = str(p.symbol)
-        if sym not in stops_by_symbol:
+        if _canon(sym) not in stops_by_symbol:
             naked.append((sym, str(p.qty), str(p.side)))
 
     click.echo(
@@ -802,24 +801,7 @@ def verify_stops() -> None:
     if not naked:
         return
 
-    rows = "".join(
-        f"<tr><td style='padding:8px;border-bottom:1px solid #2a2a2a;color:#f87171'>"
-        f"<strong>{sym}</strong></td>"
-        f"<td style='padding:8px;border-bottom:1px solid #2a2a2a;color:#e5e7eb'>{qty} {side}</td></tr>"
-        for sym, qty, side in naked
-    )
-    html = (
-        f"<div style='background:#0a0f1c;color:#e5e7eb;padding:24px;font-family:system-ui'>"
-        f"<h2 style='color:#f87171;margin:0 0 4px'>NAKED POSITIONS — {len(naked)}</h2>"
-        f"<p style='color:#9ca3af;margin:0 0 16px;font-size:14px'>"
-        f"These positions have no live stop order. Risk #8 from the trader's analysis: "
-        f"Alpaca bracket legs can detach on partial fills. Replace stops manually in "
-        f"the Alpaca UI or via API.</p>"
-        f"<table style='width:100%;border-collapse:collapse;background:#0f172a'>"
-        f"<thead><tr><th style='padding:8px;text-align:left;color:#94a3b8'>Symbol</th>"
-        f"<th style='padding:8px;text-align:left;color:#94a3b8'>Qty / Side</th></tr></thead>"
-        f"<tbody>{rows}</tbody></table></div>"
-    )
+    html = build_naked_stops_email_html(naked, total_positions=len(positions))
     EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     ).send(subject=f"⚠ NAKED POSITION ALERT — {len(naked)} unprotected", html_body=html)
@@ -849,26 +831,7 @@ def vip_scan() -> None:
     if not high:
         return  # alerts only fire on HIGH
 
-    rows = "".join(
-        f"<tr><td style='padding:8px;border-bottom:1px solid #2a2a2a'>"
-        f"<strong style='color:#f87171'>{p.severity.upper()}</strong>"
-        f"</td><td style='padding:8px;border-bottom:1px solid #2a2a2a;color:#e5e7eb'>"
-        f"{p.handle} ({p.platform})<br/>"
-        f"<span style='color:#9ca3af;font-size:12px'>{p.severity_reason}</span>"
-        f"</td><td style='padding:8px;border-bottom:1px solid #2a2a2a;color:#e5e7eb'>"
-        f"{p.text[:300]}<br/>"
-        f"<a href='{p.url}' style='color:#22d3ee;font-size:12px'>{p.url}</a>"
-        f"</td></tr>"
-        for p in high
-    )
-    html = (
-        f"<div style='background:#0a0f1c;color:#e5e7eb;padding:24px;font-family:system-ui'>"
-        f"<h2 style='color:#f87171;margin:0 0 4px'>VIP Tweet Alert — {len(high)} high-severity post(s)</h2>"
-        f"<p style='color:#9ca3af;margin:0 0 16px;font-size:14px'>"
-        f"Bot is alert-only — no trades placed. Manual judgment required.</p>"
-        f"<table style='width:100%;border-collapse:collapse;background:#0f172a'>{rows}</table>"
-        f"</div>"
-    )
+    html = build_vip_alert_email_html(high)
     EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     ).send(subject=f"VIP TWEET ALERT — {len(high)} high-severity", html_body=html)
@@ -905,6 +868,43 @@ def lab_cmd() -> None:
     """Run the trading bot lab (nightly param search + auto-promote)."""
     from trading_bot.lab import main as lab_main
     raise SystemExit(lab_main())
+
+
+@main.command("lab-backfill")
+@click.option("--symbols", default="SPY", show_default=True,
+              help="Comma-separated tickers to backfill into the lab's bar cache.")
+@click.option("--months", default=30, show_default=True, type=int,
+              help="How many months of history to fetch (default sized for 6-fold "
+                   "walk-forward: 12mo train + 5×3mo tests).")
+@click.option("--db-path", default="data/massive_grouped.db", show_default=True,
+              help="Bar cache DB the lab reads from (BarStore schema).")
+def lab_backfill(symbols: str, months: int, db_path: str) -> None:
+    """One-shot backfill of historical daily bars into the lab's bar cache.
+
+    The lab's walk-forward harness needs ~30 months of history to run a full
+    6-fold sweep. This command fetches that range from Alpaca and upserts
+    into the BarStore at db_path.
+    """
+    from datetime import date, timedelta
+
+    from trading_bot.backtest.bar_store import BarStore
+
+    settings = Settings()
+    market = MarketDataClient(settings)
+
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    to_date = date.today()
+    from_date = to_date - timedelta(days=months * 31)
+
+    bar_store = BarStore(db_path)
+    click.echo(
+        f"[lab-backfill] warming {len(syms)} symbol(s) "
+        f"{from_date} → {to_date} (~{months}mo) into {db_path}..."
+    )
+    results = bar_store.warm(syms, from_date=from_date, to_date=to_date, market=market)
+    for sym, count in results.items():
+        note = f"{count} new" if count > 0 else ("cached" if count == 0 else "FETCH FAILED")
+        click.echo(f"  {sym}: {note}")
 
 
 @main.command("massive-refresh")

@@ -41,8 +41,10 @@ class ParamOptimizerRole(BaseRole):
     def _do_work(self, ctx):
         template = ctx.get("template", "momentum")
         n_trials = ctx.get("n_trials", 100)
-        start = ctx.get("start", dt.date(2024, 1, 1))
-        end = ctx.get("end", dt.date(2026, 7, 1))
+        # Rolling 30-month window ending yesterday — covers 6 folds of
+        # (12mo train + 3mo test, walking quarterly). Caller can override.
+        end = ctx.get("end", dt.date.today() - dt.timedelta(days=1))
+        start = ctx.get("start", end - dt.timedelta(days=30 * 31))
         n_folds = ctx.get("n_folds", 6)
 
         space = PARAM_SPACE.get(template, {})
