@@ -1,0 +1,46 @@
+<section id="proposals"
+         class="card p-5"
+         hx-get="/fragment/proposals"
+         hx-trigger="every 300s"
+         hx-swap="outerHTML">
+  <div class="flex items-center justify-between mb-3">
+    <span class="label">Strategy Proposals</span>
+    <span class="text-[11px] text-slate-500">Architect → Reviewer · Saturday 06:00 ET</span>
+  </div>
+
+  {% if not lab.proposals %}
+    <div class="text-sm text-slate-500">No proposals yet. First Architect run is Saturday 06:00 ET.</div>
+  {% else %}
+    <div class="space-y-2">
+      {% for p in lab.proposals %}
+        {% if p.review_status == "accepted" %}
+          {% set badge_bg = "bg-emerald-900/40" %}
+          {% set badge_text = "text-emerald-300" %}
+        {% elif p.review_status == "rejected" %}
+          {% set badge_bg = "bg-rose-900/40" %}
+          {% set badge_text = "text-rose-300" %}
+        {% else %}
+          {% set badge_bg = "bg-slate-800" %}
+          {% set badge_text = "text-slate-300" %}
+        {% endif %}
+        <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="font-mono text-sm text-slate-200 truncate">{{ p.name }}</span>
+              <span class="px-2 py-0.5 rounded-full {{ badge_bg }} {{ badge_text }} text-[10px] font-semibold uppercase tracking-wider shrink-0">
+                {{ p.review_status }}
+              </span>
+            </div>
+            <span class="text-[11px] text-slate-500 shrink-0">{{ p.proposed_at.strftime('%b %d') }}</span>
+          </div>
+          <div class="text-[12px] text-slate-400 mt-1">
+            <span class="text-slate-500">regime:</span> {{ p.expected_regime }}
+          </div>
+          {% if p.rationale_short %}
+          <div class="text-[12px] text-slate-300 mt-1 line-clamp-2">{{ p.rationale_short }}…</div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</section>

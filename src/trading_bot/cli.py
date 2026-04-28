@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
+import os
+
 import click
 
 from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderRequest, OrderSide
@@ -501,9 +503,17 @@ def rich_report(period: str) -> None:
     account = alpaca.get_account()
     positions = alpaca.get_positions()
 
+    # Phase 6 system status — pass engine so the digest surfaces lab/coach/calibrator state.
+    try:
+        from trading_bot.state_db import get_engine as _get_engine
+        _state_engine = _get_engine(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
+    except Exception:
+        _state_engine = None
+
     html = build_rich_report_html(
         period=period, account=account, positions=positions, scan=result,
         spy_daily_change_pct=spy_change, regime=regime, intel=intel, events=events,
+        engine=_state_engine,
     )
     EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
@@ -579,9 +589,16 @@ def eod_report() -> None:
     positions = alpaca.get_positions()
     empty_scan = ScanResult(decisions=[], timestamp=datetime.now())
 
+    try:
+        from trading_bot.state_db import get_engine as _get_engine
+        _state_engine = _get_engine(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
+    except Exception:
+        _state_engine = None
+
     html = build_rich_report_html(
         period="eod", account=account, positions=positions, scan=empty_scan,
         spy_daily_change_pct=spy_change, regime=regime, intel=intel, events=events,
+        engine=_state_engine,
     )
     EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to

@@ -428,6 +428,7 @@ def build_rich_report_html(
     regime: str,
     intel: IntelligenceBundle,
     events: list[Event] | None = None,
+    engine=None,  # state.db engine — pass to surface Phase 1-6 system status
 ) -> str:
     """Comprehensive mid-day / end-of-day report."""
     period_label = {"mid": "Mid-Day Report", "eod": "End-of-Day Report"}.get(
@@ -473,6 +474,16 @@ def build_rich_report_html(
         + _section("Open Positions", _positions_block(positions))
         + _section("Decisions This Run", _decisions_block(scan))
     )
+
+    # Phase 1-6 system status (strategy mode, halts, lab evolution, calibrator,
+    # LLM spend, role health). Skipped when engine is unavailable so legacy
+    # callers don't break.
+    if engine is not None:
+        try:
+            body += build_system_status_section(engine)
+        except Exception:
+            # Never let a state.db hiccup break the email — log silently.
+            pass
 
     # Portfolio events
     if events:
@@ -561,6 +572,213 @@ def build_rich_report_html(
     )
 
     return _shell(title=period_label, subtitle_html=subtitle, body_html=body)
+
+
+# --------------------------------------------------------------------------
+# Phase 1-6 system-status block. Pulls from state.db via lab_data.
+# --------------------------------------------------------------------------
+
+
+def _strategy_mode_block(view) -> str:
+    if view is None:
+        return _empty_state("Strategy mode not yet bootstrapped.")
+    color = _GOOD if not view.is_fallback else _WARN
+    bg = "rgba(52,211,153,0.10)" if not view.is_fallback else "rgba(251,191,36,0.10)"
+    set_at_str = view.set_at.strftime("%Y-%m-%d %H:%M UTC")
+    days = view.days_in_state
+    days_str = "today" if days == 0 else (f"{days} day" if days == 1 else f"{days} days")
+    reason_html = (
+        f"<div style=\"color:{_TEXT_MUTED};font-size:12px;margin-top:6px;"
+        f"font-family:{_FONT_STACK}\">{view.reason}</div>"
+        if view.reason else ""
+    )
+    return (
+        f"<div style=\"padding:16px 20px;background:{bg};border:1px solid {color};"
+        f"border-radius:10px\">"
+        f"<div style=\"display:inline-block;color:{color};font-size:18px;font-weight:700;"
+        f"letter-spacing:1px;font-family:{_FONT_STACK}\">{view.label}</div>"
+        f"<div style=\"color:{_TEXT_SECONDARY};font-size:12px;margin-top:4px;"
+        f"font-family:{_FONT_STACK}\">"
+        f"in this state for {days_str} (since {set_at_str}, set by {view.set_by})</div>"
+        f"{reason_html}"
+        f"</div>"
+    )
+
+
+def _halts_block(halts: list) -> str:
+    """Return body HTML or empty string. build_system_status_section adds the section wrapper."""
+    if not halts:
+        return ""
+    rows = []
+    for h in halts:
+        kind_pill = _pill(h.kind, "bad")
+        until_str = h.halted_until.strftime("%Y-%m-%d %H:%M UTC")
+        hrs = f"{h.hours_remaining:.1f}h"
+        rows.append([kind_pill, until_str, hrs, (h.reason or "")[:80]])
+    return _data_table(
+        headers=["Kind", "Until", "Remaining", "Reason"], rows=rows
+    )
+
+
+def _lab_evolution_block(view) -> str:
+    if view.last_run_started_at is None and not view.top_leaderboard:
+        return _empty_state("Lab has not produced any leaderboard rows yet.")
+    summary_kpis = []
+    if view.last_run_started_at is not None:
+        when = view.last_run_started_at.strftime("%b %d %H:%M UTC")
+        summary_kpis.append(
+            _kpi_card(
+                "Last Search",
+                f"{view.last_run_n_trials} trials",
+                sub=f"{view.last_run_template} · {when}",
+            )
+        )
+        if view.last_run_best_fitness is not None:
+            summary_kpis.append(
+                _kpi_card(
+                    "Best Fitness",
+                    f"{view.last_run_best_fitness:.2f}",
+                    sub="auto-promoted" if view.last_run_promoted else "no promotion",
+                    value_color=_GOOD if view.last_run_promoted else _TEXT_PRIMARY,
+                )
+            )
+    rows = []
+    for r in view.top_leaderboard:
+        alpha = r["alpha_vs_spy_x"]
+        alpha_html = (
+            f"<span style=\"color:{_pnl_color(alpha - 1)}\">{alpha:.2f}x</span>"
+        )
+        rows.append([
+            r["template"],
+            alpha_html,
+            f"{r['sortino']:.2f}",
+            f"{r['max_dd_pct']:.1f}%",
+            r["folds"],
+            f"{r['fitness_score']:.2f}",
+        ])
+    table = _data_table(
+        headers=["Template", "Alpha vs SPY", "Sortino", "Max DD", "Folds", "Fitness"],
+        rows=rows or [["—", "—", "—", "—", "—", "—"]],
+    )
+    return (_kpi_grid(summary_kpis) if summary_kpis else "") + "<div style=\"height:12px\"></div>" + table
+
+
+def _calibrator_block(view) -> str:
+    if view.latest_at is None:
+        return _empty_state("Calibrator has not run yet.")
+    sev_kind = {
+        "ok": "good",
+        "warning": "warn",
+        "high": "bad",
+        "insufficient_data": "neutral",
+        "never_run": "neutral",
+    }.get(view.latest_severity, "neutral")
+    corr_str = f"{view.latest_corr:.3f}" if view.latest_corr is not None else "—"
+    when = view.latest_at.strftime("%b %d %H:%M UTC")
+    return (
+        f"<div style=\"padding:14px 16px;background:{_BG_CARD};border:1px solid {_BORDER};"
+        f"border-radius:10px\">"
+        f"<div style=\"font-family:{_FONT_STACK}\">"
+        f"<span style=\"color:{_TEXT_PRIMARY};font-size:24px;font-weight:700;"
+        f"font-family:{_MONO_STACK}\">{corr_str}</span>"
+        f"<span style=\"margin-left:12px\">{_pill(view.latest_severity, sev_kind)}</span>"
+        f"</div>"
+        f"<div style=\"color:{_TEXT_MUTED};font-size:12px;margin-top:6px;"
+        f"font-family:{_FONT_STACK}\">"
+        f"Spearman corr · {view.latest_n} trade pairs · last run {when}"
+        f"</div>"
+        f"</div>"
+    )
+
+
+def _llm_spend_block(view) -> str:
+    if view.n_calls_mtd == 0:
+        return _empty_state("No Anthropic API calls this month.")
+    pct = view.pct_used
+    bar_color = _GOOD if pct < 70 else (_WARN if pct < 90 else _BAD)
+    bar_w = min(100, max(0, pct))
+    bar_html = (
+        f"<div style=\"height:8px;background:{_BG_ROW_ALT};border-radius:999px;"
+        f"overflow:hidden;margin:8px 0\">"
+        f"<div style=\"width:{bar_w}%;height:100%;background:{bar_color}\"></div>"
+        f"</div>"
+    )
+    return (
+        f"<div style=\"padding:14px 16px;background:{_BG_CARD};border:1px solid {_BORDER};"
+        f"border-radius:10px\">"
+        f"<div style=\"font-family:{_FONT_STACK}\">"
+        f"<span style=\"color:{_TEXT_PRIMARY};font-size:22px;font-weight:700;"
+        f"font-family:{_MONO_STACK}\">${view.month_to_date_usd:.2f}</span>"
+        f"<span style=\"color:{_TEXT_MUTED};font-size:13px;margin-left:8px\">"
+        f"of ${view.monthly_cap_usd:.0f} cap ({pct:.1f}%)</span>"
+        f"</div>"
+        f"{bar_html}"
+        f"<div style=\"color:{_TEXT_MUTED};font-size:12px;font-family:{_FONT_STACK}\">"
+        f"{view.n_calls_mtd} calls MTD · "
+        f"top model: {view.most_used_model or 'n/a'}"
+        f"</div>"
+        f"</div>"
+    )
+
+
+def _role_health_block(rows: list) -> str:
+    if not rows:
+        return _empty_state("No role runs in last 30d.")
+    body_rows = []
+    for r in rows:
+        rate = r.success_rate_pct
+        kind = "good" if rate >= 95 else ("warn" if rate >= 70 else "bad")
+        last = r.last_run_at.strftime("%b %d %H:%M") if r.last_run_at else "—"
+        body_rows.append([
+            r.role_name,
+            f"{r.runs_today}",
+            f"{r.runs_30d}",
+            _pill(f"{rate:.0f}%", kind),
+            last,
+            r.last_status,
+        ])
+    return _data_table(
+        headers=["Role", "Today", "30d", "Success", "Last Run", "Last Status"],
+        rows=body_rows,
+    )
+
+
+def build_system_status_section(engine) -> str:
+    """Render the full Phase 1-6 system status block. Returns HTML.
+
+    Pulls from state.db via lab_data. Sections that have no data render an
+    empty-state placeholder so the layout is stable from day one.
+    """
+    from sqlalchemy.orm import Session
+
+    from trading_bot import lab_data
+
+    with Session(engine) as session:
+        mode = lab_data.strategy_mode(session)
+        halts = lab_data.active_halts(session)
+        evolution = lab_data.lab_evolution(session)
+        cal = lab_data.calibrator(session)
+        spend = lab_data.llm_spend(session)
+        roles = lab_data.role_health(session)
+
+    parts = [
+        _section("Strategy Mode", _strategy_mode_block(mode), accent_glyph="◆"),
+    ]
+    halts_html = _halts_block(halts)
+    if halts_html:
+        parts.append(_section("Active Halts", halts_html, accent_glyph="⚠"))
+    parts.extend([
+        _section("Lab Evolution", _lab_evolution_block(evolution), accent_glyph="⚗"),
+        _section("Calibrator (backtest vs paper drift)", _calibrator_block(cal), accent_glyph="◎"),
+        _section("LLM Spend (Anthropic)", _llm_spend_block(spend), accent_glyph="✦"),
+        _section("Role Health (last 30d)", _role_health_block(roles), accent_glyph="◍"),
+    ])
+    return "".join(parts)
+
+
+# --------------------------------------------------------------------------
+# Alert emails
+# --------------------------------------------------------------------------
 
 
 def build_alert_email_html(events: list[Event], account_equity: str) -> str:

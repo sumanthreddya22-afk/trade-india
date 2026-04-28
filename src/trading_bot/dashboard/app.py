@@ -56,6 +56,14 @@ FRAGMENTS: dict[str, str] = {
     "scheduled": "_scheduled.html",
     "errors": "_errors.html",
     "sidebar_status": "_sidebar_status.html",
+    # Phase 1-6 surfaces
+    "strategy_mode": "_strategy_mode.html",
+    "halts": "_halts.html",
+    "lab_evolution": "_lab_evolution.html",
+    "calibrator": "_calibrator.html",
+    "llm_spend": "_llm_spend.html",
+    "role_health": "_role_health.html",
+    "proposals": "_proposals.html",
 }
 
 
@@ -204,6 +212,7 @@ def create_app() -> FastAPI:
             "market_session": {"code": session_code, "label": session_label},
             "fragments": list(FRAGMENTS.keys()),
             "scan_age_seconds": _scan_age_seconds(snap),
+            "lab": _lab_views(),
         }
 
     @app.get("/", response_class=HTMLResponse)
@@ -252,6 +261,48 @@ def create_app() -> FastAPI:
 
 
 # ---------- helpers exposed to templates ---------------------------------
+
+
+def _lab_views() -> dict[str, Any]:
+    """Pull all Phase 1-6 state.db views in one call. Fast (microseconds)
+    because state.db is local SQLite — no caching needed.
+
+    Returns a dict mapping each view name → dataclass (or list). Templates
+    reference this as `lab.strategy_mode`, `lab.halts`, etc.
+    """
+    import os as _os
+
+    from sqlalchemy.orm import Session as _Session
+
+    from trading_bot import lab_data
+    from trading_bot.state_db import get_engine as _get_engine
+
+    state_db = _os.environ.get("TRADING_BOT_STATE_DB", "data/state.db")
+    try:
+        engine = _get_engine(state_db)
+        with _Session(engine) as s:
+            return {
+                "strategy_mode": lab_data.strategy_mode(s),
+                "hold_spy_transition": lab_data.hold_spy_transition(s),
+                "halts": lab_data.active_halts(s),
+                "lab_evolution": lab_data.lab_evolution(s),
+                "calibrator": lab_data.calibrator(s),
+                "llm_spend": lab_data.llm_spend(s),
+                "role_health": lab_data.role_health(s),
+                "proposals": lab_data.recent_proposals(s, limit=5),
+            }
+    except Exception:
+        # Empty fallback so templates never crash on missing schema.
+        return {
+            "strategy_mode": None,
+            "hold_spy_transition": None,
+            "halts": [],
+            "lab_evolution": None,
+            "calibrator": None,
+            "llm_spend": None,
+            "role_health": [],
+            "proposals": [],
+        }
 
 
 def _scan_age_seconds(snap: DashboardSnapshot) -> int | None:
