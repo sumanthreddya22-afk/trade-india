@@ -22,7 +22,7 @@
         </div>
         <div class="text-right shrink-0">
           <div class="text-sm font-mono text-rose-200">{{ "%.1f"|format(h.hours_remaining) }}h</div>
-          <div class="text-[11px] text-slate-500 mt-0.5">until {{ h.halted_until.strftime('%b %d %H:%M UTC') }}</div>
+          <div class="text-[11px] text-slate-500 mt-0.5">until {{ h.halted_until | et('%b %d %-I:%M %p ET') }}</div>
         </div>
       </div>
     {% endfor %}

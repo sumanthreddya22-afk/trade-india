@@ -43,7 +43,7 @@
     </div>
     {% if sp.last_call_at %}
     <div class="text-[11px] text-slate-500 mt-3">
-      Last call: {{ sp.last_call_at.strftime('%b %d %H:%M UTC') }}
+      Last call: {{ sp.last_call_at | et('%b %d %-I:%M %p ET') }}
     </div>
     {% endif %}
     {% if pct >= 80 and pct < 100 %}

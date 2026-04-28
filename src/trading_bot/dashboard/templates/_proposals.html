@@ -31,7 +31,7 @@
                 {{ p.review_status }}
               </span>
             </div>
-            <span class="text-[11px] text-slate-500 shrink-0">{{ p.proposed_at.strftime('%b %d') }}</span>
+            <span class="text-[11px] text-slate-500 shrink-0">{{ p.proposed_at | et('%b %d') }}</span>
           </div>
           <div class="text-[12px] text-slate-400 mt-1">
             <span class="text-slate-500">regime:</span> {{ p.expected_regime }}

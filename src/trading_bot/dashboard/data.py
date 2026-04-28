@@ -451,42 +451,68 @@ def _build_universe_meta(opp_path: Path, watchlist_path: Path) -> tuple[int, str
 # ---- Tier 1 expansions ---------------------------------------------------
 
 
+# Cron expressions are interpreted in America/New_York (ET). Keep in sync
+# with scheduler_jobs.py (daemon) and lab.py (lab process).
 _KNOWN_SCHEDULED_JOBS: list[tuple[str, str, str]] = [
-    # (task_id, human label, cron) — keep in sync with the scheduled-tasks MCP
-    ("trading-bot-premarket-rank", "Pre-market rank (refresh opportunities.md)", "0 8 * * 1-5"),
-    ("trading-bot-intel-scan", "Intel-scan (place trades, hourly)", "0 9-15 * * 1-5"),
-    ("trading-bot-portfolio-watch", "Portfolio watch (alerts, every 30 min)", "15,45 9-15 * * 1-5"),
-    ("trading-bot-rich-report-mid", "Midday rich report", "30 12 * * 1-5"),
-    ("trading-bot-daily-full-run", "EOD report", "30 16 * * 1-5"),
-    ("trading-bot-crypto-scan", "Crypto scan (24/7, hourly)", "5 * * * *"),
-    ("trading-bot-vip-tweets", "VIP tweet monitor (Truth Social)", "*/10 * * * *"),
-    ("trading-bot-verify-stops", "Verify stops on open positions", "20,50 * * * *"),
-    ("trading-bot-news-warm", "News sentiment refresh (Massive)", "45 8,11,14 * * 1-5"),
-    ("trading-bot-weekly-evolve", "Weekly evolve", "0 10 * * 6"),
+    # ─ Daemon ─────────────────────────────────────────────────────────────
+    ("massive_refresh", "Universe refresh (whole-market Polygon scan)", "30 6 * * 1-5"),
+    ("premarket_rank", "Pre-market rank → opportunities.md", "30 7 * * 1-5"),
+    ("midday_rerank", "Midday rerank (catches morning breakouts)", "0 12 * * 1-5"),
+    ("stock_scanner", "Stock scanner (signals + orders)", "30 9-15 * * 1-5"),
+    ("crypto_scanner", "Crypto scanner (24/7)", "*/30 * * * *"),
+    ("portfolio_monitor", "Portfolio monitor (hourly alerts)", "0 9-16 * * 1-5"),
+    ("order_steward_sweep", "Order steward sweep (verify stops)", "0 9-16 * * 1-5"),
+    ("vip_listener", "VIP listener (Truth Social / news)", "*/30 9-16 * * 1-5"),
+    ("news_warm_morning", "News sentiment warm (pre-open)", "45 8 * * 1-5"),
+    ("news_warm_midday", "News sentiment warm (mid + late session)", "45 11,14 * * 1-5"),
+    ("strategy_coach", "Strategy Coach (alpha-vs-SPY check)", "0 6 * * 1-5"),
+    ("hold_spy_coordinator", "Hold-SPY Coordinator (transition mgmt)", "55 15 * * 1-5"),
+    ("midday_report", "Midday rich-report email", "31 12 * * 1-5"),
+    ("daily_digest", "EOD digest email", "0 18 * * 1-5"),
+    ("log_rotation", "Weekly log rotation", "0 3 * * 0"),
+    ("heartbeat", "Heartbeat (every 60s)", "* * * * *"),
+    # ─ Lab ────────────────────────────────────────────────────────────────
+    ("param_search", "Lab — nightly param search (optuna)", "0 2 * * *"),
+    ("auto_promote", "Lab — auto-promote winning variant", "45 2 * * *"),
+    ("calibrate", "Lab — calibrator (backtest vs paper drift)", "0 5 * * *"),
+    ("saturday_evolve", "Lab — Architect → Reviewer (LLM, weekly)", "0 6 * * 6"),
 ]
 
 
 def _build_scheduled_jobs(errors: list[str]) -> list[ScheduledJobRow]:
+    """All cron expressions are interpreted in America/New_York (ET).
+    Returned `next_run_local` strings are formatted as `Tue 12:00 PM ET`."""
     try:
         from croniter import croniter
     except Exception as e:
         errors.append(f"croniter unavailable: {e}")
         return []
+    try:
+        from zoneinfo import ZoneInfo
+    except Exception as e:
+        errors.append(f"zoneinfo unavailable: {e}")
+        return []
 
-    now = datetime.now()  # local time
+    et = ZoneInfo("America/New_York")
+    now_et = datetime.now(et)
     out: list[ScheduledJobRow] = []
     for task_id, label, cron in _KNOWN_SCHEDULED_JOBS:
         try:
-            it = croniter(cron, now)
+            it = croniter(cron, now_et)
             nxt = it.get_next(datetime)
-            label_str = nxt.strftime("%a %-I:%M %p")
+            # croniter returns aware-or-naive matching the input; force ET
+            if nxt.tzinfo is None:
+                nxt = nxt.replace(tzinfo=et)
+            label_str = nxt.astimezone(et).strftime("%a %-I:%M %p ET")
             # estimate fires/day by counting next 24h matches
             count = 0
-            cur = now
+            cur = now_et
             cit = croniter(cron, cur)
             for _ in range(500):
                 cur = cit.get_next(datetime)
-                if (cur - now).total_seconds() > 86400:
+                if cur.tzinfo is None:
+                    cur = cur.replace(tzinfo=et)
+                if (cur - now_et).total_seconds() > 86400:
                     break
                 count += 1
             est = f"~{count}/day" if count else "—"

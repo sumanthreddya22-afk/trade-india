@@ -18,7 +18,7 @@
       <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
         <div class="text-[10px] uppercase tracking-wider text-slate-500">Last Search</div>
         <div class="text-lg font-semibold mt-0.5">{{ ev.last_run_n_trials }} trials</div>
-        <div class="text-[11px] text-slate-500 mt-0.5">{{ ev.last_run_template }} · {{ ev.last_run_started_at.strftime('%b %d %H:%M UTC') }}</div>
+        <div class="text-[11px] text-slate-500 mt-0.5">{{ ev.last_run_template }} · {{ ev.last_run_started_at | et('%b %d %-I:%M %p ET') }}</div>
       </div>
       <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
         <div class="text-[10px] uppercase tracking-wider text-slate-500">Best Fitness</div>

@@ -29,7 +29,7 @@
       </span>
     </div>
     <div class="text-xs text-slate-500 mt-2">
-      Spearman corr · {{ c.latest_n }} trade pair{{ '' if c.latest_n == 1 else 's' }} · last run {{ c.latest_at.strftime('%b %d %H:%M UTC') }}
+      Spearman corr · {{ c.latest_n }} trade pair{{ '' if c.latest_n == 1 else 's' }} · last run {{ c.latest_at | et('%b %d %-I:%M %p ET') }}
     </div>
 
     {% if c.history|length > 1 %}
@@ -47,7 +47,7 @@
           }[h.severity] %}
           {% set height = ((h.corr|default(0)) * 50 + 25)|round|int if h.corr is not none else 5 %}
           <div class="{{ color }} flex-1 rounded-t" style="height:{{ height if height > 0 else 4 }}px"
-               title="{{ h.recorded_at.strftime('%m-%d') }} · corr={{ h.corr|default('n/a') }} · {{ h.severity }}"></div>
+               title="{{ h.recorded_at | et('%m-%d') }} · corr={{ h.corr|default('n/a') }} · {{ h.severity }}"></div>
         {% endfor %}
       </div>
     </div>
