@@ -236,6 +236,94 @@ def test_verifier_recognises_stop_limit_as_protection(fake_settings):
         MockTC.return_value.submit_order.assert_not_called()
 
 
+def test_place_protective_stop_stock_long(fake_settings):
+    """Long stock: places plain StopOrderRequest with side=SELL, GTC."""
+    from decimal import Decimal
+    from alpaca.trading.requests import StopOrderRequest
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="stop-123")
+        client = AlpacaClient(fake_settings)
+        order_id = client.place_protective_stop(
+            symbol="AAPL",
+            qty=Decimal("10"),
+            position_side=OrderSide.BUY,  # long
+            asset_class=AssetClass.STOCK,
+            stop_price=Decimal("180.00"),
+        )
+
+    assert order_id == "stop-123"
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert isinstance(call_arg, StopOrderRequest)
+    assert call_arg.symbol == "AAPL"
+    assert float(call_arg.qty) == 10.0
+    assert str(call_arg.side).lower().endswith("sell")
+    assert float(call_arg.stop_price) == 180.00
+
+
+def test_place_protective_stop_crypto_long_uses_stop_limit(fake_settings):
+    """Crypto long: places StopLimitOrderRequest because Alpaca rejects plain stops on crypto.
+    Symbol is rewritten 'DOTUSD' → 'DOT/USD' for orders."""
+    from decimal import Decimal
+    from alpaca.trading.requests import StopLimitOrderRequest
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="stop-c1")
+        client = AlpacaClient(fake_settings)
+        order_id = client.place_protective_stop(
+            symbol="DOTUSD",  # position-form symbol
+            qty=Decimal("100"),
+            position_side=OrderSide.BUY,  # long
+            asset_class=AssetClass.CRYPTO,
+            stop_price=Decimal("5.00"),
+        )
+
+    assert order_id == "stop-c1"
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert isinstance(call_arg, StopLimitOrderRequest)
+    assert call_arg.symbol == "DOT/USD"
+    assert float(call_arg.stop_price) == 5.00
+    # Sell-stop limit must be ≤ trigger; existing CRYPTO_STOP_LIMIT_BUFFER_PCT = 5%.
+    assert float(call_arg.limit_price) <= 5.00
+
+
+def test_place_protective_stop_short_uses_buy_side(fake_settings):
+    """Short position (rare but supported): protective stop is a BUY stop above current."""
+    from decimal import Decimal
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="stop-s")
+        client = AlpacaClient(fake_settings)
+        client.place_protective_stop(
+            symbol="AAPL",
+            qty=Decimal("5"),
+            position_side=OrderSide.SELL,  # short
+            asset_class=AssetClass.STOCK,
+            stop_price=Decimal("200.00"),
+        )
+
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert str(call_arg.side).lower().endswith("buy")
+
+
+def test_place_protective_stop_propagates_alpaca_errors(fake_settings):
+    from decimal import Decimal
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+    from trading_bot.exceptions import AlpacaClientError
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.side_effect = RuntimeError("rejected")
+        client = AlpacaClient(fake_settings)
+        with pytest.raises(AlpacaClientError, match="protective stop"):
+            client.place_protective_stop(
+                symbol="AAPL", qty=Decimal("1"), position_side=OrderSide.BUY,
+                asset_class=AssetClass.STOCK, stop_price=Decimal("100"),
+            )
+
+
 def test_get_active_assets_returns_tradable(monkeypatch):
     from trading_bot.alpaca_client import TradableAsset
 

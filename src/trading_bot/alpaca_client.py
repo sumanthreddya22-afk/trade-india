@@ -11,6 +11,7 @@ from alpaca.trading.requests import (
     MarketOrderRequest,
     StopLimitOrderRequest,
     StopLossRequest,
+    StopOrderRequest,
     TakeProfitRequest,
 )
 from pydantic import BaseModel, model_validator
@@ -92,6 +93,23 @@ def _to_alpaca_side(s: OrderSide) -> AlpacaSide:
 
 def _opposite(s: OrderSide) -> OrderSide:
     return OrderSide.SELL if s == OrderSide.BUY else OrderSide.BUY
+
+
+def _to_orderable_symbol(symbol: str, asset_class: AssetClass) -> str:
+    """Position-form → orderable-form symbol.
+
+    Alpaca's REST surface returns crypto symbols differently between
+    endpoints: get_all_positions → 'DOTUSD', orders/bars → 'DOT/USD'.
+    All Alpaca crypto pairs settle in USD, so we insert the slash before
+    the trailing 'USD'.
+    """
+    if asset_class != AssetClass.CRYPTO:
+        return symbol
+    if "/" in symbol:
+        return symbol
+    if symbol.endswith("USD"):
+        return f"{symbol[:-3]}/USD"
+    return symbol
 
 
 class AlpacaClient:
@@ -189,6 +207,53 @@ class AlpacaClient:
             return str(order.id)
         except Exception as e:
             raise AlpacaClientError(f"market order failed for {symbol}: {e}") from e
+
+    def place_protective_stop(
+        self,
+        *,
+        symbol: str,
+        qty: Decimal,
+        position_side: OrderSide,
+        asset_class: AssetClass,
+        stop_price: Decimal,
+    ) -> str:
+        """Place a standalone protective stop on an existing position.
+
+        `position_side` is the side of the position being protected (BUY=long,
+        SELL=short). The stop order takes the opposite side. Stocks use plain
+        stop; crypto uses stop-limit (Alpaca rejects plain stops on crypto).
+        Returns the Alpaca order id.
+        """
+        stop_side = _opposite(position_side)
+        orderable_symbol = _to_orderable_symbol(symbol, asset_class)
+        try:
+            if asset_class == AssetClass.CRYPTO:
+                if stop_side == OrderSide.SELL:
+                    limit = float(stop_price) * (1.0 - CRYPTO_STOP_LIMIT_BUFFER_PCT)
+                else:
+                    limit = float(stop_price) * (1.0 + CRYPTO_STOP_LIMIT_BUFFER_PCT)
+                req = StopLimitOrderRequest(
+                    symbol=orderable_symbol,
+                    qty=float(qty),
+                    side=_to_alpaca_side(stop_side),
+                    time_in_force=TimeInForce.GTC,
+                    stop_price=float(stop_price),
+                    limit_price=round(limit, 6),
+                )
+            else:
+                req = StopOrderRequest(
+                    symbol=orderable_symbol,
+                    qty=float(qty),
+                    side=_to_alpaca_side(stop_side),
+                    time_in_force=TimeInForce.GTC,
+                    stop_price=float(stop_price),
+                )
+            order = self._client.submit_order(req)
+            return str(order.id)
+        except Exception as e:
+            raise AlpacaClientError(
+                f"protective stop failed for {symbol}: {e}"
+            ) from e
 
     def place_order_with_stop_loss(self, req: OrderRequest) -> OrderResult:
         """Place atomic bracket order: entry + stop-loss together.
