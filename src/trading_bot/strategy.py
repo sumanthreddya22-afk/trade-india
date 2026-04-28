@@ -38,6 +38,28 @@ class MomentumStrategy:
         self._stop_pct = stop_pct
         self._max_concentration_pct = max_concentration_pct
 
+    @classmethod
+    def from_params(cls, params: dict) -> "MomentumStrategy":
+        """Construct from a flat dict (lab/optuna-friendly).
+
+        Float-typed params (`stop_pct` as percent: 5.0 = 5%) are coerced to
+        Decimal here so the search space can stay numeric.
+        """
+        kwargs: dict = {}
+        if "rsi_lower" in params:
+            kwargs["rsi_lower"] = float(params["rsi_lower"])
+        if "rsi_upper" in params:
+            kwargs["rsi_upper"] = float(params["rsi_upper"])
+        if "per_trade_risk_pct" in params:
+            kwargs["per_trade_risk_pct"] = Decimal(str(params["per_trade_risk_pct"]))
+        if "stop_pct" in params:
+            # search space uses percent (e.g. 5.0); constructor wants fraction (0.05)
+            sp = float(params["stop_pct"])
+            kwargs["stop_pct"] = Decimal(str(sp / 100.0)) if sp >= 1 else Decimal(str(sp))
+        if "max_concentration_pct" in params:
+            kwargs["max_concentration_pct"] = Decimal(str(params["max_concentration_pct"]))
+        return cls(**kwargs)
+
     def evaluate(self, symbol: str, ind: Indicators, equity: Decimal) -> Signal:
         if not (self._rsi_lower <= ind.rsi_14 <= self._rsi_upper):
             return Signal(symbol, SignalAction.HOLD, Decimal("0"), Decimal("0"), Decimal("0"),

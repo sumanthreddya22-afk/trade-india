@@ -311,6 +311,7 @@ class Backtester:
         trail_breakeven_pct: float = 3.0,    # showed every variant under-
         trail_lock_pct: float = 5.0,         # performs the no-trailing
         trail_giveback_fraction: float = 0.5,  # baseline on momentum/large-caps
+        strategy_overrides: dict[str, dict] | None = None,
     ) -> None:
         self._cfg = config
         self._bars = bar_store
@@ -323,6 +324,8 @@ class Backtester:
         self._trail_be = trail_breakeven_pct
         self._trail_lock = trail_lock_pct
         self._trail_give = trail_giveback_fraction
+        # Lab hook: param dict per template name. _strategy_for applies these.
+        self._strategy_overrides = strategy_overrides or {}
 
     # -- public ----------------------------------------------------------
 
@@ -465,6 +468,9 @@ class Backtester:
         if chosen is None:
             return None
         if isinstance(chosen, MomentumStrategy) and "momentum" in allowed:
+            override = self._strategy_overrides.get("momentum")
+            if override:
+                return MomentumStrategy.from_params(override)
             return chosen
         if isinstance(chosen, MeanReversionStrategy) and "mean_reversion" in allowed:
             return chosen
