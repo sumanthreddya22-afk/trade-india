@@ -10,7 +10,6 @@ from trading_bot.portfolio_monitor import Event
 from trading_bot.reports import (
     build_alert_email_html,
     build_daily_report_html,
-    build_naked_stops_email_html,
     build_rich_report_html,
     build_vip_alert_email_html,
 )
@@ -190,31 +189,89 @@ def test_rich_report_renders_events(fake_intel):
 
 
 # --------------------------------------------------------------------------
-# Naked-stops alert
+# Open Positions email (auto-protect summary)
 # --------------------------------------------------------------------------
 
 
-def test_naked_stops_email_lists_each_symbol():
-    naked = [
-        ("DOTUSD", "417.95", "PositionSide.LONG"),
-        ("FILUSD", "673.31", "PositionSide.LONG"),
-    ]
-    html = build_naked_stops_email_html(naked, total_positions=2)
-    assert "Naked Position Alert" in html
-    assert "DOTUSD" in html
-    assert "FILUSD" in html
-    assert "417.95" in html
-    assert "long" in html  # side label cleaned of "PositionSide." prefix
-    assert "Replace stops" in html
-
-
-def test_naked_stops_email_singular_grammar():
-    html = build_naked_stops_email_html(
-        [("BTCUSD", "0.001", "PositionSide.LONG")],
-        total_positions=5,
+def _make_action(
+    *, symbol="AAPL", qty="10", outcome="stop_placed",
+    asset_class="stock", position_side="buy",
+    stop_price=None, current_price=None, fill_estimate=None, error=None,
+):
+    from decimal import Decimal
+    from trading_bot.alpaca_client import AssetClass, OrderSide
+    from trading_bot.position_protection import ProtectionAction
+    return ProtectionAction(
+        symbol=symbol, qty=Decimal(qty),
+        position_side=OrderSide(position_side),
+        asset_class=AssetClass(asset_class),
+        outcome=outcome,
+        stop_price=stop_price, current_price=current_price,
+        fill_estimate=fill_estimate, error=error,
     )
-    # "1 position has" not "1 positions have"
-    assert "1 position has" in html
+
+
+def test_open_positions_email_lists_protected_symbols():
+    from trading_bot.reports import build_open_positions_email_html
+    actions = [
+        _make_action(symbol="AAPL", outcome="stop_placed",
+                     stop_price=180.0, current_price=200.0),
+        _make_action(symbol="MSFT", outcome="stop_placed",
+                     stop_price=380.0, current_price=400.0),
+    ]
+    html = build_open_positions_email_html(actions, total_positions=5)
+    assert "AAPL" in html
+    assert "MSFT" in html
+    assert "180.00" in html
+    assert "Protected" in html
+
+
+def test_open_positions_email_lists_closed_symbols():
+    from trading_bot.reports import build_open_positions_email_html
+    actions = [
+        _make_action(symbol="XYZ", outcome="flattened", fill_estimate=12.34),
+    ]
+    html = build_open_positions_email_html(actions, total_positions=3)
+    assert "XYZ" in html
+    assert "Closed" in html
+    assert "12.34" in html
+
+
+def test_open_positions_email_lists_failures_and_deferred():
+    from trading_bot.reports import build_open_positions_email_html
+    actions = [
+        _make_action(symbol="AAA", outcome="failed", error="rate limit"),
+        _make_action(symbol="BBB", outcome="deferred_off_hours"),
+    ]
+    html = build_open_positions_email_html(actions, total_positions=2)
+    assert "Failed" in html
+    assert "rate limit" in html
+    assert "Deferred" in html
+    assert "BBB" in html
+
+
+def test_open_positions_email_subject_clean_when_all_actioned():
+    """No failures/deferred → subject is just 'Open Positions — N actioned'."""
+    from trading_bot.reports import open_positions_email_subject
+    actions = [
+        _make_action(symbol="AAPL", outcome="stop_placed",
+                     stop_price=180.0, current_price=200.0),
+    ]
+    subject = open_positions_email_subject(actions)
+    assert subject == "Open Positions — 1 actioned"
+
+
+def test_open_positions_email_subject_flags_attention_needed():
+    """Any failed or deferred → 'N actioned, M need attention'."""
+    from trading_bot.reports import open_positions_email_subject
+    actions = [
+        _make_action(symbol="AAPL", outcome="stop_placed",
+                     stop_price=180.0, current_price=200.0),
+        _make_action(symbol="BBB", outcome="failed", error="x"),
+        _make_action(symbol="CCC", outcome="deferred_off_hours"),
+    ]
+    subject = open_positions_email_subject(actions)
+    assert subject == "Open Positions — 1 actioned, 2 need attention"
 
 
 # --------------------------------------------------------------------------

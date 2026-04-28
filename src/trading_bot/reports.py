@@ -18,7 +18,8 @@ Public API kept stable:
     build_daily_report_html(...)         — basic post-scan email
     build_rich_report_html(...)          — comprehensive mid/eod email
     build_alert_email_html(events, ...)  — portfolio-watch alert
-    build_naked_stops_email_html(naked)  — verify-stops alert (NEW)
+    build_open_positions_email_html(actions)  — verify-stops auto-protect summary
+    open_positions_email_subject(actions)     — subject line for the above
     build_vip_alert_email_html(high)     — vip-scan alert (NEW)
 """
 from __future__ import annotations
@@ -887,62 +888,123 @@ def build_alert_email_html(events: list[Event], account_equity: str) -> str:
     )
 
 
-def build_naked_stops_email_html(
-    naked: list[tuple[str, str, str]],
+def open_positions_email_subject(actions) -> str:
+    """Subject line for the verify-stops auto-protect summary.
+
+    `Open Positions — N actioned`               (clean run)
+    `Open Positions — N actioned, M need attention`   (any failed/deferred)
+    """
+    actioned = sum(
+        1 for a in actions if a.outcome in ("stop_placed", "flattened")
+    )
+    attention = sum(
+        1 for a in actions if a.outcome in ("failed", "deferred_off_hours")
+    )
+    if attention:
+        return f"Open Positions — {actioned} actioned, {attention} need attention"
+    return f"Open Positions — {actioned} actioned"
+
+
+def build_open_positions_email_html(
+    actions,
     *,
     total_positions: int | None = None,
 ) -> str:
-    """Verify-stops sweep alert. Each `naked` entry is (symbol, qty, side)."""
-    rows = []
-    for sym, qty, side in naked:
-        side_clean = side.replace("PositionSide.", "").lower()
-        side_kind = "good" if side_clean == "long" else "bad"
-        rows.append([
-            f"<strong style=\"color:{_BAD};font-family:{_FONT_STACK}\">{sym}</strong>",
-            f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_PRIMARY}\">{qty}</span>",
-            _pill(side_clean, side_kind),
-        ])
+    """Verify-stops auto-protect summary. Renders one section per outcome
+    bucket; sections with no rows are omitted."""
+    protected = [a for a in actions if a.outcome == "stop_placed"]
+    closed = [a for a in actions if a.outcome == "flattened"]
+    failed = [a for a in actions if a.outcome == "failed"]
+    deferred = [a for a in actions if a.outcome == "deferred_off_hours"]
 
     kpis = _kpi_grid([
-        _kpi_card("Naked Positions", str(len(naked)), value_color=_BAD),
         _kpi_card("Total Open",
                   str(total_positions) if total_positions is not None else "—"),
-        _kpi_card("Action", "manual",
-                  value_color=_WARN, sub="Replace stops in Alpaca UI"),
-        _kpi_card("Severity", "high", value_color=_BAD),
+        _kpi_card("Stops Placed", str(len(protected)), value_color=_GOOD),
+        _kpi_card("Closed", str(len(closed)),
+                  value_color=_BAD if closed else _TEXT_PRIMARY),
+        _kpi_card("Need Attention", str(len(failed) + len(deferred)),
+                  value_color=_WARN if (failed or deferred) else _TEXT_PRIMARY),
     ])
-    intro = (
-        f"<div style=\"padding:14px 16px;background:rgba(251,113,133,0.06);"
-        f"border:1px solid rgba(251,113,133,0.25);border-radius:10px;"
-        f"color:{_TEXT_PRIMARY};font-size:13px;line-height:1.5;font-family:{_FONT_STACK};"
-        f"margin-bottom:12px\">"
-        f"<strong style=\"color:{_BAD}\">⚠ {len(naked)} position"
-        f"{'s have' if len(naked) != 1 else ' has'} no live stop order.</strong> "
-        f"Bracket legs can detach on partial fills (Risk #8). "
-        f"Crypto stops require <code style=\"color:{_ACCENT}\">stop_limit</code> "
-        f"order type — Alpaca rejects plain stops on crypto. Replace stops manually "
-        f"in the Alpaca UI or via API."
-        f"</div>"
-    )
-    body = (
-        intro
-        + kpis
-        + _section(
-            "Unprotected Positions",
-            _data_table(headers=["Symbol", "Quantity", "Side"], rows=rows),
+
+    body_parts: list[str] = [kpis]
+
+    if protected:
+        rows = []
+        for a in protected:
+            distance_pct = (
+                (a.current_price - a.stop_price) / a.current_price * 100.0
+                if a.current_price else 0.0
+            )
+            rows.append([
+                f"<strong style=\"color:{_GOOD_LIGHT};font-family:{_FONT_STACK}\">{a.symbol}</strong>",
+                f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_PRIMARY}\">{a.qty}</span>",
+                _pill(a.position_side.value, "good" if a.position_side.value == "buy" else "bad"),
+                f"<span style=\"font-family:{_MONO_STACK}\">${a.current_price:,.2f}</span>",
+                f"<span style=\"font-family:{_MONO_STACK}\">${a.stop_price:,.2f}</span>",
+                f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_SECONDARY}\">{distance_pct:.2f}%</span>",
+            ])
+        body_parts.append(_section(
+            "Protected",
+            _data_table(
+                headers=["Symbol", "Qty", "Side", "Last", "Stop", "Distance"],
+                rows=rows,
+            ),
+            accent_glyph="●",
+        ))
+
+    if closed:
+        rows = [[
+            f"<strong style=\"color:{_BAD};font-family:{_FONT_STACK}\">{a.symbol}</strong>",
+            f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_PRIMARY}\">{a.qty}</span>",
+            _pill(a.position_side.value, "good" if a.position_side.value == "buy" else "bad"),
+            f"<span style=\"font-family:{_MONO_STACK}\">${a.fill_estimate:,.2f}</span>",
+        ] for a in closed]
+        body_parts.append(_section(
+            "Closed",
+            _data_table(
+                headers=["Symbol", "Qty", "Side", "Last"],
+                rows=rows,
+            ),
+            accent_glyph="◆",
+        ))
+
+    if failed:
+        rows = [[
+            f"<strong style=\"color:{_BAD};font-family:{_FONT_STACK}\">{a.symbol}</strong>",
+            f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_PRIMARY}\">{a.qty}</span>",
+            f"<span style=\"font-family:{_FONT_STACK};color:{_TEXT_PRIMARY}\">{a.error or ''}</span>",
+        ] for a in failed]
+        body_parts.append(_section(
+            "Failed — needs manual review",
+            _data_table(headers=["Symbol", "Qty", "Error"], rows=rows),
             accent_glyph="⚠",
-        )
-    )
+        ))
+
+    if deferred:
+        rows = [[
+            f"<strong style=\"color:{_WARN};font-family:{_FONT_STACK}\">{a.symbol}</strong>",
+            f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_PRIMARY}\">{a.qty}</span>",
+            _pill(a.position_side.value, "good" if a.position_side.value == "buy" else "bad"),
+        ] for a in deferred]
+        body_parts.append(_section(
+            "Deferred to next session",
+            _data_table(headers=["Symbol", "Qty", "Side"], rows=rows),
+            accent_glyph="◆",
+        ))
+
     subtitle = (
-        f"{_pill('naked positions', 'bad')} "
+        f"{_pill('open positions', 'info')} "
         f"<span style=\"color:{_TEXT_SECONDARY};margin-left:8px\">"
-        f"{len(naked)} unprotected · review immediately</span>"
+        f"{len(protected)} protected · {len(closed)} closed · "
+        f"{len(failed) + len(deferred)} need attention</span>"
     )
+
     return _shell(
-        title="Naked Position Alert",
+        title="Open Positions — Auto-Protect Summary",
         subtitle_html=subtitle,
-        body_html=body,
-        accent=_BAD,
+        body_html="".join(body_parts),
+        accent=_ACCENT,
     )
 
 
