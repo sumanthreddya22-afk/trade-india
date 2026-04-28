@@ -43,7 +43,8 @@ def _load_runners(log: StructuredLogger):
     def _wrap(name: str, fn: callable):
         def runner():
             log.event(f"{name}_start")
-            if is_paused(PAUSE_PATH) and name in {"intel_scan", "crypto_scan"}:
+            # Block any job that may place orders. daily_digest invokes full_run which scans + trades.
+            if is_paused(PAUSE_PATH) and name in {"intel_scan", "crypto_scan", "daily_digest"}:
                 log.event(f"{name}_skipped", reason="pause.flag set")
                 write_heartbeat(HEARTBEAT_PATH, version=config_version,
                                 last_action=f"{name}_skipped_paused")
