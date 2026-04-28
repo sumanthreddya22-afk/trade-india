@@ -55,8 +55,12 @@ def _load_runners(log: StructuredLogger):
     engine = get_engine(STATE_DB)
 
     # Phase 4: bootstrap fallback flag with active=0 so scanners have a known start state.
-    with _Sess(engine) as _s:
-        bootstrap_if_empty(_s)
+    # Tolerant of missing schema (integration tests with TRADING_BOT_SKIP_MIGRATIONS=1).
+    try:
+        with _Sess(engine) as _s:
+            bootstrap_if_empty(_s)
+    except Exception as e:
+        log.event("fallback_flag_bootstrap_skipped", error=str(e))
 
     # Instantiate Role objects once (not per call) so SQLAlchemy engine is stable.
     health_pulse = HealthPulseRole(engine=engine, heartbeat_path=HEARTBEAT_PATH, version=config_version)
