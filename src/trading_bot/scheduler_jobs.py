@@ -141,3 +141,23 @@ def register_jobs(
         id="log_rotation",
         replace_existing=True,
     )
+
+    # Phase 4: Strategy Coach — daily 06:00 ET, weekdays. Evaluates 30d
+    # paper alpha vs SPY and flips fallback flag with hysteresis.
+    if "strategy_coach" in runners:
+        scheduler.add_job(
+            runners["strategy_coach"],
+            trigger=CronTrigger(hour=6, minute=0, day_of_week="mon-fri", timezone=et),
+            id="strategy_coach",
+            replace_existing=True,
+        )
+
+    # Phase 4: Hold-SPY Coordinator — 15:55 ET weekdays. Drives 5-day
+    # exit/reverse transition when fallback flag toggles.
+    if "hold_spy_coordinator" in runners:
+        scheduler.add_job(
+            runners["hold_spy_coordinator"],
+            trigger=CronTrigger(hour=15, minute=55, day_of_week="mon-fri", timezone=et),
+            id="hold_spy_coordinator",
+            replace_existing=True,
+        )

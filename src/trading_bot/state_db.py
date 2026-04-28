@@ -131,6 +131,27 @@ class PromoterHalt(Base):
     set_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class FallbackFlag(Base):
+    """Append-only audit trail of fallback (hold-SPY) flag transitions.
+    Current flag = row with the most recent set_at."""
+    __tablename__ = "fallback_flags"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    fallback_active = Column(Integer, nullable=False)  # 0|1
+    set_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    set_by = Column(String(64), nullable=False)         # strategy_coach|manual|bootstrap
+    reason = Column(Text, nullable=True)
+
+
+class HoldSpyTransitionState(Base):
+    """Tracks 5-day exit/reverse progress for Hold-SPY Coordinator."""
+    __tablename__ = "hold_spy_transitions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    fallback_flag_id = Column(Integer, nullable=False, index=True)
+    phase = Column(String(16), nullable=False)          # exit|reverse
+    day_index = Column(Integer, nullable=False, default=0)
+    last_action_at = Column(DateTime(timezone=True), nullable=True)
+
+
 def get_engine(db_path: str | Path = "data/state.db"):
     engine = create_engine(f"sqlite:///{db_path}", future=True)
 

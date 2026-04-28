@@ -54,3 +54,21 @@ def test_kpi_returns_buy_win_rate_with_no_trades(engine):
     assert name == "buy_win_rate_5d"
     assert value == 0.0  # default when no trades
     assert "no buys" in summary.lower() or "0 buys" in summary.lower()
+
+
+def test_short_circuits_when_fallback_active(engine):
+    """Phase 4: with fallback_active=1 in state.db, scanner returns skipped without invoking cli."""
+    from sqlalchemy.orm import Session
+    from trading_bot.state_fallback import set_flag
+
+    with Session(engine) as s:
+        set_flag(s, fallback_active=True, set_by="strategy_coach", reason="test")
+
+    role = StockScannerRole(engine=engine)
+    with patch("trading_bot.cli.intel_scan") as mock_cmd:
+        mock_cmd.callback = MagicMock()
+        result = role.safe_run(ctx={})
+    assert result.status == RoleStatus.OK
+    assert result.outputs.get("skipped") is True
+    assert result.outputs.get("reason") == "fallback_active"
+    assert not mock_cmd.callback.called
