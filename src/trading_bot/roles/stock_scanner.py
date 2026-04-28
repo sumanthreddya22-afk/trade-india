@@ -26,6 +26,10 @@ class StockScannerRole(BaseRole):
 
     def _do_work(self, ctx):
         from trading_bot import cli as cli_mod
+        from trading_bot.state_fallback import is_fallback_active
+
+        if is_fallback_active(self.engine):
+            return {"skipped": True, "reason": "fallback_active"}
         cli_mod.intel_scan.callback()
         return {"completed": True}
 

@@ -43,12 +43,20 @@ def _load_runners(log: StructuredLogger):
     from trading_bot.roles.universe_curator import UniverseCuratorRole
     from trading_bot.roles.vip_listener import VipListenerRole
     from trading_bot.roles.reporter import ReporterRole
+    from trading_bot.roles.strategy_coach import StrategyCoachRole
+    from trading_bot.roles.hold_spy_coordinator import HoldSpyCoordinatorRole
+    from trading_bot.state_fallback import bootstrap_if_empty
+    from sqlalchemy.orm import Session as _Sess
     from trading_bot.log_rotation import rotate_logs
 
-    config_version = "phase2-v1"
+    config_version = "phase4-v1"
 
     # Build the engine once — roles hold it for KPI persistence across calls.
     engine = get_engine(STATE_DB)
+
+    # Phase 4: bootstrap fallback flag with active=0 so scanners have a known start state.
+    with _Sess(engine) as _s:
+        bootstrap_if_empty(_s)
 
     # Instantiate Role objects once (not per call) so SQLAlchemy engine is stable.
     health_pulse = HealthPulseRole(engine=engine, heartbeat_path=HEARTBEAT_PATH, version=config_version)
@@ -60,6 +68,8 @@ def _load_runners(log: StructuredLogger):
     universe_curator = UniverseCuratorRole(engine=engine)
     vip_listener = VipListenerRole(engine=engine)
     reporter = ReporterRole(engine=engine)
+    strategy_coach = StrategyCoachRole(engine=engine)
+    hold_spy_coordinator = HoldSpyCoordinatorRole(engine=engine)
 
     def _heartbeat():
         health_pulse.safe_run(ctx={})
@@ -100,6 +110,10 @@ def _load_runners(log: StructuredLogger):
         "midday_report": _wrap("midday_report", lambda: reporter.run_midday(ctx={})),
         "daily_digest": _wrap("daily_digest", lambda: reporter.run_eod(ctx={})),
         "log_rotation": _wrap("log_rotation", lambda: rotate_logs(runs_dir=RUNS_DIR, keep_days=90)),
+        "strategy_coach": _wrap("strategy_coach", lambda: strategy_coach.safe_run(ctx={})),
+        "hold_spy_coordinator": _wrap(
+            "hold_spy_coordinator", lambda: hold_spy_coordinator.safe_run(ctx={})
+        ),
     }
 
 

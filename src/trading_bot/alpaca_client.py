@@ -168,6 +168,28 @@ class AlpacaClient:
             if a.tradable
         ]
 
+    def place_market_order(
+        self, *, symbol: str, qty: float, side: OrderSide, asset_class: AssetClass
+    ) -> str:
+        """Place a plain market order without a stop-loss leg.
+
+        Used by Hold-SPY Coordinator (Phase 4) for the 5-day exit/reverse
+        transitions, where positions are passively wound down/up over days
+        rather than risk-managed by per-position stops. Returns the Alpaca
+        order id.
+        """
+        try:
+            mkt_req = MarketOrderRequest(
+                symbol=symbol,
+                qty=float(qty),
+                side=_to_alpaca_side(side),
+                time_in_force=TimeInForce.GTC if asset_class == AssetClass.CRYPTO else TimeInForce.DAY,
+            )
+            order = self._client.submit_order(mkt_req)
+            return str(order.id)
+        except Exception as e:
+            raise AlpacaClientError(f"market order failed for {symbol}: {e}") from e
+
     def place_order_with_stop_loss(self, req: OrderRequest) -> OrderResult:
         """Place atomic bracket order: entry + stop-loss together.
 
