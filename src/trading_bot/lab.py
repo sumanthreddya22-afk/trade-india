@@ -38,7 +38,7 @@ def _build_runners(log: StructuredLogger):
 
     engine = get_engine(STATE_DB)
     optimizer = ParamOptimizerRole(engine=engine)
-    promoter = PromoterRole(engine=engine, active_path=CONFIG_PATH)
+    promoter = PromoterRole(engine=engine, active_path=CONFIG_PATH, notify=True)
     calibrator = CalibratorRole(engine=engine, config_path=CONFIG_PATH)
     architect = StrategyArchitectRole(engine=engine)
     reviewer = CodeReviewerRole(engine=engine)

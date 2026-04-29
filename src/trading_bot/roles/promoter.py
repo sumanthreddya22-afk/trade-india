@@ -34,9 +34,15 @@ class PromoterRole(BaseRole):
     upstream_roles = ["param_optimizer"]
     downstream_roles: list[str] = []
 
-    def __init__(self, *, engine, active_path: str | Path = "data/paper_active.json"):
+    def __init__(self, *, engine, active_path: str | Path = "data/paper_active.json",
+                 notify: bool = False):
         super().__init__(engine=engine)
         self.active_path = Path(active_path)
+        # When True, emit a Strategy Promotion email + record a lab_promotions
+        # row on every successful promotion. Production lab process should
+        # construct with notify=True; tests and dry-runs default to False so
+        # they never write to production state.db or send real emails.
+        self._notify = notify
 
     def _active_halt(self) -> dict | None:
         """Return halt info dict if any active halt window covers now, else None."""
@@ -91,7 +97,7 @@ class PromoterRole(BaseRole):
                 "current_fitness": info.get("current_fitness"),
             }
 
-        promote_atomically(self.active_path, candidate)
+        promote_atomically(self.active_path, candidate, notify=self._notify)
         with Session(self.engine) as session:
             session.add(
                 EvolutionRun(

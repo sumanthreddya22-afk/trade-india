@@ -38,8 +38,14 @@ def promote_to_paper(
     state_db_path: Path,
     active_path: Path,
     leaderboard_id: int | None = None,
+    notify: bool = False,
 ) -> dict:
-    """Replicate the lab Promoter's logic against current state. Always reversible."""
+    """Replicate the lab Promoter's logic against current state. Always reversible.
+
+    `notify=False` (default) means tests and dry-runs don't write to
+    production state.db's lab_promotions table or send a real email. The
+    `bot promote` CLI command flips it to True for the live invocation.
+    """
     from sqlalchemy.orm import Session
 
     from trading_bot.leaderboard import current_best
@@ -74,7 +80,7 @@ def promote_to_paper(
     ok, info = should_promote(active_path, candidate)
     if not ok:
         return {"promoted": False, "reason": info.get("reason"), "info": info}
-    promote_atomically(active_path, candidate)
+    promote_atomically(active_path, candidate, notify=notify)
     return {
         "promoted": True,
         "to_template": candidate.template,
@@ -260,6 +266,7 @@ def register_promote_command(main_group: Any) -> None:
                     state_db_path=Path(state_db),
                     active_path=Path(paper_active),
                     leaderboard_id=leaderboard_id,
+                    notify=True,
                 )
                 click.echo(json.dumps(result, indent=2, default=str))
                 if not result["promoted"]:

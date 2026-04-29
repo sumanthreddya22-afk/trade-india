@@ -80,13 +80,23 @@ def should_promote(
 
 
 def promote_atomically(
-    active_path: str | Path, candidate: PromotionCandidate
+    active_path: str | Path,
+    candidate: PromotionCandidate,
+    *,
+    notify: bool = False,
 ) -> None:
     """Rewrite active config with the candidate's template+params+fitness.
 
     Preserves all other keys (risk_caps, cadence, universe, etc.) unchanged.
     Atomic via tmp+rename so the daemon's mtime watcher never observes a
     partial write.
+
+    `notify` controls the side effects beyond the file write:
+      - When True: insert a `lab_promotions` row in production state.db AND
+        send a Strategy Promotion email via `send_logged`.
+      - When False (default): file-write only — safe for tests and dry runs.
+    Production callers (`PromoterRole`, `promote_cli`) opt in with
+    `notify=True`. Tests get the safe default.
     """
     p = Path(active_path)
     if p.exists():
@@ -106,6 +116,9 @@ def promote_atomically(
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(cfg, indent=2, sort_keys=True))
     os.replace(tmp, p)
+
+    if not notify:
+        return
 
     # Record the promotion in the lab_promotions table for first-24h validation.
     from trading_bot.lab_promotions import LabPromotionStore
