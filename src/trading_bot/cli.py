@@ -35,12 +35,11 @@ from trading_bot.reconciliation import ClosedTradeStore, Reconciler
 from trading_bot.regime import detect_regime
 from trading_bot.reports import (
     build_alert_email_html,
-    build_daily_report_html,
     build_open_positions_email_html,
-    build_rich_report_html,
     build_vip_alert_email_html,
     open_positions_email_subject,
 )
+from trading_bot.email_digest import build_daily_digest_email, DigestContext, TradeRow as DigestTradeRow
 from trading_bot.risk_manager import RiskManager, RiskState
 from trading_bot.state import load_watchlist
 from trading_bot.trade_journal import TradeJournal
@@ -152,20 +151,22 @@ def status() -> None:
     account = client.get_account()
     positions = client.get_positions()
 
-    # Reuse the polished daily-report shell with an empty scan + 0 SPY move.
-    empty_scan = ScanResult(decisions=[], timestamp=datetime.now(timezone.utc))
-    html = build_daily_report_html(
-        account=account,
-        positions=positions,
-        scan=empty_scan,
-        spy_daily_change_pct=Decimal("0"),
+    import datetime as _dt_status
+    _ctx_status = DigestContext(
+        date=_dt_status.date.today(),
+        starting_equity=account.equity,
+        ending_equity=account.equity,
+        realized_pnl=Decimal("0"),
+        unrealized_pnl=Decimal("0"),
         regime="trending_up",
+        active_config_version="unknown",
     )
+    _email_status = build_daily_digest_email(_ctx_status)
 
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    send_logged(sender=sender, subject="Trading Bot — Status", html_body=html,
+    send_logged(sender=sender, subject="Trading Bot — Status", html_body=_email_status.html_body,
                 kind="status", recipient=cfg.email.to)
     click.echo(f"Sent status email to {cfg.email.to}")
 
@@ -248,31 +249,157 @@ def daily_report() -> None:
     alpaca = AlpacaClient(settings)
     market = MarketDataClient(settings)
 
+    import datetime as _dt_dr
     account = alpaca.get_account()
-    positions = alpaca.get_positions()
-
     try:
-        bars = market.get_daily_bars("SPY", lookback_days=2)
-        if len(bars) >= 2:
-            yesterday, today = bars["close"].iloc[-2], bars["close"].iloc[-1]
-            spy_change = Decimal(str((today / yesterday - 1.0) * 100)).quantize(Decimal("0.01"))
-        else:
-            spy_change = Decimal("0.00")
+        regime_dr = _live_regime(market, cfg).regime.value
     except Exception:
-        spy_change = Decimal("0.00")
+        regime_dr = "unknown"
 
-    empty_scan = ScanResult(decisions=[], timestamp=datetime.now())
-    html = build_daily_report_html(
-        account=account, positions=positions, scan=empty_scan,
-        spy_daily_change_pct=spy_change, regime="trending_up",
+    _ctx_dr = DigestContext(
+        date=_dt_dr.date.today(),
+        starting_equity=account.equity,
+        ending_equity=account.equity,
+        realized_pnl=Decimal("0"),
+        unrealized_pnl=Decimal("0"),
+        regime=regime_dr,
+        active_config_version="unknown",
     )
+    _email_dr = build_daily_digest_email(_ctx_dr)
 
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    send_logged(sender=sender, subject="Trading Bot — Daily Report", html_body=html,
+    send_logged(sender=sender, subject="Trading Bot — Daily Report", html_body=_email_dr.html_body,
                 kind="digest", recipient=cfg.email.to)
     click.echo(f"Sent daily report to {cfg.email.to}")
+
+
+@main.command("daily-digest")
+def daily_digest() -> None:
+    """Email the rebuilt 12-section daily digest (B3)."""
+    import datetime as _dt
+    import json as _json
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    alpaca = AlpacaClient(settings)
+    today = _dt.date.today()
+
+    account = alpaca.get_account()
+
+    # equity_30d — try state.db equity_high_water_mark table; fallback to empty
+    equity_30d: list[Decimal] = []
+    try:
+        from trading_bot.state_db import get_engine as _get_engine
+        from sqlalchemy import text as _text
+        _db_path = os.environ.get("TRADING_BOT_STATE_DB", "data/state.db")
+        _engine = _get_engine(_db_path)
+        with _engine.connect() as _conn:
+            rows = _conn.execute(
+                _text("SELECT equity FROM equity_high_water_mark ORDER BY recorded_at DESC LIMIT 30")
+            ).fetchall()
+        equity_30d = [Decimal(str(r[0])) for r in reversed(rows)]
+    except Exception:
+        pass  # table may not exist yet — degrade gracefully
+
+    # pending_promotions — from LabPromotionStore
+    pending_promotions: list[dict] = []
+    try:
+        from trading_bot.lab_promotions import LabPromotionStore as _LPS
+        import datetime as _dt2
+        _now = _dt2.datetime.now(_dt2.timezone.utc)
+        pending_promotions = [
+            p if isinstance(p, dict) else p.__dict__
+            for p in _LPS().pending_validation(now=_now)
+        ]
+    except Exception:
+        pass  # TODO: wire once LabPromotionStore.pending_validation is stable
+
+    # closed_trades_7d — from ClosedTradeStore filtered to last 7d
+    closed_trades_7d: list[dict] = []
+    try:
+        import datetime as _dt3
+        _cutoff = _dt3.datetime.now(_dt3.timezone.utc) - _dt3.timedelta(days=7)
+        _all_closed = ClosedTradeStore(CLOSED_DB_PATH).all()
+        for _ct in _all_closed:
+            _closed_at = getattr(_ct, "closed_at", None)
+            if _closed_at and _closed_at >= _cutoff:
+                closed_trades_7d.append(
+                    _ct if isinstance(_ct, dict) else _ct.__dict__
+                )
+    except Exception:
+        pass  # TODO: enrich once ClosedTradeStore.all() is stable
+
+    # schedule_audit_warnings — from ScheduleAuditStore
+    schedule_audit_warnings: list[dict] = []
+    try:
+        from trading_bot.schedule_audit import ScheduleAuditStore as _SAS
+        _rows = _SAS().latest(audit_date=today)
+        for _r in _rows:
+            _ratio = getattr(_r, "ratio", 1.0)
+            if _ratio < 0.5:
+                schedule_audit_warnings.append(
+                    _r if isinstance(_r, dict) else _r.__dict__
+                )
+    except Exception:
+        pass  # TODO: wire once ScheduleAuditStore has data
+
+    # emails_sent_by_kind — from EmailLogStore
+    emails_sent_by_kind: dict[str, int] = {}
+    try:
+        import datetime as _dt4
+        from trading_bot.email_log import EmailLogStore as _ELS
+        _today_start = _dt4.datetime.combine(today, _dt4.time.min).replace(
+            tzinfo=_dt4.timezone.utc
+        )
+        emails_sent_by_kind = _ELS().count_by_kind_since(_today_start)
+    except Exception:
+        pass  # TODO: enrich once EmailLogStore is available
+
+    # git_sha + version from paper_active.json
+    git_sha = "unknown"
+    version = "unknown"
+    try:
+        _active_path = Path("strategy/paper_active.json")
+        if _active_path.exists():
+            _meta = _json.loads(_active_path.read_text())
+            git_sha = _meta.get("git_sha", "unknown")
+            version = _meta.get("version", "unknown")
+    except Exception:
+        pass
+
+    # regime
+    market = MarketDataClient(settings)
+    try:
+        regime = _live_regime(market, cfg).regime.value
+    except Exception:
+        regime = "unknown"
+
+    ctx = DigestContext(
+        date=today,
+        starting_equity=account.equity,   # TODO: use yesterday's closing equity
+        ending_equity=account.equity,
+        realized_pnl=Decimal("0"),         # TODO: wire from PnlStateBuilder
+        unrealized_pnl=Decimal("0"),       # TODO: wire from PnlStateBuilder
+        regime=regime,
+        active_config_version=version,
+        equity_30d=equity_30d,
+        pending_promotions=pending_promotions,
+        closed_trades_7d=closed_trades_7d,
+        schedule_audit_warnings=schedule_audit_warnings,
+        emails_sent_by_kind=emails_sent_by_kind,
+        git_sha=git_sha,
+        version=version,
+        # TODO: vix, watchlist_movers, sentiment_scores, positions formatting
+    )
+
+    email = build_daily_digest_email(ctx)
+    sender = EmailSender(
+        user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
+    )
+    send_logged(sender=sender, subject=email.subject, html_body=email.html_body,
+                kind="digest", recipient=cfg.email.to)
+    click.echo(f"[daily-digest] sent to {cfg.email.to}")
 
 
 @main.command("reconcile")
@@ -372,28 +499,24 @@ def full_run() -> None:
     for d in result.decisions:
         click.echo(f"  {d.symbol}: {d.action} ({d.reason})")
 
-    # 4. Email daily report
+    # 4. Email daily digest
+    import datetime as _dt_fr
     account = alpaca.get_account()
-    positions = alpaca.get_positions()
-    try:
-        bars = market.get_daily_bars("SPY", lookback_days=2)
-        if len(bars) >= 2:
-            yesterday, today = bars["close"].iloc[-2], bars["close"].iloc[-1]
-            spy_change = Decimal(str((today / yesterday - 1.0) * 100)).quantize(Decimal("0.01"))
-        else:
-            spy_change = Decimal("0.00")
-    except Exception:
-        spy_change = Decimal("0.00")
-
-    html = build_daily_report_html(
-        account=account, positions=positions, scan=result,
-        spy_daily_change_pct=spy_change, regime=regime,
+    _ctx_fr = DigestContext(
+        date=_dt_fr.date.today(),
+        starting_equity=account.equity,
+        ending_equity=account.equity,
+        realized_pnl=Decimal("0"),
+        unrealized_pnl=Decimal("0"),
+        regime=regime,
+        active_config_version="unknown",
     )
+    _email_fr = build_daily_digest_email(_ctx_fr)
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    send_logged(sender=sender, subject=f"Trading Bot — Daily Report ({regime})", html_body=html,
-                kind="digest", recipient=cfg.email.to)
+    send_logged(sender=sender, subject=f"Trading Bot — Daily Report ({regime})",
+                html_body=_email_fr.html_body, kind="digest", recipient=cfg.email.to)
     click.echo(f"[email] sent to {cfg.email.to}")
 
 
@@ -429,24 +552,24 @@ def intel_scan() -> None:
 
     # Email only if action taken or risk-rejected (interesting events)
     if placed or rejected:
+        import datetime as _dt_is
         account = alpaca.get_account()
-        positions = alpaca.get_positions()
-        try:
-            bars = market.get_daily_bars("SPY", lookback_days=2)
-            spy_change = (Decimal(str((bars["close"].iloc[-1] / bars["close"].iloc[-2] - 1) * 100))
-                          .quantize(Decimal("0.01")) if len(bars) >= 2 else Decimal("0"))
-        except Exception:
-            spy_change = Decimal("0")
-        html = build_daily_report_html(
-            account=account, positions=positions, scan=result,
-            spy_daily_change_pct=spy_change, regime=regime,
+        _ctx_is = DigestContext(
+            date=_dt_is.date.today(),
+            starting_equity=account.equity,
+            ending_equity=account.equity,
+            realized_pnl=Decimal("0"),
+            unrealized_pnl=Decimal("0"),
+            regime=regime,
+            active_config_version="unknown",
         )
+        _email_is = build_daily_digest_email(_ctx_is)
         sender = EmailSender(
             user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
         )
         send_logged(sender=sender,
-                    subject=f"Trading Bot — Intel Scan ({len(placed)} placed)", html_body=html,
-                    kind="alert", recipient=cfg.email.to)
+                    subject=f"Trading Bot — Intel Scan ({len(placed)} placed)",
+                    html_body=_email_is.html_body, kind="alert", recipient=cfg.email.to)
         click.echo(f"[email] sent (action taken)")
 
 
@@ -523,27 +646,25 @@ def rich_report(period: str) -> None:
     except Exception:
         spy_change = Decimal("0")
 
+    import datetime as _dt_rr
     account = alpaca.get_account()
-    positions = alpaca.get_positions()
-
-    # Phase 6 system status — pass engine so the digest surfaces lab/coach/calibrator state.
-    try:
-        from trading_bot.state_db import get_engine as _get_engine
-        _state_engine = _get_engine(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
-    except Exception:
-        _state_engine = None
-
-    html = build_rich_report_html(
-        period=period, account=account, positions=positions, scan=result,
-        spy_daily_change_pct=spy_change, regime=regime, intel=intel, events=events,
-        engine=_state_engine,
+    _ctx_rr = DigestContext(
+        date=_dt_rr.date.today(),
+        starting_equity=account.equity,
+        ending_equity=account.equity,
+        realized_pnl=Decimal("0"),
+        unrealized_pnl=Decimal("0"),
+        regime=regime,
+        active_config_version="unknown",
+        vix=intel.macro.vix,
     )
+    _email_rr = build_daily_digest_email(_ctx_rr)
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
     send_logged(sender=sender,
-                subject=f"Trading Bot — {period.upper()} Rich Report ({regime})", html_body=html,
-                kind="digest", recipient=cfg.email.to)
+                subject=f"Trading Bot — {period.upper()} Rich Report ({regime})",
+                html_body=_email_rr.html_body, kind="digest", recipient=cfg.email.to)
     click.echo(f"[rich-report:{period}] sent ({len(result.decisions)} decisions, "
                f"VIX={intel.macro.vix}, {len(events)} events)")
 
@@ -611,26 +732,24 @@ def eod_report() -> None:
     except Exception:
         spy_change = Decimal("0")
 
+    import datetime as _dt_eod
     account = alpaca.get_account()
-    positions = alpaca.get_positions()
-    empty_scan = ScanResult(decisions=[], timestamp=datetime.now())
-
-    try:
-        from trading_bot.state_db import get_engine as _get_engine
-        _state_engine = _get_engine(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
-    except Exception:
-        _state_engine = None
-
-    html = build_rich_report_html(
-        period="eod", account=account, positions=positions, scan=empty_scan,
-        spy_daily_change_pct=spy_change, regime=regime, intel=intel, events=events,
-        engine=_state_engine,
+    _ctx_eod = DigestContext(
+        date=_dt_eod.date.today(),
+        starting_equity=account.equity,
+        ending_equity=account.equity,
+        realized_pnl=Decimal("0"),
+        unrealized_pnl=Decimal("0"),
+        regime=regime,
+        active_config_version="unknown",
+        vix=intel.macro.vix,
     )
+    _email_eod = build_daily_digest_email(_ctx_eod)
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    send_logged(sender=sender, subject=f"Trading Bot — EOD Report ({regime})", html_body=html,
-                kind="digest", recipient=cfg.email.to)
+    send_logged(sender=sender, subject=f"Trading Bot — EOD Report ({regime})",
+                html_body=_email_eod.html_body, kind="digest", recipient=cfg.email.to)
     click.echo(f"[eod-report] sent to {cfg.email.to} (regime={regime}, "
                f"VIX={intel.macro.vix}, {len(events)} events)")
 

@@ -14,13 +14,15 @@ Design notes (because emails are a special hellscape):
 - Unicode glyphs (▲ ▼ ● ◆) instead of icon fonts or SVG — those don't
   render in many clients.
 
-Public API kept stable:
-    build_daily_report_html(...)         — basic post-scan email
-    build_rich_report_html(...)          — comprehensive mid/eod email
+Public API:
     build_alert_email_html(events, ...)  — portfolio-watch alert
     build_open_positions_email_html(actions)  — verify-stops auto-protect summary
     open_positions_email_subject(actions)     — subject line for the above
-    build_vip_alert_email_html(high)     — vip-scan alert (NEW)
+    build_vip_alert_email_html(high)     — vip-scan alert
+
+Removed in Task 10 (B3):
+    build_daily_report_html(...)         — replaced by build_daily_digest_email
+    build_rich_report_html(...)          — replaced by build_daily_digest_email
 """
 from __future__ import annotations
 
@@ -30,7 +32,6 @@ from decimal import Decimal
 from typing import Iterable
 
 from trading_bot.alpaca_client import AccountSnapshot, Position
-from trading_bot.intelligence import IntelligenceBundle
 from trading_bot.orchestrator import ScanResult
 from trading_bot.portfolio_monitor import Event
 
@@ -405,206 +406,6 @@ def _decisions_block(scan: ScanResult) -> str:
             f"font-size:12px\">{d.reason or '—'}</span>",
         ])
     return _data_table(headers=["Symbol", "Action", "Reason"], rows=rows)
-
-
-# --------------------------------------------------------------------------
-# Public builders
-# --------------------------------------------------------------------------
-
-
-def build_daily_report_html(
-    *,
-    account: AccountSnapshot,
-    positions: list[Position],
-    scan: ScanResult,
-    spy_daily_change_pct: Decimal,
-    regime: str,
-) -> str:
-    """Standard post-scan email — KPIs + positions + decisions."""
-    spy_color = _pnl_color(spy_daily_change_pct)
-    open_pnl = sum((Decimal(str(p.unrealized_pl)) for p in positions), Decimal(0))
-
-    kpis = _kpi_grid([
-        _kpi_card("Equity", _fmt_money(account.equity)),
-        _kpi_card("Cash", _fmt_money(account.cash),
-                  sub=f"{(Decimal(str(account.cash))/Decimal(str(account.equity))*100):.1f}% of equity"
-                  if Decimal(str(account.equity)) > 0 else None),
-        _kpi_card("Open P&L", _fmt_signed_money(open_pnl), value_color=_pnl_color(open_pnl),
-                  sub=f"{len(positions)} open position{'s' if len(positions) != 1 else ''}"),
-        _kpi_card("SPY Today", _fmt_pct(spy_daily_change_pct, signed=True),
-                  value_color=spy_color),
-    ])
-
-    body = (
-        kpis
-        + _section("Open Positions", _positions_block(positions))
-        + _section("Decisions This Run", _decisions_block(scan))
-    )
-
-    subtitle = (
-        f"Daily snapshot · {_regime_pill(regime)} "
-        f"<span style=\"color:{_TEXT_MUTED};margin:0 6px\">·</span> "
-        f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_MUTED};font-size:12px\">"
-        f"{scan.timestamp.isoformat(timespec='seconds')}</span>"
-    )
-
-    return _shell(title="Daily Report", subtitle_html=subtitle, body_html=body)
-
-
-def build_rich_report_html(
-    *,
-    period: str,
-    account: AccountSnapshot,
-    positions: list[Position],
-    scan: ScanResult,
-    spy_daily_change_pct: Decimal,
-    regime: str,
-    intel: IntelligenceBundle,
-    events: list[Event] | None = None,
-    engine=None,  # state.db engine — pass to surface Phase 1-6 system status
-) -> str:
-    """Comprehensive mid-day / end-of-day report."""
-    period_label = {"mid": "Mid-Day Report", "eod": "End-of-Day Report"}.get(
-        period, f"{period.upper()} Report"
-    )
-    spy_color = _pnl_color(spy_daily_change_pct)
-    open_pnl = sum((Decimal(str(p.unrealized_pl)) for p in positions), Decimal(0))
-
-    kpis = _kpi_grid([
-        _kpi_card("Equity", _fmt_money(account.equity)),
-        _kpi_card("Cash", _fmt_money(account.cash),
-                  sub=f"{(Decimal(str(account.cash))/Decimal(str(account.equity))*100):.1f}% of equity"
-                  if Decimal(str(account.equity)) > 0 else None),
-        _kpi_card("Open P&L", _fmt_signed_money(open_pnl), value_color=_pnl_color(open_pnl),
-                  sub=f"{len(positions)} open position{'s' if len(positions) != 1 else ''}"),
-        _kpi_card("SPY Today", _fmt_pct(spy_daily_change_pct, signed=True),
-                  value_color=spy_color),
-    ])
-
-    # Macro snapshot
-    m = intel.macro
-    macro_rows = []
-    if m.vix is not None:
-        vix_kind = "bad" if m.vix > 28 else ("warn" if m.vix > 22 else "good")
-        macro_rows.append(["VIX", f"{m.vix:.2f}", _pill(
-            "elevated" if m.vix > 22 else "calm", vix_kind
-        )])
-    else:
-        macro_rows.append(["VIX", "—", _pill("no data", "neutral")])
-    if m.yield_10y_pct is not None:
-        macro_rows.append(["10Y Treasury", f"{m.yield_10y_pct:.2f}%", ""])
-    if m.fed_funds_pct is not None:
-        macro_rows.append(["Fed Funds", f"{m.fed_funds_pct:.2f}%", ""])
-
-    macro_html = _data_table(
-        headers=["Indicator", "Value", "Status"],
-        rows=macro_rows or [["—", "—", _pill("no data", "neutral")]],
-    )
-
-    body = (
-        kpis
-        + _section("Macro Snapshot", macro_html, accent_glyph="◈")
-        + _section("Open Positions", _positions_block(positions))
-        + _section("Decisions This Run", _decisions_block(scan))
-    )
-
-    # Phase 1-6 system status (strategy mode, halts, lab evolution, calibrator,
-    # LLM spend, role health). Skipped when engine is unavailable so legacy
-    # callers don't break.
-    if engine is not None:
-        try:
-            body += build_system_status_section(engine)
-        except Exception:
-            # Never let a state.db hiccup break the email — log silently.
-            pass
-
-    # Portfolio events
-    if events:
-        ev_rows = []
-        for e in events:
-            kind = "bad" if e.severity == "alert" else "info"
-            ev_rows.append([
-                _pill(e.severity, kind),
-                f"<span style=\"color:{_TEXT_SECONDARY};font-family:{_FONT_STACK};"
-                f"font-size:12px\">{e.kind}</span>",
-                f"<strong style=\"color:{_TEXT_PRIMARY};font-family:{_FONT_STACK}\">"
-                f"{e.symbol or '—'}</strong>",
-                f"<span style=\"color:{_TEXT_PRIMARY};font-family:{_FONT_STACK};"
-                f"font-size:12px\">{e.message}</span>",
-            ])
-        body += _section(
-            "Portfolio Events Since Last Snapshot",
-            _data_table(headers=["Severity", "Kind", "Symbol", "Message"], rows=ev_rows),
-            accent_glyph="●",
-        )
-
-    # Per-symbol news
-    news_blocks = []
-    for sym, items in intel.news_by_symbol.items():
-        if not items:
-            continue
-        lines = "".join(
-            f"<li style=\"margin:6px 0;color:{_TEXT_PRIMARY};font-size:13px;"
-            f"font-family:{_FONT_STACK}\">"
-            f"<a href=\"{n.url}\" style=\"color:{_ACCENT};text-decoration:none\">{n.headline}</a>"
-            f" <span style=\"color:{_TEXT_MUTED};font-size:11px\">"
-            f"({n.published_at.strftime('%H:%M UTC')} · {n.source})</span>"
-            f"</li>"
-            for n in items
-        )
-        news_blocks.append(
-            f"<div style=\"margin-top:10px;padding:12px 16px;background:{_BG_CARD};"
-            f"border:1px solid {_BORDER};border-radius:10px\">"
-            f"<div style=\"color:{_ACCENT};font-size:13px;font-weight:600;"
-            f"margin-bottom:4px;font-family:{_FONT_STACK}\">{sym}</div>"
-            f"<ul style=\"margin:0;padding:0 0 0 18px\">{lines}</ul>"
-            f"</div>"
-        )
-    news_body = "".join(news_blocks) if news_blocks else _empty_state("No fresh per-symbol headlines.")
-    body += _section("Per-Symbol News (last 48h)", news_body, accent_glyph="✦")
-
-    # GDELT macro news
-    if intel.gdelt:
-        rows = "".join(
-            f"<li style=\"margin:6px 0;color:{_TEXT_PRIMARY};font-size:13px;"
-            f"font-family:{_FONT_STACK}\">"
-            f"<a href=\"{e.url}\" style=\"color:{_ACCENT};text-decoration:none\">{e.title}</a>"
-            f" <span style=\"color:{_TEXT_MUTED};font-size:11px\">"
-            f"(tone {e.sentiment:+.1f} · {e.sourcecountry})</span>"
-            f"</li>"
-            for e in intel.gdelt[:6]
-        )
-        gdelt_body = (
-            f"<div style=\"padding:12px 16px;background:{_BG_CARD};"
-            f"border:1px solid {_BORDER};border-radius:10px\">"
-            f"<ul style=\"margin:0;padding:0 0 0 18px\">{rows}</ul></div>"
-        )
-        body += _section("Global Macro News (GDELT)", gdelt_body, accent_glyph="◇")
-
-    # Insider filings
-    if intel.insider:
-        rows = "".join(
-            f"<li style=\"margin:6px 0;color:{_TEXT_PRIMARY};font-size:13px;"
-            f"font-family:{_FONT_STACK}\">{f.company} "
-            f"<span style=\"color:{_TEXT_MUTED};font-size:11px\">"
-            f"({f.filed_at[:10]})</span></li>"
-            for f in intel.insider[:8]
-        )
-        ins_body = (
-            f"<div style=\"padding:12px 16px;background:{_BG_CARD};"
-            f"border:1px solid {_BORDER};border-radius:10px\">"
-            f"<ul style=\"margin:0;padding:0 0 0 18px\">{rows}</ul></div>"
-        )
-        body += _section("Recent Insider Filings (Form 4)", ins_body, accent_glyph="◇")
-
-    subtitle = (
-        f"{period_label} · {_regime_pill(regime)} "
-        f"<span style=\"color:{_TEXT_MUTED};margin:0 6px\">·</span> "
-        f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_MUTED};font-size:12px\">"
-        f"{scan.timestamp.isoformat(timespec='seconds')}</span>"
-    )
-
-    return _shell(title=period_label, subtitle_html=subtitle, body_html=body)
 
 
 # --------------------------------------------------------------------------

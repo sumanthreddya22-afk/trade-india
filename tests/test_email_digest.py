@@ -1,74 +1,87 @@
+"""Tests for the rebuilt daily digest email (B3)."""
 import datetime as dt
 from decimal import Decimal
-from trading_bot.email_digest import build_digest_email, DigestContext, TradeRow
+
+import pytest
 
 
-def test_digest_subject_with_pnl_and_equity():
-    ctx = DigestContext(
+def _ctx(**overrides):
+    from trading_bot.email_digest import DigestContext, TradeRow
+    base = dict(
         date=dt.date(2026, 4, 28),
-        starting_equity=Decimal("104500.00"),
-        ending_equity=Decimal("103895.00"),
-        realized_pnl=Decimal("-422.62"),
-        unrealized_pnl=Decimal("139.72"),
+        starting_equity=Decimal("14984.16"),
+        ending_equity=Decimal("14953.44"),
+        realized_pnl=Decimal("0"),
+        unrealized_pnl=Decimal("-12.74"),
         regime="trending_up",
-        active_config_version="v17",
-        trades=[],
-        errors=[],
+        active_config_version="auto-20260428-100154",
+        equity_30d=[Decimal("15000")] * 30,
+        positions=[
+            {"symbol": "BTCUSD", "qty": "0.000499", "side": "long",
+             "entry": "76868.21", "current": "76334.10",
+             "today_pct": "-0.66%", "total_pct": "-0.66%",
+             "stop": "73020.00", "distance_pct": "4.34%",
+             "sentiment": "—", "sector": "crypto"},
+        ],
+        version="phase4-v1",
+        git_sha="faa4288",
     )
-    email = build_digest_email(ctx)
+    base.update(overrides)
+    return DigestContext(**base)
+
+
+def test_digest_subject_uses_middle_dot():
+    from trading_bot.email_digest import build_daily_digest_email
+    email = build_daily_digest_email(_ctx())
+    assert " · " in email.subject
+    assert "Daily Digest" in email.subject
     assert "Apr 28" in email.subject
-    assert "-0.58%" in email.subject or "-0.6%" in email.subject
 
 
-def test_digest_body_includes_trades():
-    trade = TradeRow(
-        side="BUY", symbol="AAPL", qty=Decimal("41"),
-        price=Decimal("190.24"), strategy="momentum_v3",
-        time=dt.time(10, 0), status="open",
-    )
-    ctx = DigestContext(
-        date=dt.date(2026, 4, 28),
-        starting_equity=Decimal("104500.00"),
-        ending_equity=Decimal("103895.00"),
-        realized_pnl=Decimal("-422.62"),
-        unrealized_pnl=Decimal("139.72"),
-        regime="trending_up",
-        active_config_version="v17",
-        trades=[trade],
-        errors=[],
-    )
-    email = build_digest_email(ctx)
-    assert "AAPL" in email.html_body
-    assert "190.24" in email.html_body
+def test_digest_body_contains_all_section_headers():
+    from trading_bot.email_digest import build_daily_digest_email
+    email = build_daily_digest_email(_ctx())
+    for label in ["EQUITY", "RISK", "REGIME", "POSITIONS"]:
+        assert label.upper() in email.html_body.upper()
 
 
-def test_digest_body_zero_trades():
-    ctx = DigestContext(
-        date=dt.date(2026, 4, 28),
-        starting_equity=Decimal("100000"),
-        ending_equity=Decimal("100000"),
-        realized_pnl=Decimal("0"),
-        unrealized_pnl=Decimal("0"),
-        regime="sideways",
-        active_config_version="v17",
-        trades=[],
-        errors=[],
-    )
-    email = build_digest_email(ctx)
-    assert "no trades" in email.html_body.lower() or "0 trades" in email.html_body.lower()
+def test_digest_renders_kpi_grid_with_equity():
+    from trading_bot.email_digest import build_daily_digest_email
+    email = build_daily_digest_email(_ctx())
+    assert "$14,953.44" in email.html_body or "14,953" in email.html_body
 
 
-def test_digest_body_includes_errors():
-    ctx = DigestContext(
-        date=dt.date(2026, 4, 28),
-        starting_equity=Decimal("100000"),
-        ending_equity=Decimal("100000"),
-        realized_pnl=Decimal("0"),
-        unrealized_pnl=Decimal("0"),
-        regime="trending_up",
-        active_config_version="v17",
-        trades=[],
-        errors=["14:23 — Polygon API timeout, auto-restarted"],
-    )
-    email = build_digest_email(ctx)
-    assert "Polygon API timeout" in email.html_body
+def test_digest_renders_position_rows():
+    from trading_bot.email_digest import build_daily_digest_email
+    email = build_daily_digest_email(_ctx())
+    assert "BTCUSD" in email.html_body
+    assert "long" in email.html_body.lower()
+
+
+def test_digest_status_amber_when_audit_warnings_present():
+    from trading_bot.email_digest import build_daily_digest_email
+    email = build_daily_digest_email(_ctx(
+        schedule_audit_warnings=[
+            {"job_id": "stock_scanner", "expected": 7, "actual": 0, "ratio": 0.0},
+        ],
+    ))
+    assert "stock_scanner" in email.html_body
+    # Pulse-dot is amber for warn
+    assert "#fbbf24" in email.html_body
+
+
+def test_digest_renders_lab_promotion_section_when_pending():
+    from trading_bot.email_digest import build_daily_digest_email
+    email = build_daily_digest_email(_ctx(
+        pending_promotions=[{
+            "version": "auto-20260428-100154",
+            "fitness_at_promotion": 3.967,
+            "scans_since_promote": 12,
+            "entries_since_promote": 0,
+            "near_misses_since_promote": 5,
+            "params": {"rsi_lower": 50.07, "stop_pct": 6.11},
+            "risk_caps": {},
+        }],
+    ))
+    assert "auto-20260428-100154" in email.html_body
+    assert "3.97" in email.html_body or "3.967" in email.html_body
