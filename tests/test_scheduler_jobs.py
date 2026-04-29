@@ -76,3 +76,32 @@ def test_heartbeat_job_runs_every_60s():
     register_jobs(scheduler=sched, cadence=cadence, runners=runners)
     hb = next(j for j in sched.get_jobs() if j.id == "heartbeat")
     assert hb.trigger.interval.total_seconds() == 60
+
+
+def test_register_jobs_uses_misfire_grace_and_coalesce():
+    """All cron jobs must have misfire_grace_time=300 + coalesce=True so a
+    daemon stall during a fire window doesn't drop the job silently."""
+    from unittest.mock import MagicMock
+    from trading_bot.scheduler_jobs import register_jobs
+    from trading_bot.cadence import CadenceConfig
+
+    scheduler = MagicMock()
+    runners = {name: MagicMock() for name in (
+        "heartbeat", "intel_scan", "crypto_scan", "portfolio_watch",
+        "verify_stops", "vip_scan", "news_warm", "massive_refresh",
+        "premarket_rank", "midday_rerank", "midday_snapshot", "midday_report",
+        "daily_digest", "log_rotation", "hold_spy_coordinator",
+        "strategy_coach", "reconciler", "schedule_audit", "alert_drain",
+    )}
+    cadence = CadenceConfig()
+
+    register_jobs(scheduler=scheduler, cadence=cadence, runners=runners)
+
+    cron_calls = [c for c in scheduler.add_job.call_args_list
+                  if "trigger" in c.kwargs and c.kwargs["trigger"].__class__.__name__ == "CronTrigger"]
+    assert len(cron_calls) > 0
+    for c in cron_calls:
+        assert c.kwargs.get("misfire_grace_time") == 300, \
+            f"Job {c.kwargs.get('id')} missing misfire_grace_time=300"
+        assert c.kwargs.get("coalesce") is True, \
+            f"Job {c.kwargs.get('id')} missing coalesce=True"

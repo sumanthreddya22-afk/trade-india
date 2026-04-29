@@ -40,6 +40,8 @@ def register_jobs(
         ),
         id="stock_scanner",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Crypto Scanner: 24/7 at configured cadence
@@ -62,6 +64,8 @@ def register_jobs(
         ),
         id="portfolio_monitor",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Order Steward sweep
@@ -76,6 +80,8 @@ def register_jobs(
         ),
         id="order_steward_sweep",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # VIP Listener: every N min during market hours
@@ -90,6 +96,8 @@ def register_jobs(
         ),
         id="vip_listener",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Sentiment warm: at configured ET times
@@ -101,6 +109,8 @@ def register_jobs(
             trigger=CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=et),
             id=f"news_warm_{label}",
             replace_existing=True,
+            misfire_grace_time=300,
+            coalesce=True,
         )
 
     # Pre-market: massive-refresh + rank
@@ -109,12 +119,16 @@ def register_jobs(
         trigger=CronTrigger(hour=6, minute=30, day_of_week="mon-fri", timezone=et),
         id="massive_refresh",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
     scheduler.add_job(
         runners["premarket_rank"],
         trigger=CronTrigger(hour=7, minute=30, day_of_week="mon-fri", timezone=et),
         id="premarket_rank",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Midday rerank: 12:00 ET weekdays. Refreshes opportunities.md with the
@@ -126,6 +140,8 @@ def register_jobs(
             trigger=CronTrigger(hour=12, minute=0, day_of_week="mon-fri", timezone=et),
             id="midday_rerank",
             replace_existing=True,
+            misfire_grace_time=300,
+            coalesce=True,
         )
 
     # Midday report: 12:31 ET weekdays (offset 1 min from the 12:30 stock_scanner cycle
@@ -135,6 +151,8 @@ def register_jobs(
         trigger=CronTrigger(hour=12, minute=31, day_of_week="mon-fri", timezone=et),
         id="midday_report",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Daily digest: 18:00 ET weekdays
@@ -143,6 +161,8 @@ def register_jobs(
         trigger=CronTrigger(hour=18, minute=0, day_of_week="mon-fri", timezone=et),
         id="daily_digest",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Log rotation: weekly Sun 03:00 ET
@@ -151,6 +171,8 @@ def register_jobs(
         trigger=CronTrigger(hour=3, minute=0, day_of_week="sun", timezone=et),
         id="log_rotation",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Phase 4: Strategy Coach — daily 06:00 ET, weekdays. Evaluates 30d
@@ -161,6 +183,8 @@ def register_jobs(
             trigger=CronTrigger(hour=6, minute=0, day_of_week="mon-fri", timezone=et),
             id="strategy_coach",
             replace_existing=True,
+            misfire_grace_time=300,
+            coalesce=True,
         )
 
     # Phase 4: Hold-SPY Coordinator — 15:55 ET weekdays. Drives 5-day
@@ -171,4 +195,6 @@ def register_jobs(
             trigger=CronTrigger(hour=15, minute=55, day_of_week="mon-fri", timezone=et),
             id="hold_spy_coordinator",
             replace_existing=True,
+            misfire_grace_time=300,
+            coalesce=True,
         )
