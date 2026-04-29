@@ -1,0 +1,3 @@
+# strategy/wheel_allowlist.yaml
+# Symbols to force into the wheel candidate set, bypassing size/age/volume filters.
+symbols: []
