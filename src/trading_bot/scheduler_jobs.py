@@ -154,10 +154,11 @@ def register_jobs(
         misfire_grace_time=300, coalesce=True,
     )
 
-    # Daily digest: 18:00 ET weekdays
+    # Daily digest: 16:30 ET weekdays (30 min after market close, before
+    # operator typically reads end-of-day mail)
     scheduler.add_job(
         runners["daily_digest"],
-        trigger=CronTrigger(hour=18, minute=0, day_of_week="mon-fri", timezone=et),
+        trigger=CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone=et),
         id="daily_digest",
         replace_existing=True,
         misfire_grace_time=300,

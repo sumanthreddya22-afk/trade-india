@@ -13,9 +13,13 @@ def test_render_shell_includes_brand_bar_and_status_dot():
     )
     assert "Daily Digest" in html
     assert "linear-gradient" in html  # brand bar
-    assert "#10b981" in html or "rgb(16,185,129)" in html  # green pulse
+    # Green pulse dot for "ok" status — accept either old or new green token.
+    assert "#10b981" in html or "#34d399" in html or "rgb(16,185,129)" in html
     assert "<p>body</p>" in html
     assert "2026-04-28 22:00 ET" in html
+    # Dark mode declarations — protect against Gmail mobile auto-invert.
+    assert "color-scheme" in html
+    assert 'name="color-scheme"' in html or "color-scheme:dark" in html
 
 
 def test_render_shell_amber_for_warn():
@@ -72,7 +76,10 @@ def test_progress_bar_below_zero():
 
 def test_pulse_dot_color_by_status():
     from trading_bot.email_shell import pulse_dot
-    assert "#10b981" in pulse_dot("ok")
+    # Accept either old or new green token; same for warn/bad which kept
+    # their hex codes.
+    ok = pulse_dot("ok")
+    assert "#10b981" in ok or "#34d399" in ok
     assert "#fbbf24" in pulse_dot("warn")
     assert "#fb7185" in pulse_dot("bad")
 

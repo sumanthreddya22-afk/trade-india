@@ -1,8 +1,15 @@
 """Shared visual helpers for all email types — Daily Digest, Midday
-Snapshot, Action Alert, Strategy Promotion. Mirrors dashboard color
-tokens (#0f172a card, #06b6d4 cyan, #e2e8f0 text) and adds shell
-elements (gradient brand bar, pulse-dot status, sparklines via inline
-SVG, progress bars). All inline CSS, table-based layout, 640px max.
+Snapshot, Action Alert, Strategy Promotion.
+
+Dark-mode-native design (Gmail/Apple Mail/Outlook all show this email
+as dark even in their light-mode UI). High-contrast text on near-black
+backgrounds; we explicitly tell the client to NOT invert the email
+via the `color-scheme: dark` meta. Tokens deliberately use higher
+luminance than CSS-typical (#f1f5f9 vs #e2e8f0) so Gmail's mobile
+inversion heuristic (which kicks in when contrast looks "low") leaves
+us alone.
+
+All inline CSS, table-based layout, 640px max.
 """
 from __future__ import annotations
 
@@ -10,22 +17,30 @@ from typing import Iterable, Literal
 
 
 # ── Color tokens ─────────────────────────────────────────────────────
-_BG_OUTER = "#0a0f1c"
-_BG_CARD = "#0f172a"
-_BORDER = "#1e293b"
-_TEXT_PRIMARY = "#e2e8f0"
-_TEXT_SECONDARY = "#94a3b8"
-_TEXT_MUTED = "#64748b"
+# Backgrounds — dark navy spectrum, not pure black (Gmail's inversion
+# heuristic occasionally flips pure black/white pairs). Card slightly
+# lighter than outer for visual depth.
+_BG_OUTER = "#0b1220"
+_BG_CARD = "#111c2e"
+_BG_TABLE_ROW = "#0f1828"  # subtle stripe in data tables
+_BORDER = "#26334a"        # high-enough contrast border that's visible
 
-_ACCENT = "#06b6d4"          # cyan-500 — section labels
-_ACCENT_BRIGHT = "#22d3ee"   # cyan-400 — gradient stop
-_GRADIENT_END = "#a78bfa"    # purple-400 — gradient end (matches dashboard)
+# Text — bright enough for readability, prevents Gmail "low-contrast"
+# auto-invert. Primary is near-white, secondary is light-slate, muted
+# is mid-slate (still legible — never goes below WCAG-AA 4.5:1).
+_TEXT_PRIMARY = "#f1f5f9"      # WCAG-AAA on _BG_CARD
+_TEXT_SECONDARY = "#cbd5e1"    # WCAG-AA on _BG_CARD
+_TEXT_MUTED = "#94a3b8"        # for footer/timestamps only
 
-_GOOD = "#10b981"
-_GOOD_LIGHT = "#34d399"
+_ACCENT = "#22d3ee"          # cyan-400 — section labels (brighter)
+_ACCENT_BRIGHT = "#67e8f9"   # cyan-300 — gradient stop
+_GRADIENT_END = "#c4b5fd"    # violet-300 — gradient end
+
+_GOOD = "#34d399"
+_GOOD_LIGHT = "#6ee7b7"
 _WARN = "#fbbf24"
 _BAD = "#fb7185"
-_INFO = "#60a5fa"
+_INFO = "#7dd3fc"
 
 _FONT_STACK = (
     "'Inter','SF Pro Display','-apple-system',BlinkMacSystemFont,"
@@ -183,17 +198,32 @@ def sparkline_svg(values: Iterable[float], *, width: int = 120, height: int = 32
 
 def section(*, title: str, glyph: str, body: str,
             severity: Literal["good", "warn", "bad", "info", "neutral"] = "neutral") -> str:
+    """Section with title + body, wrapped in a visible card so the
+    content is clearly delineated even in clients that strip our styles."""
     color = {"good": _GOOD_LIGHT, "warn": _WARN, "bad": _BAD,
              "info": _INFO, "neutral": _ACCENT}.get(severity, _ACCENT)
+    bg_tint = {
+        "good":    "rgba(52,211,153,0.06)",
+        "warn":    "rgba(251,191,36,0.06)",
+        "bad":     "rgba(251,113,133,0.06)",
+        "info":    "rgba(125,211,252,0.06)",
+        "neutral": "rgba(34,211,238,0.04)",
+    }.get(severity, "rgba(34,211,238,0.04)")
     return (
         f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-        f'width="100%" style="margin:24px 0 0">'
-        f'<tr><td style="padding:0 24px 10px">'
-        f'<span style="color:{color};font-size:14px;margin-right:8px">{glyph}</span>'
-        f'<span style="color:{color};font-size:11px;font-weight:600;'
+        f'width="100%" style="margin:18px 16px 0;width:auto"><tr><td '
+        f'style="background:{_BG_CARD};border:1px solid {_BORDER};'
+        f'border-left:3px solid {color};border-radius:10px;padding:14px 18px">'
+        f'<div style="margin-bottom:10px">'
+        f'<span style="color:{color};font-size:14px;margin-right:8px;'
+        f'vertical-align:middle">{glyph}</span>'
+        f'<span style="color:{color};font-size:11px;font-weight:700;'
         f'letter-spacing:1.4px;text-transform:uppercase;'
-        f'font-family:{_FONT_STACK}">{title}</span></td></tr>'
-        f'<tr><td style="padding:0 24px">{body}</td></tr></table>'
+        f'font-family:{_FONT_STACK};vertical-align:middle">{title}</span></div>'
+        f'<div style="color:{_TEXT_PRIMARY};font-family:{_FONT_STACK};'
+        f'font-size:14px;line-height:1.55;background:{bg_tint};'
+        f'padding:10px 12px;border-radius:6px">{body}</div>'
+        f'</td></tr></table>'
     )
 
 
@@ -252,20 +282,53 @@ def footer(*, version: str, git_sha: str, dashboard_url: str | None = None) -> s
 
 def render_shell(*, title: str, status: Literal["ok", "warn", "bad"],
                  timestamp_et: str, body_sections: list[str]) -> str:
-    """Top-level email envelope. Wraps everything in a 640-px max-width
-    table with the dashboard's outer background color."""
+    """Top-level email envelope. Dark-mode-native: declares color-scheme
+    so Gmail/Apple Mail don't auto-invert into a low-contrast mess.
+    640-px max-width table layout. Inline CSS only (most clients strip
+    <style>)."""
     body_html = "".join(body_sections)
-    return (
-        f'<!DOCTYPE html><html><head>'
-        f'<meta charset="utf-8" />'
+    # Explicit color-scheme + supported-color-schemes makes mobile clients
+    # leave the dark theme alone instead of running their inversion heuristic
+    # (the original cause of the unreadable washed-out look in Gmail mobile).
+    head = (
+        '<!DOCTYPE html><html lang="en">'
+        '<head>'
+        '<meta charset="utf-8" />'
+        '<meta name="viewport" content="width=device-width,initial-scale=1" />'
+        '<meta name="color-scheme" content="dark only" />'
+        '<meta name="supported-color-schemes" content="dark" />'
+        '<meta http-equiv="X-UA-Compatible" content="IE=edge" />'
         f'<title>{title}</title>'
-        f'</head><body style="margin:0;padding:0;background:{_BG_OUTER};'
-        f'font-family:{_FONT_STACK}">'
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-        f'width="100%" style="background:{_BG_OUTER}"><tr><td align="center">'
-        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-        f'width="640" style="max-width:640px;width:100%;background:{_BG_OUTER}">'
+        # Apple Mail + iOS Mail honor this for true dark rendering.
+        '<style>'
+        ':root { color-scheme: dark; supported-color-schemes: dark; } '
+        f'body, table, td {{ background: {_BG_OUTER} !important; }} '
+        f'a {{ color: {_ACCENT_BRIGHT} !important; }} '
+        # Force common Gmail/Outlook overrides to respect our palette.
+        '@media (prefers-color-scheme: light) { '
+        f'  body, table, td {{ background: {_BG_OUTER} !important; }} '
+        f'  .text-primary {{ color: {_TEXT_PRIMARY} !important; }} '
+        '}'
+        '</style>'
+        '</head>'
+    )
+    body_open = (
+        f'<body style="margin:0;padding:0;background:{_BG_OUTER};'
+        f'color:{_TEXT_PRIMARY};font-family:{_FONT_STACK};'
+        # tells Gmail iOS/Android: this email is intentionally dark, do not invert
+        '-webkit-text-size-adjust:100%;'
+        'color-scheme:dark;supported-color-schemes:dark">'
+    )
+    return (
+        head + body_open
+        + '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+        f'width="100%" style="background:{_BG_OUTER};margin:0;padding:0">'
+        '<tr><td align="center" style="padding:16px 8px">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+        f'width="640" style="max-width:640px;width:100%;background:{_BG_OUTER};'
+        f'border-radius:12px;overflow:hidden">'
         f'<tr><td>{gradient_header(title, status, timestamp_et)}</td></tr>'
         f'<tr><td>{body_html}</td></tr>'
-        f'</table></td></tr></table></body></html>'
+        '</table></td></tr></table>'
+        '</body></html>'
     )
