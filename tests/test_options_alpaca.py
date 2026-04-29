@@ -72,3 +72,26 @@ def test_constructor_rejects_live_url():
     from trading_bot.exceptions import LiveModeDisabled
     with pytest.raises(LiveModeDisabled):
         OptionAlpacaClient(s)
+
+
+def test_list_optionable_us_equities_reads_attributes_field():
+    """Alpaca-py exposes optionability via asset.attributes containing
+    'has_options' (a list of strings), not a top-level options_enabled bool."""
+    a_yes = MagicMock(spec=["symbol", "tradable", "attributes", "options_enabled"])
+    a_yes.symbol = "AAPL"; a_yes.tradable = True
+    a_yes.attributes = ["has_options", "fractional_eh_enabled"]
+    a_yes.options_enabled = False
+    a_no = MagicMock(spec=["symbol", "tradable", "attributes", "options_enabled"])
+    a_no.symbol = "PENNY"; a_no.tradable = True
+    a_no.attributes = ["fractional_eh_enabled"]
+    a_no.options_enabled = False
+    a_legacy = MagicMock(spec=["symbol", "tradable", "attributes", "options_enabled"])
+    a_legacy.symbol = "LEGACY"; a_legacy.tradable = True
+    a_legacy.attributes = []
+    a_legacy.options_enabled = True  # legacy field path still respected
+    trading = MagicMock(); trading.get_all_assets.return_value = [a_yes, a_no, a_legacy]
+    with patch("trading_bot.options.alpaca_options.TradingClient", return_value=trading):
+        with patch("trading_bot.options.alpaca_options.OptionHistoricalDataClient"):
+            c = OptionAlpacaClient(_settings())
+            out = c.list_optionable_us_equities()
+    assert out == {"AAPL", "LEGACY"}

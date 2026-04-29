@@ -39,10 +39,15 @@ def _eligibility(
         return False, "blocklist"
     if sym not in inp.optionable_set:
         return False, "not_optionable"
-    if inp.avg_dollar_volume_50d.get(sym, 0.0) < _MIN_DOLLAR_VOLUME_50D:
-        return False, "dollar_volume"
-    if inp.avg_option_volume_30d.get(sym, 0) < _MIN_OPTION_VOLUME_30D:
-        return False, "option_volume"
+    # Volume filters are skipped entirely when the caller passes an empty
+    # dict (deferred screener-integration: data not wired yet). When data IS
+    # present for a symbol, enforce the floor.
+    if inp.avg_dollar_volume_50d:
+        if inp.avg_dollar_volume_50d.get(sym, 0.0) < _MIN_DOLLAR_VOLUME_50D:
+            return False, "dollar_volume"
+    if inp.avg_option_volume_30d:
+        if inp.avg_option_volume_30d.get(sym, 0) < _MIN_OPTION_VOLUME_30D:
+            return False, "option_volume"
     try:
         prof = inp.finnhub.company_profile(sym)
     except FinnhubUnavailable:

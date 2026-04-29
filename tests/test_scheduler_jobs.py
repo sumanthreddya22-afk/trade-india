@@ -137,6 +137,7 @@ def test_wheel_scan_and_manage_jobs_registered():
         "heartbeat", "intel_scan", "crypto_scan", "portfolio_watch",
         "verify_stops", "vip_scan", "alerts_drain", "reconcile_post_close",
         "reconcile_pre_digest", "schedule_audit", "wheel_scan", "wheel_manage",
+        "iv_capture",
         "news_warm", "massive_refresh", "premarket_rank", "midday_snapshot",
         "daily_digest", "log_rotation",
     )}
@@ -149,3 +150,4 @@ def test_wheel_scan_and_manage_jobs_registered():
     register_jobs(scheduler=sched, cadence=cad, runners=runners)
     ids = {j.id for j in sched.get_jobs()}
     assert "wheel_scan" in ids and "wheel_manage" in ids
+    assert "iv_capture" in ids

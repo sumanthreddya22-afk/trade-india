@@ -243,6 +243,16 @@ def register_jobs(
             id="wheel_scan", replace_existing=True,
             misfire_grace_time=300, coalesce=True,
         )
+    # IV capture: 9:45 ET weekdays. The ONLY place we mass-fetch chains for the
+    # eligible set; writes ATM 30-day IV to option_iv_history so the wheel-scan
+    # at 10:15 can rank IV without per-symbol chain probes.
+    if cadence.wheel_scan_enabled and "iv_capture" in runners:
+        scheduler.add_job(
+            runners["iv_capture"],
+            trigger=CronTrigger(hour=9, minute=45, day_of_week="mon-fri", timezone=et),
+            id="iv_capture", replace_existing=True,
+            misfire_grace_time=300, coalesce=True,
+        )
     # Wheel manage: every wheel_manage_interval_minutes within the 10-15 ET hours.
     if cadence.wheel_scan_enabled and "wheel_manage" in runners:
         interval = cadence.wheel_manage_interval_minutes

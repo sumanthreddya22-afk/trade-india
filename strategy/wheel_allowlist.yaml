@@ -1,3 +1,37 @@
 # strategy/wheel_allowlist.yaml
 # Symbols to force into the wheel candidate set, bypassing size/age/volume filters.
-symbols: []
+# Per-cycle filters (delta band, IV rank, earnings, sentiment, WSB spike) STILL apply.
+# Edit freely — these load on every wheel scan.
+
+symbols:
+  # Mega-cap tech
+  - AAPL
+  - MSFT
+  - GOOGL
+  - AMZN
+  - NVDA
+  - META
+  - AVGO
+  # Liquid ETFs
+  - SPY
+  - QQQ
+  - IWM
+  - DIA
+  - XLK
+  - XLF
+  - XLE
+  - XLV
+  # Defensives / dividend-payers
+  - KO
+  - PG
+  - JNJ
+  - WMT
+  - PEP
+  - JPM
+  - BAC
+  - V
+  - MA
+  - HD
+  - DIS
+  - T
+  - VZ

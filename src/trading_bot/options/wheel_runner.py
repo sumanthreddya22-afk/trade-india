@@ -17,6 +17,7 @@ from trading_bot.intelligence_finnhub import FinnhubClient
 from trading_bot.options.alpaca_options import OptionAlpacaClient
 from trading_bot.options.chain import ChainContract
 from trading_bot.options.wheel_lane import WheelInputs, WheelLane
+from trading_bot.options.wheel_signals import WheelCandidate
 from trading_bot.options.wheel_state import (
     Phase, WheelStateRepo, close_cycle, increment_rolls, mark_assigned,
     open_cc, open_csp,
@@ -34,7 +35,7 @@ class WheelDeps:
     risk_manager: object
     intelligence_macro: object
     regime_detector: object
-    universe_filter: Callable[[], set[str]]
+    candidates_for_today: Callable[[], list[WheelCandidate]]
     iv_rank_for: Callable[[str], float | None]
     spot_for: Callable[[str], float | None]
     sentiment_for: Callable[[str], float | None]
@@ -99,13 +100,14 @@ def run_wheel_scan(deps: WheelDeps) -> None:
     macro = deps.intelligence_macro.snapshot()
     vix = getattr(macro, "vix", None)
     repo = WheelStateRepo(deps.engine)
-    eligible = deps.universe_filter()
+    candidates = deps.candidates_for_today()
     account = deps.alpaca_client.get_account()
     equity = Decimal(str(account.equity))
     existing_opt = _existing_options_value(deps)
     lane = WheelLane(deps.cfg)
 
-    for symbol in sorted(eligible):
+    for cand in candidates:
+        symbol = cand.symbol
         try:
             chain = deps.option_alpaca.get_chain(
                 symbol,
@@ -125,11 +127,15 @@ def run_wheel_scan(deps: WheelDeps) -> None:
         cost_basis: float | None = None
         if cycle is not None and cycle.phase == Phase.ASSIGNED.value:
             cost_basis = float(cycle.cost_basis or 0)
+        # Use the candidate's pre-computed IV rank when present; fall back to
+        # iv_rank_for for symbols where the lane still wants a fresh check
+        # (e.g., post-assignment CC entries that come without a signal).
+        iv_rank = cand.iv_rank if cand.iv_rank is not None else deps.iv_rank_for(symbol)
         decision = lane.evaluate(WheelInputs(
             symbol=symbol, regime=regime, vix=vix,
             sentiment_score=deps.sentiment_for(symbol),
             spot=(deps.spot_for(symbol) or 0.0),
-            iv_rank=deps.iv_rank_for(symbol),
+            iv_rank=iv_rank,
             finnhub=deps.finnhub, apewisdom=deps.apewisdom, today=today,
             chain=chain, cycle=cycle, cost_basis=cost_basis,
         ))

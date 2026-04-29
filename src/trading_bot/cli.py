@@ -1474,6 +1474,24 @@ def wheel_close_cli(symbol: str) -> None:
     click.echo(f"[wheel-close] closed {contract} for {symbol} @ {mid:.2f}")
 
 
+@main.command("iv-capture")
+def iv_capture_cli() -> None:
+    """Capture today's ATM 30-day IV for each allowlisted symbol. Writes to
+    option_iv_history. The wheel-scan @ 10:15 ET reads from this table."""
+    from trading_bot.daemon import _build_iv_capture_runner
+    from trading_bot.state_db import get_engine
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    if not cfg.wheel.enabled:
+        click.echo("wheel disabled in config")
+        return
+    db_path = os.environ.get("TRADING_BOT_STATE_DB", "data/state.db")
+    engine = get_engine(db_path)
+    runner = _build_iv_capture_runner(settings=settings, app_cfg=cfg, state_engine=engine)
+    runner()
+    click.echo("[iv-capture] complete")
+
+
 @main.command("schedule-audit")
 def schedule_audit_cli() -> None:
     """Audit today's cron job firings vs expected. Writes to schedule_audits."""

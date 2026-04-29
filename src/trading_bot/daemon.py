@@ -47,36 +47,125 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
     from trading_bot.options.alpaca_options import OptionAlpacaClient
     from trading_bot.options.iv_rank import compute_iv_rank
     from trading_bot.options.wheel_runner import WheelDeps
-    from trading_bot.options.wheel_universe import filter_universe, UniverseInputs
+    from trading_bot.options.wheel_signals import (
+        produce_candidates, SignalDeps, _read_last_iv,
+    )
 
     finnhub = FinnhubClient(api_key=settings.finnhub_api_key)
     ape = ApeWisdomClient()
     opt = OptionAlpacaClient(settings)
 
-    def _universe() -> set[str]:
-        candidates = list(opt.list_optionable_us_equities())
-        return filter_universe(
-            UniverseInputs(
-                candidates=candidates,
-                optionable_set=set(candidates),
-                avg_dollar_volume_50d={},
-                avg_option_volume_30d={},
-                finnhub=finnhub, blocklist=set(), allowlist=set(),
+    def _load_yaml_symbols(path_str: str) -> set[str]:
+        try:
+            import yaml
+            p = Path(path_str)
+            if not p.exists():
+                return set()
+            data = yaml.safe_load(p.read_text()) or {}
+            return {str(s).upper() for s in (data.get("symbols") or [])}
+        except Exception:
+            return set()
+
+    def _eligible_set() -> set[str]:
+        """Allowlist minus blocklist, intersected with what Alpaca says is
+        actually optionable. This is the bot's complete consideration set —
+        signals decide which of these to act on TODAY."""
+        optionable = opt.list_optionable_us_equities()
+        blocklist = _load_yaml_symbols(app_cfg.wheel.blocklist_path)
+        allowlist = _load_yaml_symbols(app_cfg.wheel.allowlist_path)
+        if not allowlist:
+            return set()  # no allowlist = no eligible set; operator must opt in
+        return (allowlist & optionable) - blocklist
+
+    def _sentiment_for(symbol: str) -> float | None:
+        try:
+            from trading_bot.news_sentiment import latest_score_for
+            return latest_score_for(symbol)
+        except Exception:
+            return None
+
+    def _spot_for(symbol: str) -> float | None:
+        try:
+            from trading_bot.market_data import MarketDataClient
+            md = MarketDataClient(settings)
+            df = md.get_daily_bars(symbol, lookback_days=2)
+            if df.empty:
+                return None
+            return float(df["close"].iloc[-1])
+        except Exception:
+            return None
+
+    def _candidates_for_today():
+        """Signal-driven candidate sourcing — runs against the eligible set
+        and produces a small ranked list of symbols backed by an actual
+        signal (post-earnings / stable-elevated-IV). Empty if VIX out-of-band
+        or no signals fire."""
+        return produce_candidates(
+            SignalDeps(
+                finnhub=finnhub, iv_engine=state_engine,
+                sentiment_for=_sentiment_for,
+                macro_snapshotter=intelligence_macro,
+                today=dt.date.today(),
             ),
-            cfg=app_cfg.wheel, engine=state_engine, today=dt.date.today(),
+            eligible=_eligible_set(),
+            cfg=app_cfg.wheel,
         )
 
     def _iv_rank_for(symbol: str) -> float | None:
-        return compute_iv_rank(state_engine, symbol, current_iv=0.0, min_history=30)
+        last_iv = _read_last_iv(state_engine, symbol)
+        if last_iv is None:
+            return None
+        return compute_iv_rank(state_engine, symbol, current_iv=last_iv, min_history=5)
 
     return WheelDeps(
         cfg=app_cfg.wheel, engine=state_engine, option_alpaca=opt,
         alpaca_client=alpaca_client, risk_manager=risk_manager,
         intelligence_macro=intelligence_macro, regime_detector=regime_detector,
-        universe_filter=_universe, iv_rank_for=_iv_rank_for,
-        spot_for=lambda s: None, sentiment_for=lambda s: None,
+        candidates_for_today=_candidates_for_today, iv_rank_for=_iv_rank_for,
+        spot_for=_spot_for, sentiment_for=_sentiment_for,
         finnhub=finnhub, apewisdom=ape, alert_queue=queue_alert,
     )
+
+
+def _build_iv_capture_runner(*, settings, app_cfg, state_engine):
+    """Build a callable for the daily iv_capture cron job. Returns a no-op if
+    wheel disabled — no chain fetches without operator opt-in."""
+    def _runner():
+        if not app_cfg.wheel.enabled:
+            return
+        import datetime as dt
+        from trading_bot.options.alpaca_options import OptionAlpacaClient
+        from trading_bot.options.iv_capture import IvCaptureDeps, run_iv_capture
+        from trading_bot.market_data import MarketDataClient
+        opt = OptionAlpacaClient(settings)
+        md = MarketDataClient(settings)
+        # Reuse the same eligible-set logic the wheel runner uses
+        try:
+            import yaml
+            p = Path(app_cfg.wheel.allowlist_path)
+            allow = {str(s).upper() for s in (yaml.safe_load(p.read_text()) or {}).get("symbols", [])} if p.exists() else set()
+            p_b = Path(app_cfg.wheel.blocklist_path)
+            block = {str(s).upper() for s in (yaml.safe_load(p_b.read_text()) or {}).get("symbols", [])} if p_b.exists() else set()
+        except Exception:
+            allow, block = set(), set()
+        eligible = (allow & opt.list_optionable_us_equities()) - block
+        if not eligible:
+            return
+        def _spot(s: str) -> float | None:
+            try:
+                df = md.get_daily_bars(s, lookback_days=2)
+                if df.empty:
+                    return None
+                return float(df["close"].iloc[-1])
+            except Exception:
+                return None
+        deps = IvCaptureDeps(
+            option_alpaca=opt, engine=state_engine,
+            spot_for=_spot,
+            eligible=eligible, today=dt.date.today(),
+        )
+        run_iv_capture(deps)
+    return _runner
 
 
 class _MacroSnapshotter:
@@ -194,6 +283,9 @@ def _load_runners(log: StructuredLogger):
     wheel_manage_runner = lambda: log.event(
         "wheel_manage_stub", reason="wheel disabled or wiring failed"
     )
+    iv_capture_runner = lambda: log.event(
+        "iv_capture_stub", reason="wheel disabled or wiring failed"
+    )
     reconcile_options_callable = None
     try:
         from trading_bot.config import Settings, load_config
@@ -218,6 +310,9 @@ def _load_runners(log: StructuredLogger):
             )
             wheel_scan_runner = lambda: run_wheel_scan(_wheel_deps)
             wheel_manage_runner = lambda: run_wheel_manage(_wheel_deps)
+            iv_capture_runner = _build_iv_capture_runner(
+                settings=_settings, app_cfg=_app_cfg, state_engine=engine,
+            )
 
             # reconcile_options runs after the equity reconciler so option
             # cycle state is reconciled in the same pass.
@@ -277,6 +372,7 @@ def _load_runners(log: StructuredLogger):
         "alert_drain": _wrap("alert_drain", lambda: cli_mod.alert_drain_cli.callback()),
         "wheel_scan": _wrap("wheel_scan", wheel_scan_runner),
         "wheel_manage": _wrap("wheel_manage", wheel_manage_runner),
+        "iv_capture": _wrap("iv_capture", iv_capture_runner),
     }
 
 

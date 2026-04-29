@@ -47,7 +47,12 @@ def _deps(engine):
     d.risk_manager.option_collateral_ok.return_value = (True, "")
     d.intelligence_macro = MagicMock(); d.intelligence_macro.snapshot.return_value = MagicMock(vix=20.0)
     d.regime_detector = MagicMock(); d.regime_detector.detect.return_value = "trending_up"
-    d.universe_filter = MagicMock(return_value={"AAPL"})
+    from trading_bot.options.wheel_signals import WheelCandidate
+    d.candidates_for_today = MagicMock(return_value=[
+        WheelCandidate(symbol="AAPL", signal="stable_elevated_iv",
+                       confidence=0.55, reason="IV rank 55, sentiment 0.10",
+                       iv_rank=55.0, last_iv=0.30),
+    ])
     d.iv_rank_for = MagicMock(return_value=55.0)
     d.spot_for = MagicMock(return_value=200.0)
     d.sentiment_for = MagicMock(return_value=0.1)

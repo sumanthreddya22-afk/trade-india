@@ -49,7 +49,7 @@ strategy:
   sentiment_max_age_days: 3
 
 wheel:
-  enabled: false  # paper-test cautiously — flip to true after Phase 3 verification
+  enabled: true  # paper-only (hardcoded URL prefix check); enabled 2026-04-29
   delta_target_low: 0.20
   delta_target_high: 0.30
   dte_min: 30

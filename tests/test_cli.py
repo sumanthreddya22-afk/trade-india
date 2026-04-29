@@ -269,14 +269,23 @@ def test_cli_wheel_scan_disabled_short_circuits(monkeypatch, tmp_path):
     monkeypatch.setenv("GMAIL_USER", "fake@example.com")
     monkeypatch.setenv("GMAIL_APP_PASSWORD", "fake")
 
-    # Reuse the repo-checked-in strategy/config.yaml — wheel.enabled defaults
-    # to False so the CLI short-circuits without trying to construct
-    # OptionAlpacaClient or hit Alpaca.
-    import shutil
+    # Write a minimal config with wheel.enabled=false so the CLI short-circuits
+    # without trying to construct OptionAlpacaClient or hit Alpaca. Don't copy
+    # the live strategy/config.yaml — the operator may have flipped it on.
     cfg_dir = tmp_path / "strategy"
     cfg_dir.mkdir()
-    repo_root = Path(__file__).parent.parent
-    shutil.copy(repo_root / "strategy" / "config.yaml", cfg_dir / "config.yaml")
+    (cfg_dir / "config.yaml").write_text("""
+risk: {daily_loss_limit_pct: 2, weekly_loss_limit_pct: 5, per_trade_risk_pct: 1, max_position_pct: 10, max_symbol_concentration_pct: 5, max_consecutive_losing_days: 3}
+allocation: {stocks_max_pct: 70, crypto_max_pct: 30, options_max_pct: 20, cash_floor_pct: 10}
+regime_allocations:
+  trending_up: {stocks: 60, crypto: 25, options: 15, cash: 0}
+  trending_down: {stocks: 30, crypto: 15, options: 10, cash: 45}
+  sideways: {stocks: 40, crypto: 20, options: 20, cash: 20}
+  risk_off: {stocks: 10, crypto: 5, options: 0, cash: 85}
+email: {to: x@y.com, daily_summary_time_et: "16:30", weekly_summary_day: Sunday}
+storage: {trade_journal_path: data/trade_journal.db}
+wheel: {enabled: false}
+""")
     monkeypatch.chdir(tmp_path)
 
     runner = CliRunner()

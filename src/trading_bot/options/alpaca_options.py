@@ -110,7 +110,9 @@ class OptionAlpacaClient:
             raise AlpacaClientError(f"list_optionable: {e}") from e
         out: set[str] = set()
         for a in assets:
-            if getattr(a, "options_enabled", False) and a.tradable:
+            attrs = getattr(a, "attributes", None) or []
+            has_options = "has_options" in attrs or getattr(a, "options_enabled", False)
+            if has_options and a.tradable:
                 out.add(str(a.symbol))
         return out
 
