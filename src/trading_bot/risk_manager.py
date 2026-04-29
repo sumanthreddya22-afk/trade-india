@@ -143,3 +143,28 @@ class RiskManager:
                 rule="weekly_loss_limit",
                 detail=f"weekly P&L {s.weekly_pnl_pct}% breaches -{w_limit}%",
             )
+
+    # ---- options-specific gate (wheel collateral) ----
+
+    def option_collateral_ok(
+        self, *,
+        equity: Decimal,
+        prospective_collateral: Decimal,
+        existing_options_value: Decimal,
+        per_symbol_collateral: Decimal,
+    ) -> tuple[bool, str]:
+        """Check options-allocation cap + per-symbol concentration.
+
+        Returns (ok, reason). reason="" when ok.
+        """
+        if equity <= 0:
+            return False, "equity_zero"
+        options_max = Decimal(str(self._cfg.allocation.options_max_pct))
+        sym_max = Decimal(str(self._cfg.risk.max_symbol_concentration_pct))
+        options_pct = (existing_options_value + prospective_collateral) / equity * Decimal("100")
+        if options_pct > options_max:
+            return False, f"options_cap ({options_pct:.1f}% > {options_max}%)"
+        sym_pct = per_symbol_collateral / equity * Decimal("100")
+        if sym_pct > sym_max:
+            return False, f"symbol_concentration ({sym_pct:.1f}% > {sym_max}%)"
+        return True, ""

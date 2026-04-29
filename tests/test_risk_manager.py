@@ -229,3 +229,52 @@ def test_risk_rejects_inverted_stop_loss(cfg, acct, state):
     with pytest.raises(RiskRuleViolation) as e:
         rm.check(req, account=acct, positions=[], state=state, regime="trending_up")
     assert e.value.rule == "stop_loss_direction"
+
+
+# ---- option_collateral_ok tests (wheel) ----
+
+
+def test_option_collateral_ok_passes_when_under_caps():
+    cfg = make_config()
+    rm = RiskManager(cfg)
+    ok, reason = rm.option_collateral_ok(
+        equity=Decimal("100000"), prospective_collateral=Decimal("5000"),
+        existing_options_value=Decimal("0"), per_symbol_collateral=Decimal("5000"),
+    )
+    assert ok and reason == ""
+
+
+def test_option_collateral_ok_blocks_when_options_cap_breached():
+    cfg = make_config()
+    rm = RiskManager(cfg)
+    ok, reason = rm.option_collateral_ok(
+        equity=Decimal("100000"),
+        prospective_collateral=Decimal("3000"),
+        existing_options_value=Decimal("18000"),  # already at 18%
+        per_symbol_collateral=Decimal("3000"),
+    )
+    assert ok is False
+    assert "options_cap" in reason
+
+
+def test_option_collateral_ok_blocks_per_symbol_concentration():
+    cfg = make_config()
+    rm = RiskManager(cfg)
+    ok, reason = rm.option_collateral_ok(
+        equity=Decimal("100000"), prospective_collateral=Decimal("3000"),
+        existing_options_value=Decimal("0"),
+        per_symbol_collateral=Decimal("6000"),  # 6% > 5%
+    )
+    assert ok is False
+    assert "symbol_concentration" in reason
+
+
+def test_option_collateral_ok_zero_equity():
+    cfg = make_config()
+    rm = RiskManager(cfg)
+    ok, reason = rm.option_collateral_ok(
+        equity=Decimal("0"), prospective_collateral=Decimal("1"),
+        existing_options_value=Decimal("0"), per_symbol_collateral=Decimal("1"),
+    )
+    assert ok is False
+    assert "equity_zero" in reason
