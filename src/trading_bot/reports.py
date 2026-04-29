@@ -14,15 +14,22 @@ Design notes (because emails are a special hellscape):
 - Unicode glyphs (▲ ▼ ● ◆) instead of icon fonts or SVG — those don't
   render in many clients.
 
+Visual primitives (pills, sections, data tables, KPI cards, etc.) live in
+`email_shell.py` and are imported here. This file contains only the
+builder functions that compose those primitives into full emails.
+
 Public API:
-    build_alert_email_html(events, ...)  — portfolio-watch alert
     build_open_positions_email_html(actions)  — verify-stops auto-protect summary
     open_positions_email_subject(actions)     — subject line for the above
     build_vip_alert_email_html(high)     — vip-scan alert
+    build_system_status_section(engine)  — Phase 1-6 system status block (used by digest)
 
 Removed in Task 10 (B3):
     build_daily_report_html(...)         — replaced by build_daily_digest_email
     build_rich_report_html(...)          — replaced by build_daily_digest_email
+
+Removed in Task 14:
+    build_alert_email_html(...)          — replaced by alerts.py _build_alert_email_html
 """
 from __future__ import annotations
 
@@ -33,41 +40,41 @@ from typing import Iterable
 
 from trading_bot.alpaca_client import AccountSnapshot, Position
 from trading_bot.orchestrator import ScanResult
-from trading_bot.portfolio_monitor import Event
-
-
-# --------------------------------------------------------------------------
-# Design tokens — single source of truth so all emails feel like one product.
-# --------------------------------------------------------------------------
-
-_BG_PAGE = "#0a0f1c"      # dashboard --bg
-_BG_PAGE_GRAD_TOP = "#070b15"   # dashboard body gradient top
-_BG_CARD = "#0f172a"      # dashboard --card (flattened from rgba .85)
-_BG_ROW_ALT = "#131c30"   # subtle zebra
-_BORDER = "#1e293b"       # dashboard --border
-_TEXT_PRIMARY = "#e2e8f0"      # dashboard body color
-_TEXT_SECONDARY = "#94a3b8"
-_TEXT_MUTED = "#64748b"
-_ACCENT = "#06b6d4"       # dashboard .label color (cyan-500)
-_ACCENT_BRIGHT = "#22d3ee"     # dashboard gradient stop (cyan-400)
-_GOOD = "#10b981"         # dashboard pulse-dot (emerald-500)
-_GOOD_LIGHT = "#34d399"   # text on tinted bg
-_BAD = "#fb7185"          # rose
-_WARN = "#fbbf24"         # amber
-_INFO = "#60a5fa"         # blue
-_PURPLE = "#a78bfa"       # dashboard gradient stop (violet-400)
-
-_CARD_RADIUS = "16px"     # dashboard .card border-radius
-
-_FONT_STACK = (
-    "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', "
-    "Roboto, 'Inter', Helvetica, Arial, sans-serif"
+from trading_bot.email_shell import (
+    # color tokens — single source of truth
+    _BG_CARD,
+    _BG_OUTER as _BG_PAGE,
+    _BORDER,
+    _TEXT_PRIMARY,
+    _TEXT_SECONDARY,
+    _TEXT_MUTED,
+    _ACCENT,
+    _ACCENT_BRIGHT,
+    _GOOD,
+    _GOOD_LIGHT,
+    _BAD,
+    _WARN,
+    _INFO,
+    _FONT_STACK,
+    _MONO_STACK,
+    # visual primitives
+    severity_pill,
+    section,
+    data_table,
+    kpi_card,
+    kpi_grid,
+    empty_state,
 )
-_MONO_STACK = "'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace"
+
+# Additional color tokens not exported from email_shell
+_BG_PAGE_GRAD_TOP = "#070b15"
+_BG_ROW_ALT = "#131c30"    # subtle zebra stripe
+_PURPLE = "#a78bfa"        # violet-400 gradient stop
+_CARD_RADIUS = "16px"      # dashboard .card border-radius
 
 
 # --------------------------------------------------------------------------
-# Formatting helpers
+# Formatting helpers (unique to reports — not in email_shell)
 # --------------------------------------------------------------------------
 
 
@@ -116,30 +123,6 @@ def _pnl_color(v) -> str:
     return _TEXT_PRIMARY
 
 
-# --------------------------------------------------------------------------
-# Atomic UI components
-# --------------------------------------------------------------------------
-
-
-def _pill(text: str, kind: str = "neutral") -> str:
-    """Small colored badge — matches dashboard's `bg-X-900/40 text-X-300` pattern."""
-    colors = {
-        "good":    (_GOOD_LIGHT, "rgba(16,185,129,0.18)"),
-        "bad":     (_BAD,        "rgba(251,113,133,0.18)"),
-        "warn":    (_WARN,       "rgba(251,191,36,0.18)"),
-        "info":    (_INFO,       "rgba(96,165,250,0.18)"),
-        "accent":  (_ACCENT_BRIGHT, "rgba(34,211,238,0.16)"),
-        "neutral": (_TEXT_SECONDARY, "rgba(148,163,184,0.12)"),
-    }
-    fg, bg = colors.get(kind, colors["neutral"])
-    return (
-        f"<span style=\"display:inline-block;padding:4px 10px;border-radius:999px;"
-        f"background:{bg};color:{fg};font-size:10px;font-weight:600;"
-        f"letter-spacing:1.65px;text-transform:uppercase;font-family:{_FONT_STACK}\">"
-        f"{text}</span>"
-    )
-
-
 def _regime_pill(regime: str) -> str:
     kind = {
         "trending_up":   "good",
@@ -147,117 +130,23 @@ def _regime_pill(regime: str) -> str:
         "sideways":      "warn",
         "risk_off":      "bad",
     }.get(regime, "neutral")
-    return _pill(regime.replace("_", " "), kind)
-
-
-def _section(title: str, body_html: str, *, accent_glyph: str = "◆") -> str:
-    """Section header matches dashboard `.label` exactly: 11px, 0.15em
-    letter-spacing, cyan, semibold, uppercase."""
-    return (
-        f"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
-        f"width=\"100%\" style=\"margin:28px 0 0\">"
-        f"<tr><td style=\"padding:0 0 12px\">"
-        f"<span style=\"color:{_ACCENT};font-size:11px;margin-right:8px\">{accent_glyph}</span>"
-        f"<span style=\"color:{_ACCENT};font-size:11px;font-weight:600;"
-        f"letter-spacing:1.65px;text-transform:uppercase;font-family:{_FONT_STACK}\">{title}</span>"
-        f"</td></tr>"
-        f"<tr><td>{body_html}</td></tr>"
-        f"</table>"
-    )
-
-
-def _kpi_card(label: str, value: str, *, value_color: str = _TEXT_PRIMARY,
-              sub: str | None = None) -> str:
-    """Single KPI tile. Matches dashboard `.kpi-num` (32px, 700, line-height 1.1,
-    letter-spacing -0.02em) and `.label` (11px, 0.15em letter-spacing, cyan,
-    semibold uppercase) and `.kpi-sub` (12px muted)."""
-    sub_html = (
-        f"<div style=\"color:{_TEXT_MUTED};font-size:12px;margin-top:4px;"
-        f"font-family:{_FONT_STACK}\">{sub}</div>"
-        if sub else ""
-    )
-    return (
-        f"<td valign=\"top\" style=\"padding:18px 20px;background:{_BG_CARD};"
-        f"border:1px solid {_BORDER};border-radius:{_CARD_RADIUS};width:25%\">"
-        f"<div style=\"color:{_ACCENT};font-size:11px;letter-spacing:1.65px;"
-        f"text-transform:uppercase;font-weight:600;font-family:{_FONT_STACK}\">{label}</div>"
-        f"<div style=\"color:{value_color};font-size:32px;font-weight:700;margin-top:10px;"
-        f"line-height:1.1;letter-spacing:-0.02em;"
-        f"font-family:{_MONO_STACK}\">{value}</div>"
-        f"{sub_html}"
-        f"</td>"
-    )
-
-
-def _kpi_grid(cells: list[str]) -> str:
-    """Lay KPI cards out in a responsive 2x2 (or 1x4) table.
-
-    Each cell is the string from _kpi_card. We pad to 4 with blanks if fewer.
-    """
-    while len(cells) < 4:
-        cells.append("<td style=\"width:25%\"></td>")
-    spacer = "<td width=\"12\" style=\"width:12px\"></td>"
-    rendered = (spacer.join(cells))
-    return (
-        f"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
-        f"width=\"100%\" style=\"margin:0\"><tr>{rendered}</tr></table>"
-    )
-
-
-def _empty_state(text: str) -> str:
-    return (
-        f"<div style=\"padding:18px;background:{_BG_CARD};border:1px dashed {_BORDER};"
-        f"border-radius:{_CARD_RADIUS};color:{_TEXT_MUTED};font-size:13px;text-align:center;"
-        f"font-family:{_FONT_STACK}\">{text}</div>"
-    )
-
-
-def _data_table(headers: list[str], rows: list[list[str]]) -> str:
-    """Render a styled data table. Cells are HTML — caller is responsible
-    for any color/formatting on values.
-    """
-    if not rows:
-        return _empty_state("No data.")
-    th = "".join(
-        f"<th align=\"left\" style=\"padding:10px 14px;color:{_TEXT_SECONDARY};"
-        f"font-size:11px;font-weight:600;letter-spacing:0.6px;text-transform:uppercase;"
-        f"border-bottom:1px solid {_BORDER};font-family:{_FONT_STACK}\">{h}</th>"
-        for h in headers
-    )
-    body = []
-    for i, row in enumerate(rows):
-        bg = _BG_ROW_ALT if i % 2 == 0 else _BG_CARD
-        tds = "".join(
-            f"<td style=\"padding:10px 14px;color:{_TEXT_PRIMARY};font-size:13px;"
-            f"border-bottom:1px solid {_BORDER};font-family:{_MONO_STACK}\">{c}</td>"
-            for c in row
-        )
-        body.append(f"<tr style=\"background:{bg}\">{tds}</tr>")
-    return (
-        f"<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\" "
-        f"width=\"100%\" style=\"border-collapse:separate;border-spacing:0;"
-        f"background:{_BG_CARD};border:1px solid {_BORDER};border-radius:{_CARD_RADIUS};"
-        f"overflow:hidden\">"
-        f"<thead><tr>{th}</tr></thead>"
-        f"<tbody>{''.join(body)}</tbody>"
-        f"</table>"
-    )
+    return severity_pill(regime.replace("_", " "), kind)
 
 
 # --------------------------------------------------------------------------
-# Page shell
+# Page shell — TB-logo style, distinct from email_shell.render_shell
 # --------------------------------------------------------------------------
 
 
 def _shell(*, title: str, subtitle_html: str, body_html: str,
            accent: str = _ACCENT, footer_note: str | None = None) -> str:
-    """Wrap content in the polished email shell.
+    """Wrap content in the polished email shell with TB badge header.
 
     `subtitle_html` may include pills, dates, etc. — it's HTML, not text.
     `accent` colors the header strip.
     """
     now_str = datetime.now(timezone.utc).strftime("%a %b %d, %H:%M UTC")
-    footer = footer_note or (
+    footer_content = footer_note or (
         f"Trading Bot · paper account · sent automatically · "
         f"<span style=\"color:{_TEXT_MUTED}\">{now_str}</span>"
     )
@@ -332,7 +221,7 @@ def _shell(*, title: str, subtitle_html: str, body_html: str,
     <div style="border-top:1px solid {_BORDER};padding-top:18px;
                 color:{_TEXT_MUTED};font-size:11px;text-align:center;
                 font-family:{_FONT_STACK}">
-      {footer}
+      {footer_content}
     </div>
   </td></tr>
 
@@ -350,7 +239,7 @@ def _shell(*, title: str, subtitle_html: str, body_html: str,
 
 def _positions_block(positions: list[Position]) -> str:
     if not positions:
-        return _empty_state("No open positions.")
+        return empty_state("No open positions.")
     rows = []
     for p in positions:
         try:
@@ -379,7 +268,7 @@ def _positions_block(positions: list[Position]) -> str:
             _fmt_money(mv),
             pnl_html,
         ])
-    return _data_table(
+    return data_table(
         headers=["Symbol", "Qty", "Avg Entry", "Market Value", "Unrealized P&L"],
         rows=rows,
     )
@@ -388,7 +277,7 @@ def _positions_block(positions: list[Position]) -> str:
 def _decisions_block(scan: ScanResult) -> str:
     decisions = list(getattr(scan, "decisions", []) or [])
     if not decisions:
-        return _empty_state("No decisions in this run.")
+        return empty_state("No decisions in this run.")
     action_kind = {
         "placed_order":              "good",
         "rejected_by_risk":          "bad",
@@ -401,11 +290,11 @@ def _decisions_block(scan: ScanResult) -> str:
         kind = action_kind.get(d.action, "info")
         rows.append([
             f"<strong style=\"color:{_TEXT_PRIMARY};font-family:{_FONT_STACK}\">{d.symbol}</strong>",
-            _pill(d.action.replace("_", " "), kind),
+            severity_pill(d.action.replace("_", " "), kind),
             f"<span style=\"color:{_TEXT_SECONDARY};font-family:{_FONT_STACK};"
             f"font-size:12px\">{d.reason or '—'}</span>",
         ])
-    return _data_table(headers=["Symbol", "Action", "Reason"], rows=rows)
+    return data_table(headers=["Symbol", "Action", "Reason"], rows=rows)
 
 
 # --------------------------------------------------------------------------
@@ -417,7 +306,7 @@ def _strategy_mode_block(view) -> str:
     """Mirrors dashboard `_strategy_mode.html` — large bold mode word with
     matching emerald (active) or amber (fallback) tone on a tinted card."""
     if view is None:
-        return _empty_state("Strategy mode not yet bootstrapped.")
+        return empty_state("Strategy mode not yet bootstrapped.")
     if view.is_fallback:
         color = _WARN
         sub_color = "#fde68a"  # amber-200
@@ -463,33 +352,33 @@ def _halts_block(halts: list) -> str:
         return ""
     rows = []
     for h in halts:
-        kind_pill = _pill(h.kind, "bad")
+        kind_pill = severity_pill(h.kind, "bad")
         until_str = h.halted_until.strftime("%Y-%m-%d %H:%M UTC")
         hrs = f"{h.hours_remaining:.1f}h"
         rows.append([kind_pill, until_str, hrs, (h.reason or "")[:80]])
-    return _data_table(
+    return data_table(
         headers=["Kind", "Until", "Remaining", "Reason"], rows=rows
     )
 
 
 def _lab_evolution_block(view) -> str:
     if view.last_run_started_at is None and not view.top_leaderboard:
-        return _empty_state("Lab has not produced any leaderboard rows yet.")
+        return empty_state("Lab has not produced any leaderboard rows yet.")
     summary_kpis = []
     if view.last_run_started_at is not None:
         when = view.last_run_started_at.strftime("%b %d %H:%M UTC")
         summary_kpis.append(
-            _kpi_card(
-                "Last Search",
-                f"{view.last_run_n_trials} trials",
+            kpi_card(
+                label="Last Search",
+                value=f"{view.last_run_n_trials} trials",
                 sub=f"{view.last_run_template} · {when}",
             )
         )
         if view.last_run_best_fitness is not None:
             summary_kpis.append(
-                _kpi_card(
-                    "Best Fitness",
-                    f"{view.last_run_best_fitness:.2f}",
+                kpi_card(
+                    label="Best Fitness",
+                    value=f"{view.last_run_best_fitness:.2f}",
                     sub="auto-promoted" if view.last_run_promoted else "no promotion",
                     value_color=_GOOD if view.last_run_promoted else _TEXT_PRIMARY,
                 )
@@ -508,16 +397,16 @@ def _lab_evolution_block(view) -> str:
             r["folds"],
             f"{r['fitness_score']:.2f}",
         ])
-    table = _data_table(
+    tbl = data_table(
         headers=["Template", "Alpha vs SPY", "Sortino", "Max DD", "Folds", "Fitness"],
         rows=rows or [["—", "—", "—", "—", "—", "—"]],
     )
-    return (_kpi_grid(summary_kpis) if summary_kpis else "") + "<div style=\"height:12px\"></div>" + table
+    return (kpi_grid(summary_kpis) if summary_kpis else "") + "<div style=\"height:12px\"></div>" + tbl
 
 
 def _calibrator_block(view) -> str:
     if view.latest_at is None:
-        return _empty_state("Calibrator has not run yet.")
+        return empty_state("Calibrator has not run yet.")
     sev_kind = {
         "ok": "good",
         "warning": "warn",
@@ -539,7 +428,7 @@ def _calibrator_block(view) -> str:
         f"<span style=\"color:{sev_color};font-size:32px;font-weight:700;line-height:1.1;"
         f"letter-spacing:-0.02em;font-family:{_MONO_STACK}\">{corr_str}</span>"
         f"<span style=\"margin-left:14px;vertical-align:middle\">"
-        f"{_pill(view.latest_severity.replace('_', ' '), sev_kind)}</span>"
+        f"{severity_pill(view.latest_severity.replace('_', ' '), sev_kind)}</span>"
         f"</div>"
         f"<div style=\"color:{_TEXT_MUTED};font-size:12px;margin-top:8px;"
         f"font-family:{_FONT_STACK}\">"
@@ -551,7 +440,7 @@ def _calibrator_block(view) -> str:
 
 def _llm_spend_block(view) -> str:
     if view.n_calls_mtd == 0:
-        return _empty_state("No Anthropic API calls this month.")
+        return empty_state("No Anthropic API calls this month.")
     pct = view.pct_used
     bar_color = _GOOD if pct < 70 else (_WARN if pct < 90 else _BAD)
     bar_w = min(100, max(0, pct))
@@ -584,7 +473,7 @@ def _llm_spend_block(view) -> str:
 
 def _role_health_block(rows: list) -> str:
     if not rows:
-        return _empty_state("No role runs in last 30d.")
+        return empty_state("No role runs in last 30d.")
     body_rows = []
     for r in rows:
         rate = r.success_rate_pct
@@ -594,11 +483,11 @@ def _role_health_block(rows: list) -> str:
             r.role_name,
             f"{r.runs_today}",
             f"{r.runs_30d}",
-            _pill(f"{rate:.0f}%", kind),
+            severity_pill(f"{rate:.0f}%", kind),
             last,
             r.last_status,
         ])
-    return _data_table(
+    return data_table(
         headers=["Role", "Today", "30d", "Success", "Last Run", "Last Status"],
         rows=body_rows,
     )
@@ -623,70 +512,18 @@ def build_system_status_section(engine) -> str:
         roles = lab_data.role_health(session)
 
     parts = [
-        _section("Strategy Mode", _strategy_mode_block(mode), accent_glyph="◆"),
+        section(title="Strategy Mode", glyph="◆", body=_strategy_mode_block(mode)),
     ]
     halts_html = _halts_block(halts)
     if halts_html:
-        parts.append(_section("Active Halts", halts_html, accent_glyph="⚠"))
+        parts.append(section(title="Active Halts", glyph="⚠", body=halts_html, severity="bad"))
     parts.extend([
-        _section("Lab Evolution", _lab_evolution_block(evolution), accent_glyph="⚗"),
-        _section("Calibrator (backtest vs paper drift)", _calibrator_block(cal), accent_glyph="◎"),
-        _section("LLM Spend (Anthropic)", _llm_spend_block(spend), accent_glyph="✦"),
-        _section("Role Health (last 30d)", _role_health_block(roles), accent_glyph="◍"),
+        section(title="Lab Evolution", glyph="⚗", body=_lab_evolution_block(evolution)),
+        section(title="Calibrator (backtest vs paper drift)", glyph="◎", body=_calibrator_block(cal)),
+        section(title="LLM Spend (Anthropic)", glyph="✦", body=_llm_spend_block(spend)),
+        section(title="Role Health (last 30d)", glyph="◍", body=_role_health_block(roles)),
     ])
     return "".join(parts)
-
-
-# --------------------------------------------------------------------------
-# Alert emails
-# --------------------------------------------------------------------------
-
-
-def build_alert_email_html(events: list[Event], account_equity: str) -> str:
-    """Portfolio-watch material-events alert."""
-    alert_count = sum(1 for e in events if e.severity == "alert")
-    info_count = len(events) - alert_count
-    accent = _BAD if alert_count > 0 else _ACCENT
-
-    kpis = _kpi_grid([
-        _kpi_card("Equity", _fmt_money(account_equity)),
-        _kpi_card("Alerts", str(alert_count),
-                  value_color=_BAD if alert_count > 0 else _TEXT_PRIMARY),
-        _kpi_card("Info Events", str(info_count), value_color=_INFO),
-        _kpi_card("Total", str(len(events))),
-    ])
-
-    rows = []
-    for e in events:
-        kind = "bad" if e.severity == "alert" else "info"
-        rows.append([
-            _pill(e.severity, kind),
-            f"<span style=\"color:{_TEXT_SECONDARY};font-family:{_FONT_STACK};"
-            f"font-size:12px\">{e.kind}</span>",
-            f"<strong style=\"color:{_TEXT_PRIMARY};font-family:{_FONT_STACK}\">"
-            f"{e.symbol or '—'}</strong>",
-            f"<span style=\"color:{_TEXT_PRIMARY};font-family:{_FONT_STACK};"
-            f"font-size:12px\">{e.message}</span>",
-        ])
-    body = (
-        kpis
-        + _section(
-            "Material Events",
-            _data_table(headers=["Severity", "Kind", "Symbol", "Message"], rows=rows),
-        )
-    )
-
-    subtitle = (
-        f"{_pill('portfolio alert', 'bad' if alert_count else 'info')} "
-        f"<span style=\"color:{_TEXT_MUTED};margin-left:8px\">"
-        f"{len(events)} event{'s' if len(events) != 1 else ''}</span>"
-    )
-    return _shell(
-        title="Portfolio Alert",
-        subtitle_html=subtitle,
-        body_html=body,
-        accent=accent,
-    )
 
 
 def open_positions_email_subject(actions) -> str:
@@ -718,14 +555,14 @@ def build_open_positions_email_html(
     failed = [a for a in actions if a.outcome == "failed"]
     deferred = [a for a in actions if a.outcome == "deferred_off_hours"]
 
-    kpis = _kpi_grid([
-        _kpi_card("Total Open",
-                  str(total_positions) if total_positions is not None else "—"),
-        _kpi_card("Stops Placed", str(len(protected)), value_color=_GOOD),
-        _kpi_card("Closed", str(len(closed)),
-                  value_color=_BAD if closed else _TEXT_PRIMARY),
-        _kpi_card("Need Attention", str(len(failed) + len(deferred)),
-                  value_color=_WARN if (failed or deferred) else _TEXT_PRIMARY),
+    kpis = kpi_grid([
+        kpi_card(label="Total Open",
+                 value=str(total_positions) if total_positions is not None else "—"),
+        kpi_card(label="Stops Placed", value=str(len(protected)), value_color=_GOOD),
+        kpi_card(label="Closed", value=str(len(closed)),
+                 value_color=_BAD if closed else _TEXT_PRIMARY),
+        kpi_card(label="Need Attention", value=str(len(failed) + len(deferred)),
+                 value_color=_WARN if (failed or deferred) else _TEXT_PRIMARY),
     ])
 
     body_parts: list[str] = [kpis]
@@ -740,34 +577,35 @@ def build_open_positions_email_html(
             rows.append([
                 f"<strong style=\"color:{_GOOD_LIGHT};font-family:{_FONT_STACK}\">{a.symbol}</strong>",
                 f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_PRIMARY}\">{a.qty}</span>",
-                _pill(a.position_side.value, "good" if a.position_side.value == "buy" else "bad"),
+                severity_pill(a.position_side.value, "good" if a.position_side.value == "buy" else "bad"),
                 f"<span style=\"font-family:{_MONO_STACK}\">${a.current_price:,.2f}</span>",
                 f"<span style=\"font-family:{_MONO_STACK}\">${a.stop_price:,.2f}</span>",
                 f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_SECONDARY}\">{distance_pct:.2f}%</span>",
             ])
-        body_parts.append(_section(
-            "Protected",
-            _data_table(
+        body_parts.append(section(
+            title="Protected",
+            glyph="●",
+            body=data_table(
                 headers=["Symbol", "Qty", "Side", "Last", "Stop", "Distance"],
                 rows=rows,
             ),
-            accent_glyph="●",
         ))
 
     if closed:
         rows = [[
             f"<strong style=\"color:{_BAD};font-family:{_FONT_STACK}\">{a.symbol}</strong>",
             f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_PRIMARY}\">{a.qty}</span>",
-            _pill(a.position_side.value, "good" if a.position_side.value == "buy" else "bad"),
+            severity_pill(a.position_side.value, "good" if a.position_side.value == "buy" else "bad"),
             f"<span style=\"font-family:{_MONO_STACK}\">${a.fill_estimate:,.2f}</span>",
         ] for a in closed]
-        body_parts.append(_section(
-            "Closed",
-            _data_table(
+        body_parts.append(section(
+            title="Closed",
+            glyph="◆",
+            body=data_table(
                 headers=["Symbol", "Qty", "Side", "Last"],
                 rows=rows,
             ),
-            accent_glyph="◆",
+            severity="bad",
         ))
 
     if failed:
@@ -776,26 +614,28 @@ def build_open_positions_email_html(
             f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_PRIMARY}\">{a.qty}</span>",
             f"<span style=\"font-family:{_FONT_STACK};color:{_TEXT_PRIMARY}\">{a.error or ''}</span>",
         ] for a in failed]
-        body_parts.append(_section(
-            "Failed — needs manual review",
-            _data_table(headers=["Symbol", "Qty", "Error"], rows=rows),
-            accent_glyph="⚠",
+        body_parts.append(section(
+            title="Failed — needs manual review",
+            glyph="⚠",
+            body=data_table(headers=["Symbol", "Qty", "Error"], rows=rows),
+            severity="bad",
         ))
 
     if deferred:
         rows = [[
             f"<strong style=\"color:{_WARN};font-family:{_FONT_STACK}\">{a.symbol}</strong>",
             f"<span style=\"font-family:{_MONO_STACK};color:{_TEXT_PRIMARY}\">{a.qty}</span>",
-            _pill(a.position_side.value, "good" if a.position_side.value == "buy" else "bad"),
+            severity_pill(a.position_side.value, "good" if a.position_side.value == "buy" else "bad"),
         ] for a in deferred]
-        body_parts.append(_section(
-            "Deferred to next session",
-            _data_table(headers=["Symbol", "Qty", "Side"], rows=rows),
-            accent_glyph="◆",
+        body_parts.append(section(
+            title="Deferred to next session",
+            glyph="◆",
+            body=data_table(headers=["Symbol", "Qty", "Side"], rows=rows),
+            severity="warn",
         ))
 
     subtitle = (
-        f"{_pill('open positions', 'info')} "
+        f"{severity_pill('open positions', 'info')} "
         f"<span style=\"color:{_TEXT_SECONDARY};margin-left:8px\">"
         f"{len(protected)} protected · {len(closed)} closed · "
         f"{len(failed) + len(deferred)} need attention</span>"
@@ -831,7 +671,7 @@ def build_vip_alert_email_html(high_posts: Iterable) -> str:
             f"<div style=\"margin-top:10px;padding:14px 16px;background:{_BG_CARD};"
             f"border:1px solid {_BORDER};border-left:3px solid {_BAD};"
             f"border-radius:10px\">"
-            f"<div style=\"margin-bottom:6px\">{_pill(p.severity, 'bad')} "
+            f"<div style=\"margin-bottom:6px\">{severity_pill(p.severity, 'bad')} "
             f"<span style=\"color:{_TEXT_PRIMARY};font-weight:600;margin-left:8px;"
             f"font-family:{_FONT_STACK}\">{p.handle}</span> "
             f"<span style=\"color:{_TEXT_MUTED};font-size:11px;margin-left:6px;"
@@ -856,7 +696,7 @@ def build_vip_alert_email_html(high_posts: Iterable) -> str:
     )
     body = intro + "".join(cards)
     subtitle = (
-        f"{_pill('VIP tweet alert', 'bad')} "
+        f"{severity_pill('VIP tweet alert', 'bad')} "
         f"<span style=\"color:{_TEXT_SECONDARY};margin-left:8px\">"
         f"{len(posts)} high-severity post{'s' if len(posts) != 1 else ''}</span>"
     )

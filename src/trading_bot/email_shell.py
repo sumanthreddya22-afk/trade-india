@@ -87,7 +87,17 @@ def gradient_header(title: str, status: Literal["ok", "warn", "bad"],
 
 def kpi_card(*, label: str, value: str, delta: str | None = None,
              delta_kind: Literal["good", "bad", "neutral"] = "neutral",
+             value_color: str | None = None,
+             sub: str | None = None,
              sparkline_html: str | None = None) -> str:
+    """Single KPI tile.
+
+    ``value_color`` overrides the default text color on the value.
+    ``sub``         renders a small muted line below the value (replaces delta
+                    in legacy callers).
+    ``delta`` / ``delta_kind`` render a colored delta row (newer callers).
+    """
+    _vcolor = value_color if value_color else _TEXT_PRIMARY
     delta_html = ""
     if delta:
         delta_color = {"good": _GOOD_LIGHT, "bad": _BAD,
@@ -96,6 +106,11 @@ def kpi_card(*, label: str, value: str, delta: str | None = None,
             f'<div style="color:{delta_color};font-size:13px;font-weight:600;'
             f'margin-top:4px;font-family:{_MONO_STACK}">{delta}</div>'
         )
+    sub_html = (
+        f'<div style="color:{_TEXT_MUTED};font-size:12px;margin-top:4px;'
+        f'font-family:{_FONT_STACK}">{sub}</div>'
+        if sub else ""
+    )
     sparkline_block = (
         f'<div style="margin-top:8px">{sparkline_html}</div>'
         if sparkline_html else ""
@@ -106,10 +121,10 @@ def kpi_card(*, label: str, value: str, delta: str | None = None,
         f'<div style="color:{_ACCENT};font-size:10px;letter-spacing:1.4px;'
         f'text-transform:uppercase;font-weight:600;'
         f'font-family:{_FONT_STACK}">{label}</div>'
-        f'<div style="color:{_TEXT_PRIMARY};font-size:28px;font-weight:700;'
+        f'<div style="color:{_vcolor};font-size:28px;font-weight:700;'
         f'margin-top:8px;line-height:1.1;letter-spacing:-0.02em;'
         f'font-family:{_MONO_STACK}">{value}</div>'
-        f'{delta_html}{sparkline_block}</td>'
+        f'{delta_html}{sub_html}{sparkline_block}</td>'
     )
 
 
@@ -207,6 +222,15 @@ def data_table(*, headers: list[str], rows: list[list[str]],
         f'width="100%" style="border-collapse:collapse;background:{_BG_CARD};'
         f'border:1px solid {_BORDER};border-radius:12px;overflow:hidden">'
         f'<thead><tr>{th}</tr></thead><tbody>{"".join(body_rows)}</tbody></table>'
+    )
+
+
+def empty_state(text: str, *, card_radius: str = "12px") -> str:
+    """Placeholder panel for sections with no data."""
+    return (
+        f'<div style="padding:18px;background:{_BG_CARD};border:1px dashed {_BORDER};'
+        f'border-radius:{card_radius};color:{_TEXT_MUTED};font-size:13px;text-align:center;'
+        f'font-family:{_FONT_STACK}">{text}</div>'
     )
 
 

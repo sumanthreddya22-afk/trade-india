@@ -34,7 +34,6 @@ from trading_bot.portfolio_monitor import (
 from trading_bot.reconciliation import ClosedTradeStore, Reconciler
 from trading_bot.regime import detect_regime
 from trading_bot.reports import (
-    build_alert_email_html,
     build_open_positions_email_html,
     build_vip_alert_email_html,
     open_positions_email_subject,
@@ -592,13 +591,24 @@ def portfolio_watch() -> None:
     if has_alerts(events):
         import datetime as _dt_pw
         from trading_bot.alerts import AlertEvent, queue_alert as _queue_alert_pw
-        html = build_alert_email_html(events, account_equity=curr.equity)
+        alert_count = sum(1 for e in events if e.severity == "alert")
+        # Build a simple detail HTML — the full email shell is assembled by drain_alerts
+        rows_html = "".join(
+            f"<div style='margin:4px 0'><strong>{e.kind}</strong> "
+            f"{'[' + e.symbol + '] ' if e.symbol else ''}{e.message}</div>"
+            for e in events
+        )
+        detail_html = (
+            f"<div style='font-size:13px;line-height:1.6'>"
+            f"<p><strong>Equity:</strong> {curr.equity}</p>"
+            f"{rows_html}</div>"
+        )
         _now_pw = _dt_pw.datetime.now(_dt_pw.timezone.utc)
         _queue_alert_pw(AlertEvent(
             kind="portfolio_anomaly",
             severity="warn",
-            title=f"Portfolio Alert — {sum(1 for e in events if e.severity == 'alert')} alert(s)",
-            detail_html=html,
+            title=f"Portfolio Alert — {alert_count} alert(s)",
+            detail_html=detail_html,
             fired_at=_now_pw,
             dedup_key=f"portfolio_anomaly:{_dt_pw.date.today()}",
         ))

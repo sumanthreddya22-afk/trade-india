@@ -6,9 +6,7 @@ import pytest
 
 from trading_bot.alpaca_client import AccountSnapshot, Position
 from trading_bot.orchestrator import Decision, ScanResult
-from trading_bot.portfolio_monitor import Event
 from trading_bot.reports import (
-    build_alert_email_html,
     build_vip_alert_email_html,
 )
 
@@ -131,27 +129,6 @@ def test_open_positions_email_subject_flags_attention_needed():
     ]
     subject = open_positions_email_subject(actions)
     assert subject == "Open Positions — 1 actioned, 2 need attention"
-
-
-# --------------------------------------------------------------------------
-# Portfolio-watch alert
-# --------------------------------------------------------------------------
-
-
-def test_alert_email_renders_severity_pills():
-    events = [
-        Event(severity="alert", kind="equity_move", symbol="",
-              message="Equity moved -3.20%"),
-        Event(severity="info", kind="qty_change", symbol="AAPL",
-              message="AAPL qty changed: 3 → 4"),
-    ]
-    html = build_alert_email_html(events, account_equity="15000.00")
-    assert "Portfolio Alert" in html
-    assert "15,000.00" in html
-    assert "Equity moved -3.20%" in html
-    # Both severity tokens appear (alert in red, info in blue).
-    assert "#fb7185" in html
-    assert "#60a5fa" in html
 
 
 # --------------------------------------------------------------------------
