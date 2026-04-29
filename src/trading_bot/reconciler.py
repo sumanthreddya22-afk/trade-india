@@ -264,3 +264,87 @@ def _find_closing_fill(
     if result["outcome"] == "filled":
         return result["fill"]
     return None
+
+
+# ---------------------------------------------------------------------------
+# Wheel option reconciliation — option-fill pass.
+# ---------------------------------------------------------------------------
+
+import datetime as _dt
+from decimal import Decimal as _Decimal
+
+from sqlalchemy import select as _select
+from sqlalchemy.engine import Engine as _Engine
+from sqlalchemy.orm import Session as _Session
+
+from trading_bot.alerts import AlertEvent as _AlertEvent
+from trading_bot.options.wheel_state import (
+    Phase as _Phase, WheelStateRepo as _WheelStateRepo,
+    close_cycle as _close_cycle, mark_assigned as _mark_assigned,
+)
+from trading_bot.state_db import OptionFill as _OptionFill, WheelCycle as _WheelCycle
+
+
+def reconcile_options(
+    *, engine: _Engine, option_alpaca, alpaca_equity, alert_queue,
+) -> None:
+    """For each open wheel cycle whose short option no longer appears in
+    Alpaca's option positions, classify the outcome:
+      - underlying now shows +100 shares per contract → CSP assigned
+      - underlying still flat, near/past expiration → expired worthless or BTC fill
+      - CC: underlying drops to 0 shares → called away
+    Emits the matching wheel_* alert."""
+    repo = _WheelStateRepo(engine)
+    open_option_symbols = {str(p.symbol) for p in option_alpaca.get_option_positions()}
+    eq_positions = {str(p.symbol): p for p in alpaca_equity.get_positions()}
+
+    for cyc in repo.list_active():
+        contract = cyc.cc_contract or cyc.csp_contract
+        if contract is None or contract in open_option_symbols:
+            continue  # still open
+
+        is_cc = (cyc.phase == _Phase.CC_OPEN.value)
+        eq = eq_positions.get(cyc.symbol)
+        eq_qty = int(_Decimal(str(getattr(eq, "qty", "0") or "0"))) if eq else 0
+
+        if not is_cc:
+            # CSP closed somehow
+            if eq_qty >= 100:
+                _mark_assigned(repo, cycle_id=cyc.cycle_id,
+                               when=_dt.datetime.now(_dt.timezone.utc))
+                alert_queue(_AlertEvent(
+                    kind="wheel_assignment", severity="warn",
+                    title=f"CSP assigned: {cyc.symbol} @ {cyc.csp_strike}",
+                    detail_html=f"<p>{cyc.symbol} now holding {eq_qty} shares</p>",
+                    fired_at=_dt.datetime.now(_dt.timezone.utc),
+                    dedup_key=f"assignment_{cyc.cycle_id}",
+                ))
+            else:
+                # Expired worthless or already bought-to-close
+                pnl = (cyc.csp_credit or _Decimal(0)) * _Decimal(100)
+                _close_cycle(repo, cycle_id=cyc.cycle_id, realized_pnl=pnl)
+        else:
+            # CC closed somehow
+            if eq_qty == 0:
+                # called away
+                pnl = ((cyc.csp_credit or _Decimal(0)) + (cyc.cc_credit or _Decimal(0))) \
+                      * _Decimal(100) + ((cyc.cc_strike or _Decimal(0))
+                                          - (cyc.cost_basis or _Decimal(0))) * _Decimal(100)
+                _close_cycle(repo, cycle_id=cyc.cycle_id, realized_pnl=pnl)
+                alert_queue(_AlertEvent(
+                    kind="wheel_called_away", severity="info",
+                    title=f"CC called away: {cyc.symbol} @ {cyc.cc_strike}",
+                    detail_html=f"<p>{cyc.symbol} called away — cycle closed</p>",
+                    fired_at=_dt.datetime.now(_dt.timezone.utc),
+                    dedup_key=f"called_{cyc.cycle_id}",
+                ))
+            else:
+                # CC expired worthless — cycle reverts back to assigned (still hold shares)
+                with _Session(engine) as s:
+                    row = s.query(_WheelCycle).filter(_WheelCycle.cycle_id == cyc.cycle_id).one()
+                    row.phase = _Phase.ASSIGNED.value
+                    row.cc_contract = None
+                    row.cc_strike = None
+                    row.cc_expiration = None
+                    row.cc_credit = None
+                    s.commit()

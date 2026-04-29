@@ -246,3 +246,43 @@ def test_reconciler_uses_after_lookback(tmp_path):
     expected_after = now - dt.timedelta(days=14)
     delta = abs((after_val - expected_after).total_seconds())
     assert delta < 10, f"after={after_val} too far from expected {expected_after}"
+
+
+def test_reconcile_marks_csp_assigned_when_alpaca_position_disappears(tmp_path):
+    """When a short-put position disappears from Alpaca and the underlying now shows
+    100 long shares, the reconciler advances the cycle to 'assigned' and emits the
+    appropriate alert."""
+    import datetime as dt
+    from decimal import Decimal
+    from unittest.mock import MagicMock
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from trading_bot.state_db import Base, OptionFill, WheelCycle
+    from trading_bot.reconciler import reconcile_options
+    engine = create_engine(f"sqlite:///{tmp_path/'rec.db'}")
+    Base.metadata.create_all(engine)
+    with Session(engine) as s:
+        s.add(OptionFill(ts=dt.datetime.now(dt.timezone.utc), underlying="AAPL",
+                         contract_symbol="AAPL250516P00190000", option_type="CSP",
+                         side="SELL", strike=Decimal("190"),
+                         expiration=dt.date(2025, 5, 16), qty=1,
+                         premium=Decimal("2.10"), alpaca_order_id="o1",
+                         cycle_id="c1"))
+        s.add(WheelCycle(cycle_id="c1", symbol="AAPL", phase="csp_open",
+                         opened_at=dt.datetime.now(dt.timezone.utc),
+                         csp_contract="AAPL250516P00190000",
+                         csp_strike=Decimal("190"), csp_expiration=dt.date(2025, 5, 16),
+                         csp_credit=Decimal("2.10")))
+        s.commit()
+    option_alpaca = MagicMock()
+    option_alpaca.get_option_positions.return_value = []  # CSP gone
+    alpaca_eq = MagicMock()
+    eq_pos = MagicMock(); eq_pos.symbol = "AAPL"; eq_pos.qty = "100"; eq_pos.avg_entry_price = "190"
+    alpaca_eq.get_positions.return_value = [eq_pos]
+    alert_q = MagicMock()
+    reconcile_options(engine=engine, option_alpaca=option_alpaca,
+                      alpaca_equity=alpaca_eq, alert_queue=alert_q)
+    with Session(engine) as s:
+        cyc = s.query(WheelCycle).one()
+        assert cyc.phase == "assigned"
+    assert any("wheel_assignment" in str(c) for c in alert_q.mock_calls)
