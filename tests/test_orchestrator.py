@@ -190,6 +190,66 @@ def test_orchestrator_skips_when_bars_too_short(watchlist):
         assert d.action == "skipped_insufficient_data"
 
 
+def test_orchestrator_no_double_submit_after_stop_out(monkeypatch):
+    """Regression: 2026-04-27 AMD/CLS/AMDL bought twice — once at 13:07 ET and again
+    at 20:43 ET after daemon restart replayed a missed daily_digest fire (which was
+    wired to full_run at the time). The second scan found no open position (stop had
+    hit intraday) and re-entered with identical stale-bar indicators.
+
+    Fix: orchestrator now consults journal.traded_today() and skips symbols already
+    bought today, even if the position was subsequently stopped out.
+    """
+    from datetime import datetime, timezone
+
+    market = MagicMock()
+    market.get_daily_bars.return_value = _bars()
+
+    buy_signal = Signal(
+        symbol="AMD",
+        action=SignalAction.BUY,
+        qty=Decimal("3"),
+        entry_price=Decimal("220.27"),
+        stop_loss_price=Decimal("215"),
+        reason="rsi=61.0",
+    )
+
+    alpaca = MagicMock()
+    alpaca.get_account.return_value = _account()
+    # Simulate the state at 20:43 ET: position already stopped out, no open orders
+    alpaca.get_positions.return_value = []
+    alpaca.get_open_order_symbols.return_value = set()
+    alpaca.place_order_with_stop_loss.return_value = OrderResult(
+        entry_order_id="e-dupe", stop_loss_order_id="s-dupe"
+    )
+
+    # Journal has a record of AMD being bought earlier today (13:07 ET equivalent)
+    journal = MagicMock()
+    today = datetime.now(timezone.utc).date()
+    journal.traded_today.return_value = {"AMD"}
+
+    cfg = _config()
+    watchlist = [WatchlistEntry(symbol="AMD", asset_class="stock", notes="")]
+
+    orch = TradeOrchestrator(
+        config=cfg, market_data=market, alpaca=alpaca, journal=journal, regime="trending_up"
+    )
+    monkeypatch.setattr(
+        orch._strategy, "evaluate",
+        lambda sym, ind, equity: buy_signal,
+    )
+
+    result = orch.scan(watchlist=watchlist)
+
+    amd_decision = result.decisions[0]
+    assert amd_decision.action == "skipped_already_traded_today", (
+        f"Expected skipped_already_traded_today, got {amd_decision.action}. "
+        "Orchestrator must not re-enter a symbol already bought today."
+    )
+    alpaca.place_order_with_stop_loss.assert_not_called(), (
+        "place_order_with_stop_loss must not be called when symbol was already traded today"
+    )
+
+
 from pathlib import Path
 
 from trading_bot.orchestrator import load_ranked_watchlist

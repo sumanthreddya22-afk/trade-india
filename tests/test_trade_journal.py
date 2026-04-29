@@ -102,6 +102,28 @@ def test_journal_append_distinct_order_ids_kept(tmp_path):
     assert len(rows) == 2
 
 
+def test_journal_traded_today_returns_buy_symbols(tmp_path):
+    """traded_today() returns only symbols with a BUY recorded on the reference date."""
+    j = TradeJournal(tmp_path / "j.db")
+    today = datetime(2026, 4, 27, 17, 7, tzinfo=timezone.utc)
+    yesterday = datetime(2026, 4, 26, 17, 7, tzinfo=timezone.utc)
+
+    def _rec(symbol, side, ts, order_id):
+        return TradeRecord(
+            timestamp=ts, symbol=symbol, side=side, qty=Decimal("3"),
+            price=Decimal("220"), asset_class="stock", strategy="momentum",
+            regime="trending_up", entry_order_id=order_id,
+            stop_loss_order_id=f"s-{order_id}", notes="",
+        )
+
+    j.append(_rec("AMD", "buy", today, "ord-1"))       # buy today → included
+    j.append(_rec("CLS", "sell", today, "ord-2"))      # sell today → excluded
+    j.append(_rec("NVDA", "buy", yesterday, "ord-3"))  # buy yesterday → excluded
+
+    result = j.traded_today(as_of=today)
+    assert result == {"AMD"}
+
+
 def test_journal_cleanup_removes_existing_duplicates(tmp_path):
     """If a journal db already contains duplicates from before this fix,
     calling TradeJournal(...).cleanup_duplicates() removes them."""

@@ -116,6 +116,10 @@ class TradeOrchestrator:
                 ))
             return ScanResult(decisions=decisions, timestamp=datetime.now(timezone.utc))
 
+        # Defence-in-depth: build the set of symbols already entered today once
+        # (outside the per-symbol loop) so the check is O(1) per symbol.
+        traded_today = self._journal.traded_today()
+
         for entry in watchlist:
             symbol = entry.symbol
             if has_open_position(symbol, positions):
@@ -124,6 +128,16 @@ class TradeOrchestrator:
             # Also skip if there's already a pending open order for this symbol
             if symbol in open_order_symbols or symbol.replace("/", "") in open_order_symbols:
                 decisions.append(Decision(symbol=symbol, action="skipped_pending_order"))
+                continue
+            # Last-resort idempotency: skip if this symbol was already bought today,
+            # even if the position was subsequently stopped out.  Prevents the
+            # "daemon restart catches up a missed fire → re-enters after stop" pattern
+            # (root cause of the 2026-04-27 AMD/CLS/AMDL duplicate orders).
+            if symbol in traded_today or symbol.replace("/", "") in traded_today:
+                decisions.append(Decision(
+                    symbol=symbol, action="skipped_already_traded_today",
+                    reason="journal records a buy for this symbol today",
+                ))
                 continue
 
             try:
