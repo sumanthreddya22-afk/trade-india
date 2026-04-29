@@ -1391,25 +1391,87 @@ def wheel_status_cli() -> None:
         )
 
 
+def _build_wheel_runtime():
+    """Construct the wheel runtime stack used by the CLI subcommands.
+    Returns (deps, app_cfg) tuple — deps is None if wheel.enabled is False."""
+    from trading_bot.alerts import queue_alert as _qa
+    from trading_bot.daemon import (
+        _MacroSnapshotter, _RegimeDetectorAdapter, _build_wheel_deps,
+    )
+    from trading_bot.risk_manager import RiskManager
+    from trading_bot.state_db import get_engine
+
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    if not cfg.wheel.enabled:
+        return None, cfg
+    db_path = os.environ.get("TRADING_BOT_STATE_DB", "data/state.db")
+    engine = get_engine(db_path)
+    alpaca = AlpacaClient(settings)
+    risk = RiskManager(cfg)
+    macro = _MacroSnapshotter()
+    regime = _RegimeDetectorAdapter(settings, cfg)
+    deps = _build_wheel_deps(
+        settings=settings, app_cfg=cfg, state_engine=engine,
+        alpaca_client=alpaca, risk_manager=risk,
+        intelligence_macro=macro, regime_detector=regime, queue_alert=_qa,
+    )
+    return deps, cfg
+
+
 @main.command("wheel-scan")
 def wheel_scan_cli() -> None:
-    """Run a one-shot wheel scan (Phase 6 will wire the runner)."""
-    raise SystemExit("wheel runners not wired yet — see Phase 6")
+    """Run a one-shot wheel scan (open CSP / open CC entries)."""
+    from trading_bot.options.wheel_runner import run_wheel_scan
+    deps, cfg = _build_wheel_runtime()
+    if deps is None:
+        click.echo("wheel disabled in config")
+        return
+    run_wheel_scan(deps)
+    click.echo("[wheel-scan] complete")
 
 
 @main.command("wheel-manage")
 def wheel_manage_cli() -> None:
-    """Run a one-shot wheel manage pass (Phase 6 will wire the runner)."""
-    raise SystemExit("wheel runners not wired yet — see Phase 6")
+    """Run a one-shot wheel manage pass (take-profit / DTE close / rolls)."""
+    from trading_bot.options.wheel_runner import run_wheel_manage
+    deps, cfg = _build_wheel_runtime()
+    if deps is None:
+        click.echo("wheel disabled in config")
+        return
+    run_wheel_manage(deps)
+    click.echo("[wheel-manage] complete")
 
 
 @main.command("wheel-close")
 @click.argument("symbol")
 def wheel_close_cli(symbol: str) -> None:
-    """Emergency-close an active wheel position (Phase 6 will wire it)."""
-    raise SystemExit(
-        f"wheel-close not wired yet for {symbol} — see Phase 6"
-    )
+    """Emergency-close the active wheel short for SYMBOL at the current mid."""
+    from trading_bot.options.wheel_runner import _close_short
+    from trading_bot.options.wheel_state import WheelStateRepo
+
+    deps, cfg = _build_wheel_runtime()
+    if deps is None:
+        click.echo("wheel disabled in config")
+        return
+    repo = WheelStateRepo(deps.engine)
+    cyc = repo.get_active(symbol=symbol.upper())
+    if cyc is None:
+        click.echo(f"[wheel-close] no active cycle for {symbol}")
+        raise SystemExit(1)
+    contract = cyc.cc_contract or cyc.csp_contract
+    if not contract:
+        click.echo(f"[wheel-close] cycle has no open contract for {symbol}")
+        raise SystemExit(1)
+    try:
+        snap = deps.option_alpaca.snapshot_for_contract(contract)
+        mid = (snap.bid + snap.ask) / 2.0
+    except Exception as e:
+        click.echo(f"[wheel-close] snapshot failed: {e}")
+        raise SystemExit(1)
+    _close_short(deps, cyc, contract, kind="wheel_dte_close",
+                 price=Decimal(str(round(mid, 2))))
+    click.echo(f"[wheel-close] closed {contract} for {symbol} @ {mid:.2f}")
 
 
 @main.command("schedule-audit")

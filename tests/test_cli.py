@@ -1,4 +1,5 @@
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
@@ -257,15 +258,31 @@ def test_cli_wheel_status_prints_open_cycles(tmp_path, monkeypatch):
     assert "wheel" in result.output.lower()
 
 
-def test_cli_wheel_scan_stub(monkeypatch, tmp_path):
-    """Phase 5: wheel-scan exits cleanly with the Phase-6-pending stub message."""
+def test_cli_wheel_scan_disabled_short_circuits(monkeypatch, tmp_path):
+    """Phase 6: wheel-scan with wheel disabled in config exits cleanly with
+    a 'wheel disabled' message — no Alpaca / Finnhub IO is attempted."""
     from trading_bot.cli import main
+
     monkeypatch.setenv("TRADING_BOT_STATE_DB", str(tmp_path / "scan.db"))
+    monkeypatch.setenv("ALPACA_API_KEY", "fake")
+    monkeypatch.setenv("ALPACA_API_SECRET", "fake")
+    monkeypatch.setenv("GMAIL_USER", "fake@example.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "fake")
+
+    # Reuse the repo-checked-in strategy/config.yaml — wheel.enabled defaults
+    # to False so the CLI short-circuits without trying to construct
+    # OptionAlpacaClient or hit Alpaca.
+    import shutil
+    cfg_dir = tmp_path / "strategy"
+    cfg_dir.mkdir()
+    repo_root = Path(__file__).parent.parent
+    shutil.copy(repo_root / "strategy" / "config.yaml", cfg_dir / "config.yaml")
+    monkeypatch.chdir(tmp_path)
+
     runner = CliRunner()
     result = runner.invoke(main, ["wheel-scan"])
-    # Stub raises SystemExit("wheel runners not wired yet — see Phase 6").
-    assert result.exit_code != 0
-    assert "Phase 6" in (result.output + str(result.exception))
+    assert result.exit_code == 0, result.output
+    assert "disabled" in result.output.lower()
 
 
 def test_rank_writes_opportunities(tmp_path, monkeypatch):
