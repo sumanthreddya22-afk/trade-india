@@ -66,7 +66,11 @@ def _send_alert(
     subject: str,
     html_body: str,
 ) -> None:
-    """Send an alert email, but suppress repeats of the same kind within _ALERT_COOLDOWN_SECONDS."""
+    """Send an alert email, but suppress repeats of the same kind within _ALERT_COOLDOWN_SECONDS.
+
+    For daemon_stall / daemon_critical alerts, routes through queue_alert with
+    severity="bad" so the 20-min throttle is bypassed (critical bypass).
+    """
     now = _time_module.time()
     last = _last_alert_at.get(kind, 0.0)
     if now - last < _ALERT_COOLDOWN_SECONDS:
@@ -74,13 +78,16 @@ def _send_alert(
         return
     _last_alert_at[kind] = now
     try:
-        from trading_bot.config import Settings
-        from trading_bot.email_sender import EmailSender
-        from trading_bot.email_log import send_logged
-        s = Settings()
-        sender = EmailSender(user=s.gmail_user, app_password=s.gmail_app_password, to=to)
-        send_logged(sender=sender, subject=subject, html_body=html_body,
-                    kind="alert", recipient=to)
+        import datetime as _dt_sa
+        from trading_bot.alerts import AlertEvent, queue_alert as _queue_alert_sa
+        _queue_alert_sa(AlertEvent(
+            kind="daemon_critical",
+            severity="bad",
+            title=subject,
+            detail_html=html_body,
+            fired_at=_dt_sa.datetime.now(_dt_sa.timezone.utc),
+            dedup_key=f"daemon_critical:{_dt_sa.date.today()}:{kind}",
+        ))
     except Exception as e:
         log.error("alert_send_failed", error=e)
 

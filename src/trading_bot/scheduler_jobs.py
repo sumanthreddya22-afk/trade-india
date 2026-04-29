@@ -208,6 +208,16 @@ def register_jobs(
             misfire_grace_time=300, coalesce=True,
         )
 
+    # Alert drain: every 1 min. The throttling logic inside drain_alerts
+    # checks whether enough time has passed since the last send.
+    if "alert_drain" in runners:
+        scheduler.add_job(
+            runners["alert_drain"],
+            trigger=IntervalTrigger(minutes=1),
+            id="alert_drain",
+            replace_existing=True,
+        )
+
     # Reconciler: 16:05 ET (post-close) + 21:55 ET (pre-digest).
     if "reconciler" in runners:
         scheduler.add_job(

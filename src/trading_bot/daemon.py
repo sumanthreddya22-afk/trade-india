@@ -131,6 +131,7 @@ def _load_runners(log: StructuredLogger):
         ),
         "reconciler": _wrap("reconciler", lambda: cli_mod.reconcile_cli.callback()),
         "schedule_audit": _wrap("schedule_audit", lambda: cli_mod.schedule_audit_cli.callback()),
+        "alert_drain": _wrap("alert_drain", lambda: cli_mod.alert_drain_cli.callback()),
     }
 
 

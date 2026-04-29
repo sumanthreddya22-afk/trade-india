@@ -590,13 +590,19 @@ def portfolio_watch() -> None:
         click.echo(f"  [{e.severity}] {e.kind}: {e.message}")
 
     if has_alerts(events):
+        import datetime as _dt_pw
+        from trading_bot.alerts import AlertEvent, queue_alert as _queue_alert_pw
         html = build_alert_email_html(events, account_equity=curr.equity)
-        sender = EmailSender(
-            user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
-        )
-        send_logged(sender=sender, subject="Trading Bot — Portfolio Alert", html_body=html,
-                    kind="alert", recipient=cfg.email.to)
-        click.echo("[email] alert sent")
+        _now_pw = _dt_pw.datetime.now(_dt_pw.timezone.utc)
+        _queue_alert_pw(AlertEvent(
+            kind="portfolio_anomaly",
+            severity="warn",
+            title=f"Portfolio Alert — {sum(1 for e in events if e.severity == 'alert')} alert(s)",
+            detail_html=html,
+            fired_at=_now_pw,
+            dedup_key=f"portfolio_anomaly:{_dt_pw.date.today()}",
+        ))
+        click.echo("[alert] portfolio alert queued")
 
 
 @main.command("rich-report")
@@ -969,18 +975,17 @@ def verify_stops() -> None:
     for a in actions:
         click.echo(f"  {a.outcome.upper():22} {a.symbol:10} qty={a.qty}")
 
-    html = build_open_positions_email_html(
-        actions, total_positions=len(positions)
-    )
-    subject = open_positions_email_subject(actions)
-    sender = EmailSender(
-        user=settings.gmail_user,
-        app_password=settings.gmail_app_password,
-        to=cfg.email.to,
-    )
-    send_logged(sender=sender, subject=subject, html_body=html,
-                kind="alert", recipient=cfg.email.to)
-    click.echo(f"[verify-stops] summary email sent to {cfg.email.to}")
+    import datetime as dt_mod
+    from trading_bot.alerts import AlertEvent, queue_alert as _queue_alert_vs
+    _queue_alert_vs(AlertEvent(
+        kind="auto_protect_summary",
+        severity="bad" if any(a.outcome == "failed" for a in actions) else "info",
+        title=open_positions_email_subject(actions),
+        detail_html=build_open_positions_email_html(actions, total_positions=len(positions)),
+        fired_at=dt_mod.datetime.now(dt_mod.timezone.utc),
+        dedup_key=f"auto_protect:{actions[0].symbol}:{dt_mod.date.today()}",
+    ))
+    click.echo(f"[verify-stops] alert queued")
 
 
 @main.command("vip-scan")
@@ -1006,13 +1011,20 @@ def vip_scan() -> None:
     if not high:
         return  # alerts only fire on HIGH
 
+    import datetime as _dt_vip
+    from trading_bot.alerts import AlertEvent, queue_alert as _queue_alert_vip
     html = build_vip_alert_email_html(high)
-    sender = EmailSender(
-        user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
-    )
-    send_logged(sender=sender, subject=f"VIP TWEET ALERT — {len(high)} high-severity",
-                html_body=html, kind="alert", recipient=cfg.email.to)
-    click.echo(f"[vip-scan] alert email sent to {cfg.email.to}")
+    _now_vip = _dt_vip.datetime.now(_dt_vip.timezone.utc)
+    for _post in high:
+        _queue_alert_vip(AlertEvent(
+            kind="vip_tweet",
+            severity="warn",
+            title=f"VIP tweet — {_post.handle}: {_post.text[:80]}",
+            detail_html=html,
+            fired_at=_now_vip,
+            dedup_key=f"vip:{getattr(_post, 'id', _post.text[:32])}",
+        ))
+    click.echo(f"[vip-scan] {len(high)} high-severity tweet alert(s) queued")
 
 
 @main.command("dashboard")
@@ -1326,6 +1338,14 @@ def midday_snapshot_cli() -> None:
     send_logged(sender=sender, subject=email.subject, html_body=email.html_body,
                 kind="midday", recipient=cfg.email.to)
     click.echo(f"[midday-snapshot] sent to {cfg.email.to}")
+
+
+@main.command("alert-drain")
+def alert_drain_cli() -> None:
+    """Drain queued alerts if 20-min cooldown elapsed."""
+    from trading_bot.alerts import drain_alerts
+    n = drain_alerts()
+    click.echo(f"[alert-drain] drained {n} event(s)")
 
 
 @main.command("schedule-audit")
