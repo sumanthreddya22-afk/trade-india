@@ -671,6 +671,61 @@ def _build_allocation_drift(
     return rows
 
 
+def _build_wheel_blocks(
+    state_db_path: str, equity: Decimal, errors: list[str],
+) -> tuple[list[dict], list[dict], Decimal, float, float]:
+    """Returns (open_cycles, universe_top, pnl_30d, win_rate, collateral_pct)."""
+    open_cycles: list[dict] = []
+    universe_top: list[dict] = []
+    pnl_30d = Decimal("0")
+    win_rate = 0.0
+    collateral_pct = 0.0
+    try:
+        from trading_bot.evolution import report_wheel_kpis
+        from trading_bot.options.wheel_state import WheelStateRepo
+        from trading_bot.state_db import get_engine
+    except Exception as e:
+        errors.append(f"wheel imports: {e}")
+        return open_cycles, universe_top, pnl_30d, win_rate, collateral_pct
+    try:
+        engine = get_engine(state_db_path)
+        active = WheelStateRepo(engine).list_active()
+    except Exception as e:
+        errors.append(f"wheel active cycles: {e}")
+        active = []
+    for c in active:
+        contract = c.cc_contract or c.csp_contract or "—"
+        strike = c.cc_strike if c.cc_contract else c.csp_strike
+        open_cycles.append({
+            "symbol": c.symbol,
+            "phase": c.phase,
+            "contract": contract,
+            "strike": str(strike) if strike is not None else "—",
+            "rolls_used": int(c.rolls_used or 0),
+        })
+        # Sum collateral: csp strike * 100 (cash secured) and cc strike * 100
+        # (covered call obligation). Both consume option-cap headroom.
+        try:
+            if strike is not None:
+                # collateral_pct will be computed below as a fraction of equity
+                collateral_pct += float(Decimal(str(strike)) * Decimal(100))
+        except Exception:
+            continue
+    if equity > 0:
+        collateral_pct = round(collateral_pct / float(equity) * 100, 2)
+    else:
+        collateral_pct = 0.0
+    try:
+        kpis = report_wheel_kpis(get_engine(state_db_path), lookback_days=30)
+        pnl_30d = Decimal(str(kpis.get("total_pnl", 0)))
+        win_rate = float(kpis.get("win_rate", 0.0))
+    except Exception as e:
+        errors.append(f"wheel kpis: {e}")
+    # universe_top: TODO — populate when iv-rank capture job is wired and
+    # wheel_universe_cache + option_iv_history have meaningful rows.
+    return open_cycles, universe_top, pnl_30d, win_rate, collateral_pct
+
+
 def _build_last_scan() -> LastScanBlock | None:
     persisted = read_last_scan()
     if persisted is None:
@@ -771,6 +826,15 @@ def build_snapshot(
     drift = _build_allocation_drift(config, regime, exposure)
     last_scan = _build_last_scan()
 
+    # Phase 6: wheel-strategy snapshot fields. Degrades gracefully (empty
+    # lists / zeros) when the wheel hasn't been enabled or no cycles exist.
+    import os as _os
+    state_db_path = _os.environ.get("TRADING_BOT_STATE_DB", "data/state.db")
+    (wheel_open_cycles, wheel_universe_top, wheel_pnl_30d,
+     wheel_win_rate, wheel_collateral_pct) = _build_wheel_blocks(
+        state_db_path, kpi.equity, errors,
+    )
+
     # Automation status: simple heuristic — DOWN if equity unreachable, WARN if errors, OK otherwise
     if kpi.equity == 0 and "alpaca account/positions" in " ".join(errors):
         automation_status, automation_note = "DOWN", "Alpaca unreachable"
@@ -803,4 +867,9 @@ def build_snapshot(
         allocation_drift=drift,
         last_scan=last_scan,
         errors=errors,
+        wheel_open_cycles=wheel_open_cycles,
+        wheel_universe_top=wheel_universe_top,
+        wheel_pnl_30d=wheel_pnl_30d,
+        wheel_win_rate=wheel_win_rate,
+        wheel_collateral_pct=wheel_collateral_pct,
     )
