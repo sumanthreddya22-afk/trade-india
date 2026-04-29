@@ -103,9 +103,17 @@ def reconcile(
 def _find_closing_fill(client: AlpacaClient, entry: TradeRecord) -> dict | None:
     """Search Alpaca order history for a fill on `entry.symbol` after
     `entry.timestamp` whose side is opposite. Returns dict with
-    filled_avg_price + filled_at + reason, or None if no match."""
+    filled_avg_price + filled_at + reason, or None if no match.
+
+    Note: Alpaca's get_orders() defaults to OPEN status only — we want
+    CLOSED (filled) orders to find the exit fill, so we explicitly pass
+    status=closed and include a generous limit + lookback.
+    """
     try:
-        orders = client._client.get_orders()
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+        req = GetOrdersRequest(status=QueryOrderStatus.CLOSED, limit=500)
+        orders = client._client.get_orders(filter=req)
     except Exception:
         orders = []
 
