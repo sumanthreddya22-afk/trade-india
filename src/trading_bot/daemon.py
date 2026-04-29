@@ -31,6 +31,89 @@ RUNS_DIR = Path(os.environ.get("TRADING_BOT_RUNS", "runs"))
 STATE_DB = Path(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
 
 
+def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
+                      risk_manager, intelligence_macro, regime_detector,
+                      queue_alert):
+    """Construct a WheelDeps bag for the wheel scanner / manager.
+
+    All wheel-runner external IO clients are imported lazily here so the
+    daemon doesn't need them until wheel.enabled flips True. Keeps cold
+    boot fast and avoids a Finnhub/ApeWisdom dep being load-bearing for
+    paper-with-wheel-disabled deployments.
+    """
+    import datetime as dt
+    from trading_bot.intelligence_apewisdom import ApeWisdomClient
+    from trading_bot.intelligence_finnhub import FinnhubClient
+    from trading_bot.options.alpaca_options import OptionAlpacaClient
+    from trading_bot.options.iv_rank import compute_iv_rank
+    from trading_bot.options.wheel_runner import WheelDeps
+    from trading_bot.options.wheel_universe import filter_universe, UniverseInputs
+
+    finnhub = FinnhubClient(api_key=settings.finnhub_api_key)
+    ape = ApeWisdomClient()
+    opt = OptionAlpacaClient(settings)
+
+    def _universe() -> set[str]:
+        candidates = list(opt.list_optionable_us_equities())
+        return filter_universe(
+            UniverseInputs(
+                candidates=candidates,
+                optionable_set=set(candidates),
+                avg_dollar_volume_50d={},
+                avg_option_volume_30d={},
+                finnhub=finnhub, blocklist=set(), allowlist=set(),
+            ),
+            cfg=app_cfg.wheel, engine=state_engine, today=dt.date.today(),
+        )
+
+    def _iv_rank_for(symbol: str) -> float | None:
+        return compute_iv_rank(state_engine, symbol, current_iv=0.0, min_history=30)
+
+    return WheelDeps(
+        cfg=app_cfg.wheel, engine=state_engine, option_alpaca=opt,
+        alpaca_client=alpaca_client, risk_manager=risk_manager,
+        intelligence_macro=intelligence_macro, regime_detector=regime_detector,
+        universe_filter=_universe, iv_rank_for=_iv_rank_for,
+        spot_for=lambda s: None, sentiment_for=lambda s: None,
+        finnhub=finnhub, apewisdom=ape, alert_queue=queue_alert,
+    )
+
+
+class _MacroSnapshotter:
+    """Adapter: wheel_runner expects an object with .snapshot() returning a
+    MacroSnapshot. The base FRED helper is a free function, so wrap it."""
+
+    def snapshot(self):
+        from trading_bot.intelligence import get_macro_snapshot
+        return get_macro_snapshot()
+
+
+class _RegimeDetectorAdapter:
+    """Adapter: wheel_runner expects regime_detector.detect() → str."""
+
+    def __init__(self, settings, app_cfg):
+        self._settings = settings
+        self._cfg = app_cfg
+
+    def detect(self) -> str:
+        from trading_bot.market_data import MarketDataClient
+        from trading_bot.intelligence import get_macro_snapshot
+        from trading_bot.regime import detect_regime
+        try:
+            market = MarketDataClient(self._settings)
+            try:
+                vix = get_macro_snapshot().vix
+            except Exception:
+                vix = None
+            reading = detect_regime(
+                market, vix=vix,
+                vol_threshold_pct=self._cfg.regime.vol_threshold_pct,
+            )
+            return reading.regime.value
+        except Exception:
+            return "sideways"
+
+
 def _load_runners(log: StructuredLogger):
     """Instantiate Role objects and return runner callables that wrap role.safe_run(ctx)."""
     import trading_bot.cli as cli_mod
@@ -102,6 +185,66 @@ def _load_runners(log: StructuredLogger):
                 write_heartbeat(HEARTBEAT_PATH, version=config_version, last_action=name)
         return runner
 
+    # Build wheel deps lazily — only when wheel is enabled in config — so a
+    # paper-with-wheel-disabled deployment doesn't need Finnhub/ApeWisdom
+    # creds and doesn't fail if Alpaca options data is unreachable.
+    wheel_scan_runner = lambda: log.event(
+        "wheel_scan_stub", reason="wheel disabled or wiring failed"
+    )
+    wheel_manage_runner = lambda: log.event(
+        "wheel_manage_stub", reason="wheel disabled or wiring failed"
+    )
+    reconcile_options_callable = None
+    try:
+        from trading_bot.config import Settings, load_config
+        from trading_bot.alpaca_client import AlpacaClient
+        from trading_bot.risk_manager import RiskManager
+        from trading_bot.alerts import queue_alert as _queue_alert
+        _settings = Settings()
+        _app_cfg = load_config(Path("strategy/config.yaml"))
+        if _app_cfg.wheel.enabled:
+            from trading_bot.options.wheel_runner import (
+                run_wheel_scan, run_wheel_manage,
+            )
+            _alpaca = AlpacaClient(_settings)
+            _risk = RiskManager(_app_cfg)
+            _macro = _MacroSnapshotter()
+            _reg = _RegimeDetectorAdapter(_settings, _app_cfg)
+            _wheel_deps = _build_wheel_deps(
+                settings=_settings, app_cfg=_app_cfg,
+                state_engine=engine, alpaca_client=_alpaca,
+                risk_manager=_risk, intelligence_macro=_macro,
+                regime_detector=_reg, queue_alert=_queue_alert,
+            )
+            wheel_scan_runner = lambda: run_wheel_scan(_wheel_deps)
+            wheel_manage_runner = lambda: run_wheel_manage(_wheel_deps)
+
+            # reconcile_options runs after the equity reconciler so option
+            # cycle state is reconciled in the same pass.
+            from trading_bot.options.alpaca_options import OptionAlpacaClient
+            from trading_bot.reconciler import reconcile_options as _rec_opts
+            _opt = OptionAlpacaClient(_settings)
+
+            def _run_reconcile_options() -> None:
+                try:
+                    _rec_opts(
+                        engine=engine, option_alpaca=_opt,
+                        alpaca_equity=_alpaca, alert_queue=_queue_alert,
+                    )
+                except Exception as e:
+                    log.error("reconcile_options_failed", error=e)
+
+            reconcile_options_callable = _run_reconcile_options
+        else:
+            log.event("wheel_disabled", reason="config.wheel.enabled=false")
+    except Exception as e:
+        log.event("wheel_wiring_skipped", reason=str(e))
+
+    def _reconciler_runner() -> None:
+        cli_mod.reconcile_cli.callback()
+        if reconcile_options_callable is not None:
+            reconcile_options_callable()
+
     return {
         "heartbeat": _heartbeat,
         "intel_scan": _wrap("intel_scan", lambda: stock_scanner.safe_run(ctx={})),
@@ -129,20 +272,11 @@ def _load_runners(log: StructuredLogger):
         "hold_spy_coordinator": _wrap(
             "hold_spy_coordinator", lambda: hold_spy_coordinator.safe_run(ctx={})
         ),
-        "reconciler": _wrap("reconciler", lambda: cli_mod.reconcile_cli.callback()),
+        "reconciler": _wrap("reconciler", _reconciler_runner),
         "schedule_audit": _wrap("schedule_audit", lambda: cli_mod.schedule_audit_cli.callback()),
         "alert_drain": _wrap("alert_drain", lambda: cli_mod.alert_drain_cli.callback()),
-        # Phase 5 stubs — register the keys so scheduler_jobs.register_jobs()
-        # finds them. Phase 6 will replace these lambdas with real
-        # run_wheel_scan(wheel_deps) / run_wheel_manage(wheel_deps) calls.
-        "wheel_scan": _wrap(
-            "wheel_scan",
-            lambda: log.event("wheel_scan_stub", reason="Phase 6 wiring pending"),
-        ),
-        "wheel_manage": _wrap(
-            "wheel_manage",
-            lambda: log.event("wheel_manage_stub", reason="Phase 6 wiring pending"),
-        ),
+        "wheel_scan": _wrap("wheel_scan", wheel_scan_runner),
+        "wheel_manage": _wrap("wheel_manage", wheel_manage_runner),
     }
 
 
