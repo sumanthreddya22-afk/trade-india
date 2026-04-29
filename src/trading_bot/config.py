@@ -42,6 +42,11 @@ class RiskConfig(BaseModel):
     max_symbol_concentration_pct: float = Field(gt=0, le=25)
     max_consecutive_losing_days: int = Field(gt=0, le=10)
     unprotected_stop_pct: float = Field(default=0.05, gt=0, le=0.5)
+    # Per-sector concentration cap (fraction of equity, e.g. 0.25 = 25%).
+    # Applies across stocks + pending option collateral. Wheel CSPs reserve
+    # collateral in their underlying's sector. 'Unknown'-classified symbols
+    # never block. Set to 1.0 to disable the gate entirely.
+    sector_cap_pct: float = Field(default=0.25, gt=0, le=1.0)
 
 
 class AllocationConfig(BaseModel):

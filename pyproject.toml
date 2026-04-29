@@ -23,6 +23,7 @@ dependencies = [
     "alembic>=1.13.0",
     "optuna>=3.6.0",
     "anthropic>=0.40.0",
+    "yfinance>=0.2.40",
 ]
 
 [project.optional-dependencies]

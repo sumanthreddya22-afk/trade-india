@@ -194,6 +194,51 @@ class TradeOrchestrator:
                                           reason=f"{e.rule}: {e.detail}"))
                 continue
 
+            # Sector-concentration gate. Sums positions + pending option
+            # collateral on open wheel cycles; refuses entry if it would push
+            # the symbol's sector beyond cap (default 25%). Unknown sectors
+            # don't block — per-symbol cap still applies.
+            try:
+                from trading_bot.sector_exposure import (
+                    SectorClassifier, compute_exposure, sector_cap_ok,
+                )
+                from trading_bot.state_db import get_engine, WheelCycle
+                from sqlalchemy.orm import Session as _S
+                _engine = get_engine()
+                _classifier = SectorClassifier(_engine)
+                _coll: dict[str, Decimal] = {}
+                with _S(_engine) as _s:
+                    for c in _s.query(WheelCycle).filter(
+                        WheelCycle.phase.in_(("csp_open", "assigned", "cc_open"))
+                    ).all():
+                        strike = c.cc_strike if c.phase == "cc_open" else c.csp_strike
+                        if strike is not None:
+                            _coll[c.symbol] = (
+                                _coll.get(c.symbol, Decimal(0))
+                                + Decimal(str(strike)) * Decimal(100)
+                            )
+                _exposure = compute_exposure(
+                    positions, equity=account.equity,
+                    classifier=_classifier, option_collateral_by_symbol=_coll,
+                )
+                _cap = float(getattr(self._cfg.risk, "sector_cap_pct", 0.25))
+                _ok, _why = sector_cap_ok(
+                    symbol=symbol,
+                    prospective_dollars=order.limit_price * order.qty,
+                    equity=account.equity, existing_exposure=_exposure,
+                    classifier=_classifier, cap_pct=_cap,
+                )
+                if not _ok:
+                    decisions.append(Decision(
+                        symbol=symbol, action="rejected_by_risk",
+                        reason=_why,
+                    ))
+                    continue
+            except Exception as _e:
+                # Don't let sector classification errors block trading — log
+                # and continue. Per-symbol cap is still in effect via _risk.check.
+                pass
+
             try:
                 result = self._alpaca.place_order_with_stop_loss(order)
             except AlpacaClientError as e:

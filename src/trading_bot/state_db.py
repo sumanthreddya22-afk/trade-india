@@ -247,6 +247,14 @@ class WheelUniverseCache(Base):
     cached_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class SectorCache(Base):
+    __tablename__ = "sector_cache"
+    symbol = Column(String(16), primary_key=True)
+    sector = Column(String(32), nullable=False)
+    industry = Column(String(64), nullable=False, default="")
+    cached_at = Column(DateTime(timezone=True), nullable=False)
+
+
 def get_engine(db_path: str | Path = "data/state.db"):
     engine = create_engine(f"sqlite:///{db_path}", future=True)
 

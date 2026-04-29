@@ -92,6 +92,41 @@ def _existing_options_value(deps: WheelDeps) -> Decimal:
     return total
 
 
+def _build_sector_classifier(deps: WheelDeps):
+    """Lazy import — sector_exposure pulls in yfinance only when wheel runs."""
+    from trading_bot.sector_exposure import SectorClassifier
+    return SectorClassifier(deps.engine)
+
+
+def _compute_sector_exposure(positions, *, equity, classifier, option_collateral_by_symbol):
+    from trading_bot.sector_exposure import compute_exposure
+    return compute_exposure(
+        positions, equity=equity, classifier=classifier,
+        option_collateral_by_symbol=option_collateral_by_symbol,
+    )
+
+
+def _sector_cap_pct(deps: WheelDeps) -> float:
+    """Read the cap from the AppConfig the risk manager carries.
+    Defaults to 0.25 (25%) if the AppConfig isn't reachable."""
+    rm = deps.risk_manager
+    cfg = getattr(rm, "_cfg", None)
+    risk = getattr(cfg, "risk", None) if cfg is not None else None
+    return float(getattr(risk, "sector_cap_pct", 0.25))
+
+
+def _sector_cap_check(
+    *, symbol: str, prospective_collateral: Decimal, equity: Decimal,
+    sector_exposure: dict[str, float], classifier, cap_pct: float,
+) -> tuple[bool, str]:
+    from trading_bot.sector_exposure import sector_cap_ok
+    return sector_cap_ok(
+        symbol=symbol, prospective_dollars=prospective_collateral,
+        equity=equity, existing_exposure=sector_exposure,
+        classifier=classifier, cap_pct=cap_pct,
+    )
+
+
 def run_wheel_scan(deps: WheelDeps) -> None:
     if not deps.cfg.enabled:
         return
@@ -105,6 +140,29 @@ def run_wheel_scan(deps: WheelDeps) -> None:
     equity = Decimal(str(account.equity))
     existing_opt = _existing_options_value(deps)
     lane = WheelLane(deps.cfg)
+
+    # Precompute current sector exposure once per scan: equity positions +
+    # pending option collateral on open wheel cycles. Mutated as we open new
+    # CSPs so two same-sector candidates in one scan can't both pass.
+    sector_classifier = _build_sector_classifier(deps)
+    sector_cap_pct = _sector_cap_pct(deps)
+    open_cycles = repo.list_active()
+    open_collateral_by_symbol: dict[str, Decimal] = {}
+    for c in open_cycles:
+        strike = c.cc_strike if c.phase == Phase.CC_OPEN.value else c.csp_strike
+        if strike is not None:
+            open_collateral_by_symbol[c.symbol] = (
+                open_collateral_by_symbol.get(c.symbol, Decimal(0))
+                + Decimal(str(strike)) * Decimal(100)
+            )
+    try:
+        positions = deps.alpaca_client.get_positions()
+    except Exception:
+        positions = []
+    sector_exposure = _compute_sector_exposure(
+        positions, equity=equity, classifier=sector_classifier,
+        option_collateral_by_symbol=open_collateral_by_symbol,
+    )
 
     for cand in candidates:
         symbol = cand.symbol
@@ -154,6 +212,17 @@ def run_wheel_scan(deps: WheelDeps) -> None:
                   detail_html=f"<p>{symbol}: {reason}</p>",
                   dedup_key=f"alloc_cap_{symbol}_{today}")
             continue
+        sector_ok, sector_reason = _sector_cap_check(
+            symbol=symbol, prospective_collateral=per_symbol_collateral,
+            equity=equity, sector_exposure=sector_exposure,
+            classifier=sector_classifier, cap_pct=sector_cap_pct,
+        )
+        if not sector_ok:
+            _emit(deps, kind="wheel_allocation_cap", severity="bad",
+                  title=f"wheel skipped {symbol}: {sector_reason}",
+                  detail_html=f"<p>{symbol}: {sector_reason}</p>",
+                  dedup_key=f"sector_cap_{symbol}_{today}")
+            continue
         limit = Decimal(str(round(contract.bid, 2)))
         try:
             order_id = deps.option_alpaca.sell_to_open(
@@ -189,6 +258,13 @@ def run_wheel_scan(deps: WheelDeps) -> None:
               detail_html=(f"<p>{symbol} sold {otype} @ {contract.strike} "
                            f"for {limit} (delta {contract.delta:.2f})</p>"),
               dedup_key=f"open_{otype}_{contract.contract_symbol}")
+        # Update sector exposure so a second same-sector candidate in this same
+        # scan can't pass the gate against pre-trade exposure.
+        sector = sector_classifier.get(symbol)
+        if equity > 0:
+            addition = float(per_symbol_collateral / equity)
+            sector_exposure[sector] = sector_exposure.get(sector, 0.0) + addition
+        existing_opt = existing_opt + per_symbol_collateral
 
 
 def _dte(expiration: dt.date, today: dt.date) -> int:
