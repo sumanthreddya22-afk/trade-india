@@ -85,6 +85,70 @@ def _send_alert(
         log.error("alert_send_failed", error=e)
 
 
+def _heartbeat_path() -> Path:
+    return Path("data/heartbeat.json")
+
+
+def _is_heartbeat_fresh(*, max_age_seconds: float = 120.0) -> bool:
+    """True if the heartbeat file was updated within max_age_seconds."""
+    p = _heartbeat_path()
+    if not p.exists():
+        return False
+    age = time.time() - p.stat().st_mtime
+    return age < max_age_seconds
+
+
+def _handle_stall(
+    *,
+    log: StructuredLogger,
+    age_seconds: float,
+    kickstart_succeeded: bool,
+    send_alert,                # callable(kind, subject, html_body, to)
+    is_heartbeat_fresh,        # callable(*, max_age_seconds) -> bool
+    sleep,                     # callable(seconds) -> None
+) -> None:
+    """Decide whether a stall should escalate to an email.
+
+    Quick recoveries (kickstart succeeds and heartbeat resumes within 60s)
+    are downgraded to a `daemon_blip_recovered` log event — no email.
+    Failed kickstarts and persistent stalls still email immediately.
+    """
+    # Failed kickstart → immediate email, don't wait for "recovery".
+    if not kickstart_succeeded:
+        email = build_critical_email(
+            title="Daemon stalled",
+            detail=(
+                f"Heartbeat last seen {age_seconds:.0f}s ago.\n"
+                f"Auto-restart attempted via launchctl: failed."
+            ),
+        )
+        send_alert(kind="daemon_stall", to=ALERT_RECIPIENT,
+                   subject=email.subject, html_body=email.html_body)
+        return
+
+    # Kickstart succeeded — wait briefly to see if heartbeat resumes.
+    sleep(60)
+    if is_heartbeat_fresh(max_age_seconds=120.0):
+        log.event(
+            "daemon_blip_recovered",
+            stall_duration_seconds=age_seconds,
+            recovery_method="kickstart",
+        )
+        return
+
+    # Heartbeat still stale 60s after kickstart → email.
+    email = build_critical_email(
+        title="Daemon stalled",
+        detail=(
+            f"Heartbeat last seen {age_seconds:.0f}s ago.\n"
+            f"Auto-restart attempted via launchctl: success — but heartbeat "
+            f"did not resume within 60s."
+        ),
+    )
+    send_alert(kind="daemon_stall", to=ALERT_RECIPIENT,
+               subject=email.subject, html_body=email.html_body)
+
+
 def main() -> int:
     log = StructuredLogger(base=RUNS_DIR, role="supervisor")
     log.event("supervisor_boot")
@@ -134,21 +198,13 @@ def main() -> int:
                     log.event("stall_detected", age_seconds=age_seconds)
                     kicked = result.outputs.get("kickstart_attempted", False)
                     log.event("kickstart_attempted", success=kicked)
-                    email = build_critical_email(
-                        title="Daemon stalled",
-                        detail=(
-                            f"Heartbeat last seen {age_seconds:.0f}s ago "
-                            f"(threshold {stall_max_age}s).\n"
-                            f"Auto-restart attempted via launchctl: "
-                            f"{'success' if kicked else 'failed'}."
-                        ),
-                    )
-                    _send_alert(
-                        log,
-                        kind="daemon_stall",
-                        to=ALERT_RECIPIENT,
-                        subject=email.subject,
-                        html_body=email.html_body,
+                    _handle_stall(
+                        log=log,
+                        age_seconds=age_seconds,
+                        kickstart_succeeded=bool(kicked),
+                        send_alert=lambda **kw: _send_alert(log, **kw),
+                        is_heartbeat_fresh=_is_heartbeat_fresh,
+                        sleep=time.sleep,
                     )
 
             # 2. Account Sentinel: 5 min during market hours, 30 min off-hours
