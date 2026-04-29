@@ -76,18 +76,22 @@ def test_progress_bar_below_zero():
 
 def test_pulse_dot_color_by_status():
     from trading_bot.email_shell import pulse_dot
-    # Accept either old or new green token; same for warn/bad which kept
-    # their hex codes.
+    # ok: any green token (old #10b981 or #34d399, new light-mode #16a34a)
     ok = pulse_dot("ok")
-    assert "#10b981" in ok or "#34d399" in ok
-    assert "#fbbf24" in pulse_dot("warn")
-    assert "#fb7185" in pulse_dot("bad")
+    assert any(g in ok for g in ("#10b981", "#34d399", "#16a34a"))
+    # warn/bad: old or new (light-mode darker red/amber)
+    warn = pulse_dot("warn")
+    assert any(w in warn for w in ("#fbbf24", "#d97706"))
+    bad = pulse_dot("bad")
+    assert any(b in bad for b in ("#fb7185", "#dc2626"))
 
 
 def test_severity_pill_kinds():
     from trading_bot.email_shell import severity_pill
-    assert "long" in severity_pill("long", "good").lower()
-    assert "16,185,129" in severity_pill("ok", "good") or "#34d399" in severity_pill("ok", "good")
+    pill = severity_pill("long", "good")
+    assert "long" in pill.lower()
+    # Some green hex appears (text color or dark-mode pill class)
+    assert any(g in pill for g in ("#16a34a", "#34d399", "16,185,129", "pill-good"))
 
 
 def test_section_renders_glyph_and_title():
