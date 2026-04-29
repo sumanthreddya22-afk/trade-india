@@ -50,3 +50,25 @@ def test_atomic_write_via_tmp_rename(hb_path, monkeypatch):
     write_heartbeat(hb_path, version="v1", last_action="boot")
     # The writer should never leave a .tmp file behind
     assert not hb_path.with_suffix(".json.tmp").exists()
+
+
+def test_concurrent_writers_do_not_raise(tmp_path):
+    """Multiple writers in the same process (different threads) hammering
+    write_heartbeat must not raise FileNotFoundError when racing on tmp."""
+    import threading
+    from trading_bot.state_heartbeat import write_heartbeat
+    path = tmp_path / "heartbeat.json"
+    errors: list[BaseException] = []
+
+    def worker():
+        try:
+            for _ in range(50):
+                write_heartbeat(path, version="t", last_action="t")
+        except BaseException as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads: t.start()
+    for t in threads: t.join()
+    assert not errors, f"concurrent writers raised: {errors[:3]}"
+    assert path.exists()
