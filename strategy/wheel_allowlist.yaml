@@ -1,37 +1,20 @@
 # strategy/wheel_allowlist.yaml
-# Symbols to force into the wheel candidate set, bypassing size/age/volume filters.
-# Per-cycle filters (delta band, IV rank, earnings, sentiment, WSB spike) STILL apply.
-# Edit freely — these load on every wheel scan.
+#
+# OPERATOR OVERRIDE — force-include list. The wheel universe is auto-discovered
+# nightly by `wheel_universe_build` (cron 21:30 ET) which writes to the
+# wheel_universe_cache table. Names in that cache with eligible=True are the
+# bot's main consideration set.
+#
+# This YAML is for FORCING inclusion of names that wouldn't pass the auto
+# filters (market cap ≥ $10B, listed ≥ 3 years). Per-cycle filters
+# (delta band, IV rank, earnings, sentiment, WSB spike) STILL apply.
+#
+# Use cases for adding here:
+#   - Quality name with newer listing (< 3 years) you trust anyway
+#   - Mid-cap with rich premium you specifically want
+#   - Name the auto-discovery filtered out by mistake
+#
+# Most names you want to wheel will be picked up by auto-discovery WITHOUT
+# being listed here. Leave empty unless you have a specific override.
 
-symbols:
-  # Mega-cap tech
-  - AAPL
-  - MSFT
-  - GOOGL
-  - AMZN
-  - NVDA
-  - META
-  - AVGO
-  # Liquid ETFs
-  - SPY
-  - QQQ
-  - IWM
-  - DIA
-  - XLK
-  - XLF
-  - XLE
-  - XLV
-  # Defensives / dividend-payers
-  - KO
-  - PG
-  - JNJ
-  - WMT
-  - PEP
-  - JPM
-  - BAC
-  - V
-  - MA
-  - HD
-  - DIS
-  - T
-  - VZ
+symbols: []

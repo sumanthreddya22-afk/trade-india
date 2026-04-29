@@ -243,6 +243,19 @@ def register_jobs(
             id="wheel_scan", replace_existing=True,
             misfire_grace_time=300, coalesce=True,
         )
+    # Wheel universe build: 21:30 ET nightly (24/7 — runs even on weekends so
+    # corporate actions / new optionable listings are picked up before Monday
+    # open). Walks Alpaca's optionable equities, filters via Finnhub
+    # (market cap, listing age), writes wheel_universe_cache. First-ever run
+    # is ~100 min; subsequent runs only re-check 14d-stale entries (~7 min).
+    if cadence.wheel_scan_enabled and "wheel_universe_build" in runners:
+        scheduler.add_job(
+            runners["wheel_universe_build"],
+            trigger=CronTrigger(hour=21, minute=30, timezone=et),
+            id="wheel_universe_build", replace_existing=True,
+            misfire_grace_time=600, coalesce=True,
+        )
+
     # IV capture: 9:45 ET weekdays. The ONLY place we mass-fetch chains for the
     # eligible set; writes ATM 30-day IV to option_iv_history so the wheel-scan
     # at 10:15 can rank IV without per-symbol chain probes.

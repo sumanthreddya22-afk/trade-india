@@ -67,15 +67,25 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
             return set()
 
     def _eligible_set() -> set[str]:
-        """Allowlist minus blocklist, intersected with what Alpaca says is
-        actually optionable. This is the bot's complete consideration set —
-        signals decide which of these to act on TODAY."""
+        """Wheel-eligible universe = discovered set (wheel_universe_cache,
+        eligible=True) plus operator allowlist override, minus blocklist
+        override, intersected with currently-optionable. The discovered set
+        is built nightly by wheel_universe_builder. If the cache is empty
+        (first-ever run hasn't completed), falls back to allowlist-only.
+        Signals decide which of these to act on TODAY."""
+        from trading_bot.state_db import WheelUniverseCache
+        from sqlalchemy.orm import Session as _S
         optionable = opt.list_optionable_us_equities()
         blocklist = _load_yaml_symbols(app_cfg.wheel.blocklist_path)
         allowlist = _load_yaml_symbols(app_cfg.wheel.allowlist_path)
-        if not allowlist:
-            return set()  # no allowlist = no eligible set; operator must opt in
-        return (allowlist & optionable) - blocklist
+        with _S(state_engine) as _s:
+            discovered = {
+                r.symbol for r in
+                _s.query(WheelUniverseCache).filter_by(eligible=True).all()
+            }
+        if not discovered and not allowlist:
+            return set()  # no discovered universe and no override → opt in required
+        return ((discovered | allowlist) & optionable) - blocklist
 
     def _sentiment_for(symbol: str) -> float | None:
         try:
@@ -134,12 +144,15 @@ def _build_iv_capture_runner(*, settings, app_cfg, state_engine):
         if not app_cfg.wheel.enabled:
             return
         import datetime as dt
+        from sqlalchemy.orm import Session as _S
         from trading_bot.options.alpaca_options import OptionAlpacaClient
         from trading_bot.options.iv_capture import IvCaptureDeps, run_iv_capture
         from trading_bot.market_data import MarketDataClient
+        from trading_bot.state_db import WheelUniverseCache
         opt = OptionAlpacaClient(settings)
         md = MarketDataClient(settings)
-        # Reuse the same eligible-set logic the wheel runner uses
+        # Eligible set: discovered (wheel_universe_cache) + allowlist override,
+        # minus blocklist, intersected with currently optionable.
         try:
             import yaml
             p = Path(app_cfg.wheel.allowlist_path)
@@ -148,7 +161,12 @@ def _build_iv_capture_runner(*, settings, app_cfg, state_engine):
             block = {str(s).upper() for s in (yaml.safe_load(p_b.read_text()) or {}).get("symbols", [])} if p_b.exists() else set()
         except Exception:
             allow, block = set(), set()
-        eligible = (allow & opt.list_optionable_us_equities()) - block
+        with _S(state_engine) as _s:
+            discovered = {
+                r.symbol for r in
+                _s.query(WheelUniverseCache).filter_by(eligible=True).all()
+            }
+        eligible = ((discovered | allow) & opt.list_optionable_us_equities()) - block
         if not eligible:
             return
         def _spot(s: str) -> float | None:
@@ -165,6 +183,40 @@ def _build_iv_capture_runner(*, settings, app_cfg, state_engine):
             eligible=eligible, today=dt.date.today(),
         )
         run_iv_capture(deps)
+    return _runner
+
+
+def _build_universe_builder_runner(*, settings, app_cfg, state_engine):
+    """Build a callable for the nightly wheel-universe build job. Walks the
+    optionable universe, filters via Finnhub, writes to wheel_universe_cache.
+    First-ever run is ~100 min (Finnhub free 60/min × ~6,000 names);
+    subsequent runs only re-check 14d-stale entries (~7 min)."""
+    def _runner():
+        if not app_cfg.wheel.enabled:
+            return
+        import datetime as dt
+        from trading_bot.intelligence_finnhub import FinnhubClient
+        from trading_bot.options.alpaca_options import OptionAlpacaClient
+        from trading_bot.options.wheel_universe_builder import (
+            BuilderDeps, run_universe_build,
+        )
+        try:
+            import yaml
+            p = Path(app_cfg.wheel.allowlist_path)
+            allow = {str(s).upper() for s in (yaml.safe_load(p.read_text()) or {}).get("symbols", [])} if p.exists() else set()
+            p_b = Path(app_cfg.wheel.blocklist_path)
+            block = {str(s).upper() for s in (yaml.safe_load(p_b.read_text()) or {}).get("symbols", [])} if p_b.exists() else set()
+        except Exception:
+            allow, block = set(), set()
+        opt = OptionAlpacaClient(settings)
+        finnhub = FinnhubClient(api_key=settings.finnhub_api_key)
+        deps = BuilderDeps(
+            engine=state_engine,
+            optionable_set=opt.list_optionable_us_equities(),
+            finnhub=finnhub, blocklist=block, allowlist=allow,
+            today=dt.date.today(),
+        )
+        run_universe_build(deps)
     return _runner
 
 
@@ -286,6 +338,9 @@ def _load_runners(log: StructuredLogger):
     iv_capture_runner = lambda: log.event(
         "iv_capture_stub", reason="wheel disabled or wiring failed"
     )
+    wheel_universe_build_runner = lambda: log.event(
+        "wheel_universe_build_stub", reason="wheel disabled or wiring failed"
+    )
     reconcile_options_callable = None
     try:
         from trading_bot.config import Settings, load_config
@@ -311,6 +366,9 @@ def _load_runners(log: StructuredLogger):
             wheel_scan_runner = lambda: run_wheel_scan(_wheel_deps)
             wheel_manage_runner = lambda: run_wheel_manage(_wheel_deps)
             iv_capture_runner = _build_iv_capture_runner(
+                settings=_settings, app_cfg=_app_cfg, state_engine=engine,
+            )
+            wheel_universe_build_runner = _build_universe_builder_runner(
                 settings=_settings, app_cfg=_app_cfg, state_engine=engine,
             )
 
@@ -373,6 +431,7 @@ def _load_runners(log: StructuredLogger):
         "wheel_scan": _wrap("wheel_scan", wheel_scan_runner),
         "wheel_manage": _wrap("wheel_manage", wheel_manage_runner),
         "iv_capture": _wrap("iv_capture", iv_capture_runner),
+        "wheel_universe_build": _wrap("wheel_universe_build", wheel_universe_build_runner),
     }
 
 

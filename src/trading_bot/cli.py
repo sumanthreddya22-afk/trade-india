@@ -1492,6 +1492,26 @@ def iv_capture_cli() -> None:
     click.echo("[iv-capture] complete")
 
 
+@main.command("wheel-universe-build")
+def wheel_universe_build_cli() -> None:
+    """Discover wheel-eligible symbols from Alpaca optionable + Finnhub
+    quality filters; write to wheel_universe_cache. First-ever run takes
+    ~100 min (Finnhub free 60/min × ~6,000 names). Subsequent runs only
+    re-check 14d-stale entries."""
+    from trading_bot.daemon import _build_universe_builder_runner
+    from trading_bot.state_db import get_engine
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    if not cfg.wheel.enabled:
+        click.echo("wheel disabled in config")
+        return
+    db_path = os.environ.get("TRADING_BOT_STATE_DB", "data/state.db")
+    engine = get_engine(db_path)
+    runner = _build_universe_builder_runner(settings=settings, app_cfg=cfg, state_engine=engine)
+    runner()
+    click.echo("[wheel-universe-build] complete")
+
+
 @main.command("schedule-audit")
 def schedule_audit_cli() -> None:
     """Audit today's cron job firings vs expected. Writes to schedule_audits."""
