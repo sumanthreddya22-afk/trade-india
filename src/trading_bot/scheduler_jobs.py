@@ -197,6 +197,16 @@ def register_jobs(
             coalesce=True,
         )
 
+    # Schedule self-test: 21:55 ET (5 min before daily digest).
+    if "schedule_audit" in runners:
+        scheduler.add_job(
+            runners["schedule_audit"],
+            trigger=CronTrigger(hour=21, minute=55, timezone=et),
+            id="schedule_audit",
+            replace_existing=True,
+            misfire_grace_time=300, coalesce=True,
+        )
+
     # Reconciler: 16:05 ET (post-close) + 21:55 ET (pre-digest).
     if "reconciler" in runners:
         scheduler.add_job(

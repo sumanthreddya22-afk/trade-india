@@ -130,6 +130,7 @@ def _load_runners(log: StructuredLogger):
             "hold_spy_coordinator", lambda: hold_spy_coordinator.safe_run(ctx={})
         ),
         "reconciler": _wrap("reconciler", lambda: cli_mod.reconcile_cli.callback()),
+        "schedule_audit": _wrap("schedule_audit", lambda: cli_mod.schedule_audit_cli.callback()),
     }
 
 

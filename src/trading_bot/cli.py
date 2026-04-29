@@ -1156,5 +1156,20 @@ def rank_command() -> None:
     click.echo(f"Stage-2 ranked {len(result.candidates)} candidates across {len(lanes)} lanes")
 
 
+@main.command("schedule-audit")
+def schedule_audit_cli() -> None:
+    """Audit today's cron job firings vs expected. Writes to schedule_audits."""
+    import datetime as dt_mod
+    from pathlib import Path
+    from trading_bot.schedule_audit import run_audit
+
+    today = dt_mod.date.today()
+    report = run_audit(audit_date=today, runs_dir=Path("runs"))
+    flagged = [r for r in report if r["ratio"] < 0.5]
+    click.echo(f"[schedule-audit] {len(report)} jobs audited, {len(flagged)} flagged")
+    for r in flagged:
+        click.echo(f"  ! {r['job_id']:24} {r['actual']}/{r['expected']} (ratio {r['ratio']:.2f})")
+
+
 if __name__ == "__main__":
     main()
