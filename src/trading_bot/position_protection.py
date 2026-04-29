@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Literal
 
 from trading_bot.alpaca_client import (
-    AlpacaClient, AssetClass, OrderSide, Position,
+    AlpacaClient, AssetClass, OrderSide, Position, _to_orderable_symbol,
 )
 from trading_bot.exceptions import AlpacaClientError
 from trading_bot.market_data import MarketDataClient, compute_indicators
@@ -90,8 +90,15 @@ def evaluate_and_act(
         side = _position_side(pos.qty)
         abs_qty = abs(pos.qty)
 
+        # Crypto positions come back from get_positions() as "FILUSD" (no slash),
+        # but MarketDataClient.get_daily_bars() routes by `"/" in symbol`. Without
+        # the slash it asks the stock-bars endpoint, which returns 0 rows for
+        # crypto tickers — surfacing as "compute_indicators requires at least 26
+        # bars, got 0". Convert to orderable form before fetching bars.
+        bars_symbol = _to_orderable_symbol(pos.symbol, asset_class)
+
         try:
-            bars = market_data.get_daily_bars(pos.symbol, lookback_days=60)
+            bars = market_data.get_daily_bars(bars_symbol, lookback_days=60)
             ind = compute_indicators(bars)
         except (AlpacaClientError, ValueError) as e:
             actions.append(ProtectionAction(

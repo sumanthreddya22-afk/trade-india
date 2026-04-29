@@ -244,6 +244,38 @@ def test_evaluate_and_act_crypto_off_hours_still_flattens(monkeypatch):
     )
 
 
+def test_evaluate_and_act_crypto_uses_orderable_symbol_for_bars(monkeypatch):
+    """Regression: crypto positions come back as 'FILUSD' (no slash) but
+    MarketDataClient.get_daily_bars routes by `"/" in symbol`. Without the
+    slash it asks the stock-bars endpoint and returns 0 bars, causing
+    compute_indicators to fail. Fix: convert to 'FIL/USD' before fetching."""
+    from trading_bot import position_protection as pp
+
+    monkeypatch.setattr(
+        pp, "compute_indicators",
+        lambda bars: _stub_indicators(last_close=2.0, ema_20=1.9),
+    )
+
+    md = MagicMock()
+    md.get_daily_bars.return_value = _bars_with_close_and_ema(
+        last_close=2.0, ema_20=1.9,
+    )
+    client = MagicMock()
+    client.place_protective_stop.return_value = "stop-fil"
+
+    pp.evaluate_and_act(
+        client=client, market_data=md,
+        unprotected=[_make_position("FILUSD", "100", asset_class="crypto",
+                                    current_price="2")],
+        stop_pct=Decimal("0.05"),
+        now_in_market_hours=False,
+    )
+
+    # The bars fetch must use the slashed form so MarketDataClient routes to
+    # the crypto endpoint.
+    md.get_daily_bars.assert_called_once_with("FIL/USD", lookback_days=60)
+
+
 def test_evaluate_and_act_alpaca_failure_records_failed(monkeypatch):
     """Alpaca exception during order submit → outcome=failed, loop continues."""
     from trading_bot import position_protection as pp
