@@ -110,3 +110,23 @@ def test_config_history_roundtrip(db):
         s.commit()
     with Session(db) as s:
         assert s.query(ConfigHistory).first().version == "v17"
+
+
+def test_wheel_tables_present_after_migration(tmp_path, monkeypatch):
+    """Smoke-test: after `alembic upgrade head`, the four wheel tables exist."""
+    import os
+    from alembic import command
+    from alembic.config import Config
+    db = tmp_path / "test_state.db"
+    monkeypatch.setenv("STATE_DB_URL", f"sqlite:///{db}")
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg = Config(os.path.join(repo, "migrations", "alembic.ini"))
+    cfg.set_main_option("script_location", os.path.join(repo, "migrations"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db}")
+    command.upgrade(cfg, "head")
+    import sqlite3
+    con = sqlite3.connect(db)
+    tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    con.close()
+    for t in ("option_fills", "option_iv_history", "wheel_cycles", "wheel_universe_cache"):
+        assert t in tables, f"missing table {t}"
