@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # (universe screening, news sentiment, short interest). Commands that
     # need it fail fast with a clear error if missing.
     polygon_api_key: str = ""
+    finnhub_api_key: str = ""
 
     @field_validator("bot_mode")
     @classmethod
@@ -84,6 +85,30 @@ class StrategyConfig(BaseModel):
     sentiment_max_age_days: int = Field(default=3, ge=1, le=30)
 
 
+class WheelConfig(BaseModel):
+    enabled: bool = False
+    delta_target_low: float = Field(default=0.20, ge=0.05, le=0.50)
+    delta_target_high: float = Field(default=0.30, ge=0.05, le=0.50)
+    dte_min: int = Field(default=30, ge=7, le=90)
+    dte_max: int = Field(default=45, ge=7, le=90)
+    take_profit_pct: float = Field(default=0.50, gt=0, lt=1)
+    dte_force_close: int = Field(default=21, ge=1, le=45)
+    delta_breach_csp: float = Field(default=0.45, gt=0, lt=1)
+    delta_breach_cc: float = Field(default=0.55, gt=0, lt=1)
+    max_rolls_per_cycle: int = Field(default=2, ge=0, le=5)
+    iv_rank_floor: float = Field(default=30.0, ge=0, le=100)
+    vix_floor: float = Field(default=15.0, ge=0, le=100)
+    vix_ceiling: float = Field(default=30.0, ge=0, le=100)
+    sentiment_floor: float = Field(default=-0.3, ge=-1, le=1)
+    min_premium_abs: float = Field(default=0.20, ge=0)
+    min_annualized_yield: float = Field(default=0.12, ge=0)
+    min_open_interest: int = Field(default=100, ge=0)
+    universe_cache_hours: int = Field(default=24, ge=1, le=168)
+    wsb_spike_multiplier: float = Field(default=2.0, ge=1.0, le=10.0)
+    blocklist_path: str = "strategy/wheel_blocklist.yaml"
+    allowlist_path: str = "strategy/wheel_allowlist.yaml"
+
+
 class AppConfig(BaseModel):
     risk: RiskConfig
     allocation: AllocationConfig
@@ -92,6 +117,7 @@ class AppConfig(BaseModel):
     storage: StorageConfig
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
+    wheel: WheelConfig = Field(default_factory=WheelConfig)
 
 
 def load_config(path: Path) -> AppConfig:

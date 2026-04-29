@@ -98,3 +98,27 @@ def test_risk_config_unprotected_stop_pct_override():
         unprotected_stop_pct=0.03,
     )
     assert cfg.unprotected_stop_pct == 0.03
+
+
+def test_wheel_config_defaults(tmp_path):
+    from trading_bot.config import load_config
+    cfg = tmp_path / "c.yaml"
+    cfg.write_text("""
+risk: {daily_loss_limit_pct: 2, weekly_loss_limit_pct: 5, per_trade_risk_pct: 1, max_position_pct: 10, max_symbol_concentration_pct: 5, max_consecutive_losing_days: 3}
+allocation: {stocks_max_pct: 70, crypto_max_pct: 30, options_max_pct: 20, cash_floor_pct: 10}
+regime_allocations:
+  trending_up: {stocks: 60, crypto: 25, options: 15, cash: 0}
+email: {to: x@y.com, daily_summary_time_et: "16:30", weekly_summary_day: Sunday}
+storage: {trade_journal_path: data/x.db}
+wheel: {enabled: true}
+""")
+    out = load_config(cfg)
+    assert out.wheel.enabled is True
+    assert out.wheel.delta_target_low == 0.20
+    assert out.wheel.delta_target_high == 0.30
+    assert out.wheel.dte_min == 30
+    assert out.wheel.dte_max == 45
+    assert out.wheel.take_profit_pct == 0.50
+    assert out.wheel.dte_force_close == 21
+    assert out.wheel.iv_rank_floor == 30.0
+    assert out.wheel.min_open_interest == 100

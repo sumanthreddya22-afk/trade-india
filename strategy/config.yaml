@@ -47,3 +47,24 @@ strategy:
   # switch: set to null to disable.
   sentiment_floor: -0.5
   sentiment_max_age_days: 3
+
+wheel:
+  enabled: false  # paper-test cautiously — flip to true after Phase 3 verification
+  delta_target_low: 0.20
+  delta_target_high: 0.30
+  dte_min: 30
+  dte_max: 45
+  take_profit_pct: 0.50
+  dte_force_close: 21
+  delta_breach_csp: 0.45
+  delta_breach_cc: 0.55
+  max_rolls_per_cycle: 2
+  iv_rank_floor: 30.0
+  vix_floor: 15.0
+  vix_ceiling: 30.0
+  sentiment_floor: -0.3
+  min_premium_abs: 0.20
+  min_annualized_yield: 0.12
+  min_open_interest: 100
+  universe_cache_hours: 24
+  wsb_spike_multiplier: 2.0
