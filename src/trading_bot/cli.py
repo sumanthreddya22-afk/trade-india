@@ -275,16 +275,29 @@ def daily_report() -> None:
     click.echo(f"Sent daily report to {cfg.email.to}")
 
 
-@main.command()
-def reconcile() -> None:
-    """Match journal entries to Alpaca closed orders; populate closed_trades."""
+@main.command("reconcile")
+def reconcile_cli() -> None:
+    """Diff trade_journal vs Alpaca positions; write closed_trades rows
+    for any entries whose position has disappeared. Idempotent."""
+    from trading_bot.alpaca_client import AlpacaClient
+    from trading_bot.reconciler import reconcile
+    from trading_bot.trade_journal import TradeJournal
+
     settings = Settings()
     cfg = load_config(CONFIG_PATH)
+
+    client = AlpacaClient(settings)
     journal = TradeJournal(Path(cfg.storage.trade_journal_path))
-    closed = ClosedTradeStore(CLOSED_DB_PATH)
-    rec = Reconciler(settings, journal, closed)
-    summary = rec.reconcile(lookback_days=30)
-    click.echo(f"Reconcile complete: {summary.new_closed} new closed trades recorded.")
+    closed_path = Path("data/closed_trades.db")
+
+    report = reconcile(client=client, journal=journal, closed_trades_path=closed_path)
+
+    click.echo(
+        f"[reconcile] reconciled={report.reconciled_count} "
+        f"unmatched={report.unmatched_count} errors={report.errors_count}"
+    )
+    for d in report.detail:
+        click.echo(f"  {d['outcome']:12} {d.get('symbol', '?'):8} {d}")
 
 
 @main.command()

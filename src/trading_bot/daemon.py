@@ -33,6 +33,7 @@ STATE_DB = Path(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
 
 def _load_runners(log: StructuredLogger):
     """Instantiate Role objects and return runner callables that wrap role.safe_run(ctx)."""
+    import trading_bot.cli as cli_mod
     from trading_bot.state_db import get_engine
     from trading_bot.roles.health_pulse import HealthPulseRole
     from trading_bot.roles.stock_scanner import StockScannerRole
@@ -128,6 +129,7 @@ def _load_runners(log: StructuredLogger):
         "hold_spy_coordinator": _wrap(
             "hold_spy_coordinator", lambda: hold_spy_coordinator.safe_run(ctx={})
         ),
+        "reconciler": _wrap("reconciler", lambda: cli_mod.reconcile_cli.callback()),
     }
 
 

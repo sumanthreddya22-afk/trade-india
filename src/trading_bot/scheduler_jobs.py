@@ -196,3 +196,20 @@ def register_jobs(
             misfire_grace_time=300,
             coalesce=True,
         )
+
+    # Reconciler: 16:05 ET (post-close) + 21:55 ET (pre-digest).
+    if "reconciler" in runners:
+        scheduler.add_job(
+            runners["reconciler"],
+            trigger=CronTrigger(hour=16, minute=5, day_of_week="mon-fri", timezone=et),
+            id="reconciler_close",
+            replace_existing=True,
+            misfire_grace_time=300, coalesce=True,
+        )
+        scheduler.add_job(
+            runners["reconciler"],
+            trigger=CronTrigger(hour=21, minute=55, timezone=et),
+            id="reconciler_pre_digest",
+            replace_existing=True,
+            misfire_grace_time=300, coalesce=True,
+        )
