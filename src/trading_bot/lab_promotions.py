@@ -86,4 +86,9 @@ class LabPromotionStore:
             row = c.execute(
                 text("SELECT * FROM lab_promotions ORDER BY promoted_at DESC LIMIT 1")
             ).mappings().first()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        d = dict(row)
+        d["params"] = json.loads(d.pop("params_json"))
+        d["risk_caps"] = json.loads(d.pop("risk_caps_json"))
+        return d
