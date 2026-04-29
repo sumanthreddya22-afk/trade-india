@@ -47,6 +47,7 @@ def test_get_positions_returns_list(fake_settings):
         mock_pos.qty = "10"
         mock_pos.market_value = "2000.00"
         mock_pos.avg_entry_price = "195.50"
+        mock_pos.current_price = "200.00"
         mock_pos.unrealized_pl = "50.00"
         mock_pos.asset_class = "us_equity"
         MockTC.return_value.get_all_positions.return_value = [mock_pos]
@@ -59,6 +60,7 @@ def test_get_positions_returns_list(fake_settings):
         assert p.symbol == "AAPL"
         assert p.qty == Decimal("10")
         assert p.market_value == Decimal("2000.00")
+        assert p.current_price == Decimal("200.00")
 
 
 def test_get_account_wraps_api_error(fake_settings):
@@ -151,7 +153,7 @@ def test_place_crypto_uses_market_then_stop(fake_settings):
 def test_place_crypto_uses_stop_limit_not_plain_stop(fake_settings):
     """Alpaca rejects plain stop orders for crypto with 'invalid order type
     for crypto order'. Regression: previously the bot used StopOrderRequest,
-    so every crypto stop silently failed and positions filled naked.
+    so every crypto stop silently failed and positions filled unprotected.
     """
     from alpaca.trading.requests import (
         MarketOrderRequest as AlpacaMarketOrderRequest,
@@ -185,8 +187,8 @@ def test_place_crypto_uses_stop_limit_not_plain_stop(fake_settings):
 
 def test_place_crypto_cancels_pending_entry_when_stop_fails(fake_settings):
     """If the stop submission fails AND the entry hasn't filled yet, the
-    pending entry must be cancelled — otherwise it can fill later naked.
-    Regression: this was the second half of the naked-position bug.
+    pending entry must be cancelled — otherwise it can fill later unprotected.
+    Regression: this was the second half of the unprotected-position bug.
     """
     with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
         entry = MagicMock(id="entry-c", legs=[])
@@ -234,6 +236,159 @@ def test_verifier_recognises_stop_limit_as_protection(fake_settings):
         assert action == "has_stop"
         # Critically, no flatten order should have been submitted.
         MockTC.return_value.submit_order.assert_not_called()
+
+
+def test_place_protective_stop_stock_long(fake_settings):
+    """Long stock: places plain StopOrderRequest with side=SELL, GTC."""
+    from decimal import Decimal
+    from alpaca.trading.requests import StopOrderRequest
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="stop-123")
+        client = AlpacaClient(fake_settings)
+        order_id = client.place_protective_stop(
+            symbol="AAPL",
+            qty=Decimal("10"),
+            position_side=OrderSide.BUY,  # long
+            asset_class=AssetClass.STOCK,
+            stop_price=Decimal("180.00"),
+        )
+
+    assert order_id == "stop-123"
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert isinstance(call_arg, StopOrderRequest)
+    assert call_arg.symbol == "AAPL"
+    assert float(call_arg.qty) == 10.0
+    assert str(call_arg.side).lower().endswith("sell")
+    assert float(call_arg.stop_price) == 180.00
+
+
+def test_place_protective_stop_crypto_long_uses_stop_limit(fake_settings):
+    """Crypto long: places StopLimitOrderRequest because Alpaca rejects plain stops on crypto.
+    Symbol is rewritten 'DOTUSD' → 'DOT/USD' for orders."""
+    from decimal import Decimal
+    from alpaca.trading.requests import StopLimitOrderRequest
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="stop-c1")
+        client = AlpacaClient(fake_settings)
+        order_id = client.place_protective_stop(
+            symbol="DOTUSD",  # position-form symbol
+            qty=Decimal("100"),
+            position_side=OrderSide.BUY,  # long
+            asset_class=AssetClass.CRYPTO,
+            stop_price=Decimal("5.00"),
+        )
+
+    assert order_id == "stop-c1"
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert isinstance(call_arg, StopLimitOrderRequest)
+    assert call_arg.symbol == "DOT/USD"
+    assert float(call_arg.stop_price) == 5.00
+    # Sell-stop limit must be ≤ trigger; existing CRYPTO_STOP_LIMIT_BUFFER_PCT = 5%.
+    assert float(call_arg.limit_price) <= 5.00
+
+
+def test_place_protective_stop_short_uses_buy_side(fake_settings):
+    """Short position (rare but supported): protective stop is a BUY stop above current."""
+    from decimal import Decimal
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="stop-s")
+        client = AlpacaClient(fake_settings)
+        client.place_protective_stop(
+            symbol="AAPL",
+            qty=Decimal("5"),
+            position_side=OrderSide.SELL,  # short
+            asset_class=AssetClass.STOCK,
+            stop_price=Decimal("200.00"),
+        )
+
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert str(call_arg.side).lower().endswith("buy")
+
+
+def test_place_protective_stop_crypto_short_limit_above_trigger(fake_settings):
+    """Crypto short → buy-stop_limit; Alpaca requires limit_price >= stop_price."""
+    from decimal import Decimal
+    from alpaca.trading.requests import StopLimitOrderRequest
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="stop-cs")
+        client = AlpacaClient(fake_settings)
+        client.place_protective_stop(
+            symbol="ETHUSD",
+            qty=Decimal("0.5"),
+            position_side=OrderSide.SELL,  # short
+            asset_class=AssetClass.CRYPTO,
+            stop_price=Decimal("3000.00"),
+        )
+
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert isinstance(call_arg, StopLimitOrderRequest)
+    assert str(call_arg.side).lower().endswith("buy")
+    assert call_arg.symbol == "ETH/USD"
+    assert float(call_arg.limit_price) >= float(call_arg.stop_price)
+
+
+def test_place_protective_stop_propagates_alpaca_errors(fake_settings):
+    from decimal import Decimal
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+    from trading_bot.exceptions import AlpacaClientError
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.side_effect = RuntimeError("rejected")
+        client = AlpacaClient(fake_settings)
+        with pytest.raises(AlpacaClientError, match="protective stop"):
+            client.place_protective_stop(
+                symbol="AAPL", qty=Decimal("1"), position_side=OrderSide.BUY,
+                asset_class=AssetClass.STOCK, stop_price=Decimal("100"),
+            )
+
+
+def test_place_market_order_normalizes_crypto_symbol(fake_settings):
+    """Crypto position-form 'DOTUSD' must be rewritten to 'DOT/USD' for the order endpoint
+    (regression: previously the flatten path failed at runtime for crypto)."""
+    from decimal import Decimal
+    from alpaca.trading.requests import MarketOrderRequest as AlpacaMarketOrderRequest
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="flat-c")
+        client = AlpacaClient(fake_settings)
+        client.place_market_order(
+            symbol="DOTUSD",
+            qty=100.0,
+            side=OrderSide.SELL,
+            asset_class=AssetClass.CRYPTO,
+        )
+
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert isinstance(call_arg, AlpacaMarketOrderRequest)
+    assert call_arg.symbol == "DOT/USD"
+
+
+def test_place_market_order_passes_through_stock_symbol(fake_settings):
+    """Stock symbols are not rewritten."""
+    from alpaca.trading.requests import MarketOrderRequest as AlpacaMarketOrderRequest
+    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+
+    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+        MockTC.return_value.submit_order.return_value = MagicMock(id="flat-s")
+        client = AlpacaClient(fake_settings)
+        client.place_market_order(
+            symbol="AAPL",
+            qty=10.0,
+            side=OrderSide.SELL,
+            asset_class=AssetClass.STOCK,
+        )
+
+    call_arg = MockTC.return_value.submit_order.call_args[0][0]
+    assert call_arg.symbol == "AAPL"
 
 
 def test_get_active_assets_returns_tradable(monkeypatch):

@@ -35,9 +35,10 @@ from trading_bot.regime import detect_regime
 from trading_bot.reports import (
     build_alert_email_html,
     build_daily_report_html,
-    build_naked_stops_email_html,
+    build_open_positions_email_html,
     build_rich_report_html,
     build_vip_alert_email_html,
+    open_positions_email_subject,
 )
 from trading_bot.risk_manager import RiskManager, RiskState
 from trading_bot.state import load_watchlist
@@ -766,63 +767,72 @@ def news_warm(lookback_days: int) -> None:
 
 @main.command("verify-stops")
 def verify_stops() -> None:
-    """Sweep open positions, verify each has a live stop order. Email
-    + flag any naked positions. Does NOT auto-flatten stocks — alerts
-    only, since manual review is safer for equities than for crypto."""
-    from alpaca.trading.client import TradingClient
+    """Sweep open positions, auto-protect or flatten any unprotected ones,
+    email a summary of actions taken. Stocks act 24/7 for stop placement;
+    market-flatten for stocks defers outside US RTH (Alpaca rejects market
+    sells off-hours). Crypto acts 24/7."""
     from alpaca.trading.enums import QueryOrderStatus
     from alpaca.trading.requests import GetOrdersRequest
 
+    from trading_bot.alpaca_client import AlpacaClient
+    from trading_bot.market_data import MarketDataClient
+    from trading_bot.position_protection import evaluate_and_act
+    from trading_bot.supervisor import _is_market_hours_et
+
     settings = Settings()
     cfg = load_config(CONFIG_PATH)
-    client = TradingClient(
-        api_key=settings.alpaca_api_key, secret_key=settings.alpaca_api_secret, paper=True
-    )
 
     try:
-        positions = client.get_all_positions()
-        open_orders = client.get_orders(
+        alpaca = AlpacaClient(settings)
+        positions = alpaca.get_positions()
+        open_orders = alpaca._client.get_orders(
             filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200)
         )
     except Exception as e:
         click.echo(f"[verify-stops] alpaca query failed: {e}")
-        return  # do not raise SystemExit — would kill the APScheduler worker thread inside the daemon
+        return  # do not raise SystemExit — would kill the APScheduler worker.
 
-    # Alpaca's REST surface returns crypto symbols differently between
-    # endpoints: get_all_positions → "DOTUSD", get_orders → "DOT/USD". We
-    # canonicalise by stripping "/" so the lookup works for both.
     def _canon(sym: str) -> str:
         return str(sym).replace("/", "").upper()
 
     stops_by_symbol: dict[str, list] = {}
     for o in open_orders:
-        # Recognise both `stop` and `stop_limit` types as protective. Plain
-        # `endswith("stop")` would miss stop-limit orders (used for crypto,
-        # which Alpaca rejects plain stops on) and produce false-naked alerts.
         if str(getattr(o, "type", "")).lower().endswith(("stop", "stop_limit")):
             stops_by_symbol.setdefault(_canon(o.symbol), []).append(o)
 
-    naked: list[tuple[str, str, str]] = []  # (symbol, qty, side)
-    for p in positions:
-        sym = str(p.symbol)
-        if _canon(sym) not in stops_by_symbol:
-            naked.append((sym, str(p.qty), str(p.side)))
+    unprotected = [p for p in positions if _canon(p.symbol) not in stops_by_symbol]
 
     click.echo(
-        f"[verify-stops] positions={len(positions)} stops={sum(len(v) for v in stops_by_symbol.values())} "
-        f"naked={len(naked)}"
+        f"[verify-stops] positions={len(positions)} "
+        f"stops={sum(len(v) for v in stops_by_symbol.values())} "
+        f"unprotected={len(unprotected)}"
     )
-    for sym, qty, side in naked:
-        click.echo(f"  NAKED {sym}: qty={qty} side={side} — NO STOP ORDER")
 
-    if not naked:
+    if not unprotected:
         return
 
-    html = build_naked_stops_email_html(naked, total_positions=len(positions))
+    market_data = MarketDataClient(settings)
+    actions = evaluate_and_act(
+        client=alpaca,
+        market_data=market_data,
+        unprotected=unprotected,
+        stop_pct=Decimal(str(cfg.risk.unprotected_stop_pct)),
+        now_in_market_hours=_is_market_hours_et(),
+    )
+
+    for a in actions:
+        click.echo(f"  {a.outcome.upper():22} {a.symbol:10} qty={a.qty}")
+
+    html = build_open_positions_email_html(
+        actions, total_positions=len(positions)
+    )
+    subject = open_positions_email_subject(actions)
     EmailSender(
-        user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
-    ).send(subject=f"⚠ NAKED POSITION ALERT — {len(naked)} unprotected", html_body=html)
-    click.echo(f"[verify-stops] alert email sent to {cfg.email.to}")
+        user=settings.gmail_user,
+        app_password=settings.gmail_app_password,
+        to=cfg.email.to,
+    ).send(subject=subject, html_body=html)
+    click.echo(f"[verify-stops] summary email sent to {cfg.email.to}")
 
 
 @main.command("vip-scan")

@@ -82,7 +82,8 @@ def test_orchestrator_skips_existing_positions(watchlist):
     alpaca.get_positions.return_value = [
         Position(
             symbol="AAPL", qty=Decimal("3"), market_value=Decimal("585"),
-            avg_entry_price=Decimal("195"), unrealized_pl=Decimal("0"), asset_class="us_equity",
+            avg_entry_price=Decimal("195"), current_price=Decimal("195"),
+            unrealized_pl=Decimal("0"), asset_class="us_equity",
         )
     ]
     journal = MagicMock()

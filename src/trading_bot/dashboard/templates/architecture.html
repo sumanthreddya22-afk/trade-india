@@ -116,7 +116,7 @@
       <ul class="list-disc list-inside space-y-2">
         <li><strong>Paper-only enforced at config load.</strong> <code>Settings.bot_mode</code> is a <code>Literal["paper", "live"]</code> with a validator that raises <code>LiveModeDisabled</code> if anything but "paper" is set. Cannot be silently flipped.</li>
         <li><strong>Every order goes through the same risk gate.</strong> <code>RiskManager.check()</code> is called inline by the orchestrator and the simulator. No bypass path; raising <code>RiskRuleViolation</code> is the only way to fail-closed, and the orchestrator catches and skips, not retries.</li>
-        <li><strong>Crypto orders are post-fill verified.</strong> After the non-atomic <code>market entry → stop</code> sequence, the bot re-queries Alpaca within 500ms; if the position is naked, it market-flattens immediately.</li>
+        <li><strong>Crypto orders are post-fill verified.</strong> After the non-atomic <code>market entry → stop</code> sequence, the bot re-queries Alpaca within 500ms; if the position is unprotected, it market-flattens immediately.</li>
         <li><strong>Hourly stop sweep on stocks.</strong> A scheduled job re-checks every open position has a live stop order; if any are missing, an alert email fires.</li>
         <li><strong>Halt fires on a -2% daily / -5% weekly P&amp;L.</strong> Once halted, no new entries fire (existing brackets continue to manage themselves). Halt clears at next trading day's open.</li>
       </ul>
@@ -309,9 +309,9 @@
       <h4>Stocks — bracket orders (atomic)</h4>
       <p>One <code>BracketOrderRequest</code> to Alpaca with three legs: market entry, stop-loss, take-profit. All three placed atomically by Alpaca's matching engine. Take-profit is set at <code>entry + 2 × per_share_risk</code> (2:1 reward-to-risk).</p>
       <h4>Crypto — market entry + standalone stop, post-fill verified</h4>
-      <p>Alpaca crypto doesn't support brackets, so it's two non-atomic API calls: market entry (fills near-instantly), then a standalone stop order. Between the two, a flash crash could leave us naked. <strong>Mitigation:</strong> 500ms after both legs are submitted, the client re-queries Alpaca; if a position exists but no live stop order is on the symbol, it market-flattens the position immediately. (Module: <code>alpaca_client.py::_verify_crypto_stop_or_flatten</code>.)</p>
+      <p>Alpaca crypto doesn't support brackets, so it's two non-atomic API calls: market entry (fills near-instantly), then a standalone stop order. Between the two, a flash crash could leave the position unprotected. <strong>Mitigation:</strong> 500ms after both legs are submitted, the client re-queries Alpaca; if a position exists but no live stop order is on the symbol, it market-flattens the position immediately. (Module: <code>alpaca_client.py::_verify_crypto_stop_or_flatten</code>.)</p>
       <h4>Continuous stop verification</h4>
-      <p>A scheduled job (<code>bot verify-stops</code>, every :20 / :50 24/7) sweeps every open position, confirms each has a live stop order, and emails an alert if any are naked. Catches the rare bracket-leg detachment bug Alpaca has had in the past.</p>
+      <p>A scheduled job (<code>bot verify-stops</code>, every :20 / :50 24/7) sweeps every open position. For any without a live stop, it auto-protects: places a strategy-aligned stop if the position is above its protective floor, or market-flattens if it's already broken (deferring stock flattens to next RTH). Emails a summary of the actions taken. Catches the rare bracket-leg detachment bug Alpaca has had in the past.</p>
     </section>
 
     <section id="during" class="anchor-target">
@@ -320,7 +320,7 @@
         <li><strong>Bracket sits in Alpaca's book.</strong> No bot intervention required between fill and exit; all three legs (entry, stop, take-profit) are in the order book.</li>
         <li><strong>No trailing stops.</strong> The Plan 5b backtest tested 6 trailing-stop configs and every variant underperformed the no-trailing baseline. Code path exists but disabled by default.</li>
         <li><strong>Portfolio-watch alerts.</strong> Every 30 min during market hours, the bot snapshots positions and emails on any &gt;2% intraday move (in either direction).</li>
-        <li><strong>Stop-leg verification.</strong> Every :20 / :50 24/7, the verify-stops sweep confirms every open position has a corresponding stop order. Naked positions trigger an immediate email.</li>
+        <li><strong>Open-position auto-protect.</strong> Every :20 / :50 24/7, the verify-stops sweep confirms every open position has a stop. Unprotected positions are auto-actioned (stop placed or flattened) and a summary email is sent.</li>
         <li><strong>Existing positions stay open through regime changes.</strong> When the regime shifts to risk_off or sideways, no new entries fire, but already-filled positions continue to be managed by their bracket orders.</li>
       </ul>
     </section>
@@ -404,7 +404,7 @@
           <tr><td><code>45 8,11,14 * * 1-5</code></td><td>news-warm</td><td>Refresh sentiment cache before each scan window</td></tr>
           <tr><td><code>0 9-15 * * 1-5</code></td><td>intel-scan (hourly)</td><td>Scan + place trades</td></tr>
           <tr><td><code>15,45 9-15 * * 1-5</code></td><td>portfolio-watch</td><td>Snapshot diff alerts</td></tr>
-          <tr><td><code>20,50 * * * *</code></td><td>verify-stops</td><td>Naked-position sweep, 24/7</td></tr>
+          <tr><td><code>20,50 * * * *</code></td><td>verify-stops</td><td>Open-position auto-protect, 24/7</td></tr>
           <tr><td><code>5 * * * *</code></td><td>crypto-scan</td><td>Crypto-only scan, hourly 24/7</td></tr>
           <tr><td><code>*/10 * * * *</code></td><td>vip-tweets</td><td>Truth Social RSS poll</td></tr>
           <tr><td><code>30 12 * * 1-5</code></td><td>rich-report-mid</td><td>Midday HTML email</td></tr>
@@ -433,7 +433,7 @@
           <tr><td><code>bot eod-report</code></td><td>EOD email, no order placement</td></tr>
           <tr><td><code>bot daily-report</code></td><td>Basic daily email (legacy)</td></tr>
           <tr><td><code>bot portfolio-watch</code></td><td>Snapshot diff alerts</td></tr>
-          <tr><td><code>bot verify-stops</code></td><td>Naked-position sweep</td></tr>
+          <tr><td><code>bot verify-stops</code></td><td>Open-position auto-protect sweep</td></tr>
           <tr><td><code>bot vip-scan</code></td><td>Truth Social poll, alert on HIGH</td></tr>
           <tr><td><code>bot news-warm</code></td><td>Refresh news sentiment cache</td></tr>
           <tr><td><code>bot backtest --from D --to D</code></td><td>Replay strategy through historical bars</td></tr>
@@ -448,7 +448,7 @@
       <ul class="list-disc list-inside space-y-2">
         <li><strong>Trade event</strong> — order placed or rejected by risk manager (intel-scan)</li>
         <li><strong>Big-move portfolio alert</strong> — any open position ±2% intraday (portfolio-watch)</li>
-        <li><strong>Naked-position alert</strong> — any open position lacks a live stop order (verify-stops)</li>
+        <li><strong>Open-position summary</strong> — verify-stops sweep auto-actioned one or more unprotected positions, or one needs manual review</li>
         <li><strong>VIP tweet HIGH-severity</strong> — Truth Social keyword match (vip-scan)</li>
         <li><strong>Midday rich-report</strong> — comprehensive 12:30 ET HTML report</li>
         <li><strong>EOD rich-report</strong> — comprehensive 16:30 ET HTML report (regime + intel + positions, no scan side-effect)</li>

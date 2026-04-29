@@ -11,6 +11,7 @@ from alpaca.trading.requests import (
     MarketOrderRequest,
     StopLimitOrderRequest,
     StopLossRequest,
+    StopOrderRequest,
     TakeProfitRequest,
 )
 from pydantic import BaseModel, model_validator
@@ -40,6 +41,7 @@ class Position:
     qty: Decimal
     market_value: Decimal
     avg_entry_price: Decimal
+    current_price: Decimal
     unrealized_pl: Decimal
     asset_class: str
 
@@ -94,6 +96,23 @@ def _opposite(s: OrderSide) -> OrderSide:
     return OrderSide.SELL if s == OrderSide.BUY else OrderSide.BUY
 
 
+def _to_orderable_symbol(symbol: str, asset_class: AssetClass) -> str:
+    """Position-form → orderable-form symbol.
+
+    Alpaca's REST surface returns crypto symbols differently between
+    endpoints: get_all_positions → 'DOTUSD', orders/bars → 'DOT/USD'.
+    All Alpaca crypto pairs settle in USD, so we insert the slash before
+    the trailing 'USD'.
+    """
+    if asset_class != AssetClass.CRYPTO:
+        return symbol
+    if "/" in symbol:
+        return symbol
+    if symbol.endswith("USD"):
+        return f"{symbol[:-3]}/USD"
+    return symbol
+
+
 class AlpacaClient:
     """Wrapper around alpaca-py TradingClient. Paper-only by construction."""
 
@@ -129,6 +148,7 @@ class AlpacaClient:
                 qty=Decimal(str(p.qty)),
                 market_value=Decimal(str(p.market_value)),
                 avg_entry_price=Decimal(str(p.avg_entry_price)),
+                current_price=Decimal(str(p.current_price)),
                 unrealized_pl=Decimal(str(p.unrealized_pl)),
                 asset_class=str(p.asset_class),
             )
@@ -180,7 +200,7 @@ class AlpacaClient:
         """
         try:
             mkt_req = MarketOrderRequest(
-                symbol=symbol,
+                symbol=_to_orderable_symbol(symbol, asset_class),
                 qty=float(qty),
                 side=_to_alpaca_side(side),
                 time_in_force=TimeInForce.GTC if asset_class == AssetClass.CRYPTO else TimeInForce.DAY,
@@ -189,6 +209,53 @@ class AlpacaClient:
             return str(order.id)
         except Exception as e:
             raise AlpacaClientError(f"market order failed for {symbol}: {e}") from e
+
+    def place_protective_stop(
+        self,
+        *,
+        symbol: str,
+        qty: Decimal,
+        position_side: OrderSide,
+        asset_class: AssetClass,
+        stop_price: Decimal,
+    ) -> str:
+        """Place a standalone protective stop on an existing position.
+
+        `position_side` is the side of the position being protected (BUY=long,
+        SELL=short). The stop order takes the opposite side. Stocks use plain
+        stop; crypto uses stop-limit (Alpaca rejects plain stops on crypto).
+        Returns the Alpaca order id.
+        """
+        stop_side = _opposite(position_side)
+        orderable_symbol = _to_orderable_symbol(symbol, asset_class)
+        try:
+            if asset_class == AssetClass.CRYPTO:
+                if stop_side == OrderSide.SELL:
+                    limit = float(stop_price) * (1.0 - CRYPTO_STOP_LIMIT_BUFFER_PCT)
+                else:
+                    limit = float(stop_price) * (1.0 + CRYPTO_STOP_LIMIT_BUFFER_PCT)
+                req = StopLimitOrderRequest(
+                    symbol=orderable_symbol,
+                    qty=float(qty),
+                    side=_to_alpaca_side(stop_side),
+                    time_in_force=TimeInForce.GTC,
+                    stop_price=float(stop_price),
+                    limit_price=round(limit, 6),
+                )
+            else:
+                req = StopOrderRequest(
+                    symbol=orderable_symbol,
+                    qty=float(qty),
+                    side=_to_alpaca_side(stop_side),
+                    time_in_force=TimeInForce.GTC,
+                    stop_price=float(stop_price),
+                )
+            order = self._client.submit_order(req)
+            return str(order.id)
+        except Exception as e:
+            raise AlpacaClientError(
+                f"protective stop failed for {symbol}: {e}"
+            ) from e
 
     def place_order_with_stop_loss(self, req: OrderRequest) -> OrderResult:
         """Place atomic bracket order: entry + stop-loss together.
@@ -240,10 +307,10 @@ class AlpacaClient:
             2) standalone stop-limit order
 
         Risk #4 from the trader's analysis: between (1) and (2), the price
-        can flash-crash leaving us with a naked position. Mitigation here:
+        can flash-crash leaving the position unprotected. Mitigation here:
         after both legs are placed, do a post-fill verification — re-query
         positions + open orders. If the stop didn't actually land:
-          - if the entry has filled → market-flatten the naked position
+          - if the entry has filled → market-flatten the unprotected position
           - if the entry is still pending → cancel the entry so it can't
             fill later without a stop
         Either way we never hold an unprotected crypto position past the
@@ -264,7 +331,7 @@ class AlpacaClient:
         # requested qty (rounding to the venue's increment). The stop-limit
         # leg must use the ACTUAL filled qty — using req.qty would request
         # more than the available balance and the stop would fail with
-        # "insufficient balance", leaving the position naked. Re-query the
+        # "insufficient balance", leaving the position unprotected. Re-query the
         # entry order to get filled_qty, briefly polling so the fill state
         # has time to propagate.
         actual_qty = float(req.qty)
@@ -279,7 +346,7 @@ class AlpacaClient:
                 _t.sleep(0.5)
         except Exception:
             # If the re-query fails, fall through with req.qty — stop submission
-            # may then itself fail and the naked-position recovery path runs.
+            # may then itself fail and the unprotected-position recovery path runs.
             pass
 
         stop_side = _opposite(req.side)
@@ -325,7 +392,7 @@ class AlpacaClient:
 
         if stop_error is not None:
             # Stop submission threw. If the entry hasn't filled yet, cancel
-            # it so it can't fill later naked. If it had filled, the
+            # it so it can't fill later unprotected. If it had filled, the
             # verifier would have raised already (flatten path).
             if verify_action == "no_position":
                 try:
@@ -359,8 +426,8 @@ class AlpacaClient:
             "has_stop"    — the position is protected by a live stop or
                 stop-limit order. Caller can proceed.
 
-        Raises AlpacaClientError if the position is naked. In the naked
-        case, this method market-flattens the position; the raise is the
+        Raises AlpacaClientError if the position is unprotected. In the
+        unprotected case, this method market-flattens the position; the raise is the
         signal back to the caller that something went wrong AND the
         recovery has already been performed.
         """
@@ -396,7 +463,7 @@ class AlpacaClient:
         if has_stop:
             return "has_stop"
 
-        # Naked position detected. Market-flatten.
+        # Unprotected position detected. Market-flatten.
         try:
             flatten_req = MarketOrderRequest(
                 symbol=req.symbol,
@@ -407,7 +474,7 @@ class AlpacaClient:
             self._client.submit_order(flatten_req)
         except Exception as e:
             raise AlpacaClientError(
-                f"NAKED CRYPTO POSITION ({req.symbol}, entry={entry_id}) "
+                f"UNPROTECTED CRYPTO POSITION ({req.symbol}, entry={entry_id}) "
                 f"AND FLATTEN FAILED: {e} — manually flatten in Alpaca UI immediately"
             ) from e
         raise AlpacaClientError(

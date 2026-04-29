@@ -183,6 +183,7 @@ def test_risk_rejects_concentration_breach(cfg, acct, state):
         qty=Decimal("20"),
         market_value=Decimal("4500"),  # already 4.5%
         avg_entry_price=Decimal("225"),
+        current_price=Decimal("225"),
         unrealized_pl=Decimal("0"),
         asset_class="us_equity",
     )
