@@ -76,11 +76,11 @@ def _send_alert(
     try:
         from trading_bot.config import Settings
         from trading_bot.email_sender import EmailSender
+        from trading_bot.email_log import send_logged
         s = Settings()
-        EmailSender(user=s.gmail_user, app_password=s.gmail_app_password, to=to).send(
-            subject=subject, html_body=html_body
-        )
-        log.event("alert_sent", to=to, subject=subject, kind=kind)
+        sender = EmailSender(user=s.gmail_user, app_password=s.gmail_app_password, to=to)
+        send_logged(sender=sender, subject=subject, html_body=html_body,
+                    kind="alert", recipient=to)
     except Exception as e:
         log.error("alert_send_failed", error=e)
 

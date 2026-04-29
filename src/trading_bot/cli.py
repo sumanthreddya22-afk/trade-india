@@ -9,6 +9,7 @@ import click
 from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderRequest, OrderSide
 from trading_bot.config import Settings, load_config
 from trading_bot.email_sender import EmailSender
+from trading_bot.email_log import send_logged
 from trading_bot.evolution import (
     append_evolution_log,
     apply_proposals,
@@ -164,7 +165,8 @@ def status() -> None:
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    sender.send(subject="Trading Bot — Status", html_body=html)
+    send_logged(sender=sender, subject="Trading Bot — Status", html_body=html,
+                kind="status", recipient=cfg.email.to)
     click.echo(f"Sent status email to {cfg.email.to}")
 
 
@@ -268,7 +270,8 @@ def daily_report() -> None:
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    sender.send(subject="Trading Bot — Daily Report", html_body=html)
+    send_logged(sender=sender, subject="Trading Bot — Daily Report", html_body=html,
+                kind="digest", recipient=cfg.email.to)
     click.echo(f"Sent daily report to {cfg.email.to}")
 
 
@@ -376,7 +379,8 @@ def full_run() -> None:
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    sender.send(subject=f"Trading Bot — Daily Report ({regime})", html_body=html)
+    send_logged(sender=sender, subject=f"Trading Bot — Daily Report ({regime})", html_body=html,
+                kind="digest", recipient=cfg.email.to)
     click.echo(f"[email] sent to {cfg.email.to}")
 
 
@@ -424,9 +428,12 @@ def intel_scan() -> None:
             account=account, positions=positions, scan=result,
             spy_daily_change_pct=spy_change, regime=regime,
         )
-        EmailSender(
+        sender = EmailSender(
             user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
-        ).send(subject=f"Trading Bot — Intel Scan ({len(placed)} placed)", html_body=html)
+        )
+        send_logged(sender=sender,
+                    subject=f"Trading Bot — Intel Scan ({len(placed)} placed)", html_body=html,
+                    kind="alert", recipient=cfg.email.to)
         click.echo(f"[email] sent (action taken)")
 
 
@@ -448,9 +455,11 @@ def portfolio_watch() -> None:
 
     if has_alerts(events):
         html = build_alert_email_html(events, account_equity=curr.equity)
-        EmailSender(
+        sender = EmailSender(
             user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
-        ).send(subject="Trading Bot — Portfolio Alert", html_body=html)
+        )
+        send_logged(sender=sender, subject="Trading Bot — Portfolio Alert", html_body=html,
+                    kind="alert", recipient=cfg.email.to)
         click.echo("[email] alert sent")
 
 
@@ -516,9 +525,12 @@ def rich_report(period: str) -> None:
         spy_daily_change_pct=spy_change, regime=regime, intel=intel, events=events,
         engine=_state_engine,
     )
-    EmailSender(
+    sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
-    ).send(subject=f"Trading Bot — {period.upper()} Rich Report ({regime})", html_body=html)
+    )
+    send_logged(sender=sender,
+                subject=f"Trading Bot — {period.upper()} Rich Report ({regime})", html_body=html,
+                kind="digest", recipient=cfg.email.to)
     click.echo(f"[rich-report:{period}] sent ({len(result.decisions)} decisions, "
                f"VIX={intel.macro.vix}, {len(events)} events)")
 
@@ -601,9 +613,11 @@ def eod_report() -> None:
         spy_daily_change_pct=spy_change, regime=regime, intel=intel, events=events,
         engine=_state_engine,
     )
-    EmailSender(
+    sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
-    ).send(subject=f"Trading Bot — EOD Report ({regime})", html_body=html)
+    )
+    send_logged(sender=sender, subject=f"Trading Bot — EOD Report ({regime})", html_body=html,
+                kind="digest", recipient=cfg.email.to)
     click.echo(f"[eod-report] sent to {cfg.email.to} (regime={regime}, "
                f"VIX={intel.macro.vix}, {len(events)} events)")
 
@@ -827,11 +841,13 @@ def verify_stops() -> None:
         actions, total_positions=len(positions)
     )
     subject = open_positions_email_subject(actions)
-    EmailSender(
+    sender = EmailSender(
         user=settings.gmail_user,
         app_password=settings.gmail_app_password,
         to=cfg.email.to,
-    ).send(subject=subject, html_body=html)
+    )
+    send_logged(sender=sender, subject=subject, html_body=html,
+                kind="alert", recipient=cfg.email.to)
     click.echo(f"[verify-stops] summary email sent to {cfg.email.to}")
 
 
@@ -859,9 +875,11 @@ def vip_scan() -> None:
         return  # alerts only fire on HIGH
 
     html = build_vip_alert_email_html(high)
-    EmailSender(
+    sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
-    ).send(subject=f"VIP TWEET ALERT — {len(high)} high-severity", html_body=html)
+    )
+    send_logged(sender=sender, subject=f"VIP TWEET ALERT — {len(high)} high-severity",
+                html_body=html, kind="alert", recipient=cfg.email.to)
     click.echo(f"[vip-scan] alert email sent to {cfg.email.to}")
 
 
