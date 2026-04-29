@@ -22,7 +22,10 @@ def _config():
         RegimeAllocation,
         RiskConfig,
         StorageConfig,
+        StrategyConfig,
     )
+    # Intel gates default-on in production but should be off in unit tests
+    # to avoid network calls (Finnhub, GDELT, etc.) and cross-test cache leak.
     return AppConfig(
         risk=RiskConfig(
             daily_loss_limit_pct=2.0,
@@ -43,6 +46,14 @@ def _config():
         },
         email=EmailConfig(to="t@x.com", daily_summary_time_et="16:30", weekly_summary_day="Sunday"),
         storage=StorageConfig(trade_journal_path="data/test.db"),
+        strategy=StrategyConfig(
+            earnings_gate_enabled=False,
+            macro_shock_gate_enabled=False,
+            crypto_fear_greed_enabled=False,
+            crypto_reddit_spike_enabled=False,
+            crypto_coingecko_enabled=False,
+            insider_cluster_enabled=False,
+        ),
     )
 
 

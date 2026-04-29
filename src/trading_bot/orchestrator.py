@@ -95,6 +95,62 @@ class TradeOrchestrator:
             halted=False,
         )
 
+    def _news_intel_gate(self, symbol: str, asset_class: str) -> str | None:
+        """Per-trade news/intel gates. Returns skip reason or None.
+
+        Each gate is independently config-flagged and source-failure-safe
+        (a network error returns None — never blocks trading on failed intel).
+        """
+        from trading_bot.intel_gates import (
+            stock_earnings_gate, crypto_fear_greed_gate,
+            crypto_reddit_spike_gate, macro_shock_gate,
+            stock_insider_cluster_gate, crypto_coingecko_gate,
+        )
+        cfg = self._cfg.strategy
+
+        # Macro shock applies to ALL asset classes
+        if getattr(cfg, "macro_shock_gate_enabled", False):
+            r = macro_shock_gate(threshold=cfg.macro_shock_threshold)
+            if r is not None:
+                return r
+
+        if asset_class == "crypto":
+            if getattr(cfg, "crypto_fear_greed_enabled", False):
+                r = crypto_fear_greed_gate(
+                    floor=cfg.crypto_fear_greed_floor,
+                    ceiling=cfg.crypto_fear_greed_ceiling,
+                )
+                if r is not None:
+                    return r
+            if getattr(cfg, "crypto_reddit_spike_enabled", False):
+                r = crypto_reddit_spike_gate(
+                    symbol, multiplier=cfg.crypto_reddit_spike_multiplier,
+                )
+                if r is not None:
+                    return r
+            if getattr(cfg, "crypto_coingecko_enabled", False):
+                r = crypto_coingecko_gate(
+                    symbol, sentiment_floor=cfg.crypto_coingecko_sentiment_floor,
+                )
+                if r is not None:
+                    return r
+            return None
+
+        # stock asset class
+        if getattr(cfg, "earnings_gate_enabled", False):
+            r = stock_earnings_gate(
+                symbol, lookahead_days=cfg.earnings_gate_lookahead_days,
+            )
+            if r is not None:
+                return r
+        if getattr(cfg, "insider_cluster_enabled", False):
+            r = stock_insider_cluster_gate(
+                symbol, sell_volume_threshold=cfg.insider_cluster_threshold,
+            )
+            if r is not None:
+                return r
+        return None
+
     def scan(self, *, watchlist: list[WatchlistEntry]) -> ScanResult:
         account = self._alpaca.get_account()
         positions = self._alpaca.get_positions()
@@ -175,6 +231,20 @@ class TradeOrchestrator:
                         reason=f"news score {score:.2f} < floor {sf:.2f}",
                     ))
                     continue
+
+            # ---- News/intel filter gates (each independently config-flagged)
+            # All defensive: any source failure (network, API down, parse error)
+            # falls through silently — never blocks trading on intel failure.
+            try:
+                skip_reason = self._news_intel_gate(symbol, entry.asset_class)
+                if skip_reason is not None:
+                    decisions.append(Decision(
+                        symbol=symbol, action="skipped_intel",
+                        reason=skip_reason,
+                    ))
+                    continue
+            except Exception:
+                pass  # any unexpected error: don't block trading
 
             asset_class = AssetClass.CRYPTO if entry.asset_class == "crypto" else AssetClass.STOCK
             order = OrderRequest(

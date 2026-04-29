@@ -88,6 +88,34 @@ class StrategyConfig(BaseModel):
     # right value.
     sentiment_floor: float | None = Field(default=None, ge=-1.0, le=1.0)
     sentiment_max_age_days: int = Field(default=3, ge=1, le=30)
+    # Earnings-window gate for momentum lane. When True, stock entries
+    # are blocked if the symbol has earnings inside the next N trading
+    # days. Crypto bypasses (no earnings). Filter-only — never opens new
+    # positions, just refuses entries facing binary gap risk.
+    earnings_gate_enabled: bool = Field(default=True)
+    earnings_gate_lookahead_days: int = Field(default=5, ge=1, le=30)
+    # Macro-shock gate (GDELT). When True, blocks all entries (stocks,
+    # crypto, options) on days with extreme negative macro sentiment.
+    macro_shock_gate_enabled: bool = Field(default=True)
+    macro_shock_threshold: float = Field(default=-3.0, ge=-10.0, le=0.0)
+    # Crypto Fear & Greed gate (Alternative.me). Blocks crypto entries
+    # outside the [floor, ceiling] band of the index (0–100).
+    crypto_fear_greed_enabled: bool = Field(default=True)
+    crypto_fear_greed_floor: int = Field(default=20, ge=0, le=100)
+    crypto_fear_greed_ceiling: int = Field(default=80, ge=0, le=100)
+    # Crypto Reddit-mention spike gate (ApeWisdom r/CryptoCurrency).
+    crypto_reddit_spike_enabled: bool = Field(default=True)
+    crypto_reddit_spike_multiplier: float = Field(default=2.0, ge=1.0, le=10.0)
+    # CoinGecko per-coin community sentiment floor.
+    crypto_coingecko_enabled: bool = Field(default=False)  # off by default — coin id mapping needed
+    crypto_coingecko_sentiment_floor: float = Field(default=50.0, ge=0.0, le=100.0)
+    # Insider-cluster signal for stocks (Finnhub). Default OFF —
+    # big-cap execs sell on 10b5-1 schedules routinely (NVDA had 62 sells
+    # in a 90d window in normal operation). The raw count is too noisy.
+    # Operator can flip on and tune `insider_cluster_threshold` for narrow
+    # use cases (e.g., small/mid-caps where 10+ sells in 90d is unusual).
+    insider_cluster_enabled: bool = Field(default=False)
+    insider_cluster_threshold: int = Field(default=20, ge=1, le=200)
 
 
 class WheelConfig(BaseModel):
