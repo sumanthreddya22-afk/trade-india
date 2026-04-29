@@ -106,3 +106,17 @@ def promote_atomically(
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(cfg, indent=2, sort_keys=True))
     os.replace(tmp, p)
+
+    # Record the promotion in the lab_promotions table for first-24h validation.
+    from trading_bot.lab_promotions import LabPromotionStore
+    import datetime as _dt
+
+    LabPromotionStore().record(
+        promoted_at=_dt.datetime.now(_dt.timezone.utc),
+        version=cfg["version"],
+        template=cfg["active_template"],
+        git_sha=cfg.get("git_sha", "unknown"),
+        fitness=float(cfg["fitness_at_promotion"]),
+        params=cfg.get("params", {}),
+        risk_caps=cfg.get("risk_caps", {}),
+    )
