@@ -150,6 +150,37 @@ from trading_bot.email_shell import (  # noqa: E402
 )
 
 
+def _render_session_review(review) -> str:
+    """Render a SessionReview into three labeled bullet columns."""
+    def _bullet_block(title: str, items: list[str], color: str, glyph: str) -> str:
+        if not items:
+            items = ["(none)"]
+        bullets = "".join(
+            f'<li style="margin:6px 0;color:{_TEXT_PRIMARY};font-size:13px;'
+            f'line-height:1.55">{i}</li>'
+            for i in items
+        )
+        return (
+            f'<td valign="top" style="width:33%;padding:0 8px">'
+            f'<div style="color:{color};font-size:11px;font-weight:700;'
+            f'letter-spacing:1.4px;text-transform:uppercase;'
+            f'margin-bottom:6px">{glyph} {title}</div>'
+            f'<ul style="margin:0;padding-left:18px">{bullets}</ul></td>'
+        )
+
+    return (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+        f'width="100%"><tr>'
+        + _bullet_block("What went well", review.went_well,
+                        _GOOD_LIGHT, "✓")
+        + _bullet_block("What went wrong", review.went_wrong,
+                        _BAD, "✗")
+        + _bullet_block("Could be better", review.improvements,
+                        _WARN, "→")
+        + '</tr></table>'
+    )
+
+
 def build_daily_digest_email(ctx: DigestContext) -> Email:
     """13-section daily digest. Each section renders only when it has
     content; missing data degrades to a friendly message."""
@@ -188,7 +219,18 @@ def build_daily_digest_email(ctx: DigestContext) -> Email:
                  delta_kind="good" if ctx.unrealized_pnl >= 0 else "bad"),
     ]))
 
-    # 2. Equity 30d sparkline (full-width)
+    # 2. EOD Session Review — what went well / wrong / improve.
+    # Positioned high so the operator sees the synthesis before the data.
+    from trading_bot.session_summary import review_session
+    review = review_session(ctx)
+    review_html = _render_session_review(review)
+    sections.append(section(
+        title="Session Review", glyph="\U0001f4cb", body=review_html,
+        severity=("good" if not review.went_wrong else
+                  ("warn" if len(review.went_wrong) <= 2 else "bad")),
+    ))
+
+    # 3. Equity 30d sparkline (full-width)
     if ctx.equity_30d:
         full_spark = sparkline_svg([float(v) for v in ctx.equity_30d],
                                    width=592, height=80)

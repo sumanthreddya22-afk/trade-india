@@ -290,6 +290,12 @@ def render_shell(*, title: str, status: Literal["ok", "warn", "bad"],
     # Explicit color-scheme + supported-color-schemes makes mobile clients
     # leave the dark theme alone instead of running their inversion heuristic
     # (the original cause of the unreadable washed-out look in Gmail mobile).
+    # We also defend against three specific client behaviors:
+    #   * Gmail mobile (iOS+Android): uses [data-ogsc] selector when in dark
+    #     UI mode — we lock our palette there explicitly.
+    #   * Apple Mail / iOS Mail: honors @media (prefers-color-scheme: dark).
+    #   * Outlook (desktop): mso conditional comment. Outlook Web ignores
+    #     <style> partially; we duplicate critical bg/colors inline.
     head = (
         '<!DOCTYPE html><html lang="en">'
         '<head>'
@@ -299,15 +305,29 @@ def render_shell(*, title: str, status: Literal["ok", "warn", "bad"],
         '<meta name="supported-color-schemes" content="dark" />'
         '<meta http-equiv="X-UA-Compatible" content="IE=edge" />'
         f'<title>{title}</title>'
-        # Apple Mail + iOS Mail honor this for true dark rendering.
         '<style>'
-        ':root { color-scheme: dark; supported-color-schemes: dark; } '
-        f'body, table, td {{ background: {_BG_OUTER} !important; }} '
-        f'a {{ color: {_ACCENT_BRIGHT} !important; }} '
-        # Force common Gmail/Outlook overrides to respect our palette.
+        ':root { color-scheme: dark only; supported-color-schemes: dark; } '
+        f'body {{ background: {_BG_OUTER} !important; color: {_TEXT_PRIMARY} !important; }} '
+        f'table, td {{ background: {_BG_OUTER}; }} '
+        f'a {{ color: {_ACCENT_BRIGHT} !important; text-decoration: none; }} '
+        # Gmail mobile dark mode signal — when this attribute is present
+        # we know Gmail is in dark UI; lock our palette so it cannot be
+        # auto-inverted.
+        f'[data-ogsc] body, [data-ogsc] table, [data-ogsc] td '
+        f'{{ background: {_BG_OUTER} !important; color: {_TEXT_PRIMARY} !important; }} '
+        f'[data-ogsc] .card {{ background: {_BG_CARD} !important; }} '
+        f'[data-ogsc] .text-primary {{ color: {_TEXT_PRIMARY} !important; }} '
+        f'[data-ogsc] .text-secondary {{ color: {_TEXT_SECONDARY} !important; }} '
+        # Apple Mail dark-scheme media query
+        '@media (prefers-color-scheme: dark) { '
+        f'  body, table, td {{ background: {_BG_OUTER} !important; '
+        f'color: {_TEXT_PRIMARY} !important; }} '
+        '} '
+        # Force same palette in light-mode UI so the email is dark either way
+        # (the user explicitly asked: every email, dark, no exceptions).
         '@media (prefers-color-scheme: light) { '
-        f'  body, table, td {{ background: {_BG_OUTER} !important; }} '
-        f'  .text-primary {{ color: {_TEXT_PRIMARY} !important; }} '
+        f'  body, table, td {{ background: {_BG_OUTER} !important; '
+        f'color: {_TEXT_PRIMARY} !important; }} '
         '}'
         '</style>'
         '</head>'
