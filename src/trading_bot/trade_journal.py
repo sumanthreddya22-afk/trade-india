@@ -61,7 +61,13 @@ class TradeJournal:
         _Base.metadata.create_all(self._engine)
 
     def append(self, rec: TradeRecord) -> None:
+        """Idempotent append: if a row with the same entry_order_id exists, skip."""
         with Session(self._engine) as s:
+            existing = s.execute(
+                select(_TradeRow).where(_TradeRow.entry_order_id == rec.entry_order_id)
+            ).scalar_one_or_none()
+            if existing is not None:
+                return
             s.add(
                 _TradeRow(
                     timestamp=rec.timestamp,
@@ -78,6 +84,18 @@ class TradeJournal:
                 )
             )
             s.commit()
+
+    def cleanup_duplicates(self) -> int:
+        """Remove rows where (entry_order_id) duplicates an earlier row.
+        Keeps the row with the smallest id. Returns count removed."""
+        from sqlalchemy import text
+        with self._engine.begin() as c:
+            res = c.execute(text(
+                "DELETE FROM trades WHERE id NOT IN ("
+                "  SELECT MIN(id) FROM trades GROUP BY entry_order_id"
+                ")"
+            ))
+            return res.rowcount or 0
 
     def all(self) -> list[TradeRecord]:
         with Session(self._engine) as s:

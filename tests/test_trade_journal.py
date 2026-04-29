@@ -62,3 +62,67 @@ def test_journal_filters_by_date_range(journal: TradeJournal):
     rows = journal.between(middle, middle.replace(hour=23, minute=59))
     assert len(rows) == 1
     assert rows[0].symbol == "S1"
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (A5): Idempotent append + cleanup_duplicates
+# ---------------------------------------------------------------------------
+
+import datetime as dt
+from decimal import Decimal as D
+
+
+def _rec(symbol="AAPL", entry_order_id="abc-123") -> TradeRecord:
+    return TradeRecord(
+        timestamp=dt.datetime(2026, 4, 28, 13, 7, tzinfo=dt.timezone.utc),
+        symbol=symbol, side="buy", qty=D("3"), price=D("220.27"),
+        asset_class="stock", strategy="momentum", regime="trending_up",
+        entry_order_id=entry_order_id, stop_loss_order_id="stop-1",
+        notes="rsi=61.0 macd>-3.202 close>EMA20",
+    )
+
+
+def test_journal_append_dedupes_by_entry_order_id(tmp_path):
+    j = TradeJournal(tmp_path / "j.db")
+    j.append(_rec())
+    j.append(_rec())  # duplicate
+    j.append(_rec())  # triple
+
+    rows = j.all()
+    assert len(rows) == 1
+    assert rows[0].symbol == "AAPL"
+
+
+def test_journal_append_distinct_order_ids_kept(tmp_path):
+    j = TradeJournal(tmp_path / "j.db")
+    j.append(_rec(entry_order_id="o-1"))
+    j.append(_rec(entry_order_id="o-2"))
+
+    rows = j.all()
+    assert len(rows) == 2
+
+
+def test_journal_cleanup_removes_existing_duplicates(tmp_path):
+    """If a journal db already contains duplicates from before this fix,
+    calling TradeJournal(...).cleanup_duplicates() removes them."""
+    db_path = tmp_path / "j.db"
+    j = TradeJournal(db_path)
+    # Force duplicate insertion via raw SQL to simulate pre-fix state.
+    from sqlalchemy import text
+    with j._engine.begin() as c:  # noqa: SLF001
+        for ts_hour in (13, 20):
+            c.execute(
+                text(
+                    "INSERT INTO trades (timestamp, symbol, side, qty, price, "
+                    "asset_class, strategy, regime, entry_order_id, "
+                    "stop_loss_order_id, notes) VALUES "
+                    "(:ts, 'AAPL', 'buy', 3, 220.27, 'stock', 'momentum', "
+                    "'trending_up', 'dup-order', 'stop-1', 'x')"
+                ),
+                {"ts": dt.datetime(2026, 4, 27, ts_hour, 7, tzinfo=dt.timezone.utc)},
+            )
+    assert len(j.all()) == 2  # before cleanup
+
+    removed = j.cleanup_duplicates()
+    assert removed == 1
+    assert len(j.all()) == 1
