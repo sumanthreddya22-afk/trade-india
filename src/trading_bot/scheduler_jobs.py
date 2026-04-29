@@ -142,15 +142,16 @@ def register_jobs(
             coalesce=True,
         )
 
-    # Midday report: 12:31 ET weekdays (offset 1 min from the 12:30 stock_scanner cycle
-    # so the two jobs don't compete for the same APScheduler worker thread).
+    # Midday snapshot: 12:00 ET weekdays. Light intraday digest — KPI grid,
+    # trades so far, open positions, watchlist signals, risk gauges.
+    # Replaces the old midday_report job that was firing at 16:31 ET due to
+    # a misfire accumulation on the old 12:31 cron.
     scheduler.add_job(
-        runners["midday_report"],
-        trigger=CronTrigger(hour=12, minute=31, day_of_week="mon-fri", timezone=et),
-        id="midday_report",
+        runners["midday_snapshot"],
+        trigger=CronTrigger(hour=12, minute=0, day_of_week="mon-fri", timezone=et),
+        id="midday_snapshot",
         replace_existing=True,
-        misfire_grace_time=300,
-        coalesce=True,
+        misfire_grace_time=300, coalesce=True,
     )
 
     # Daily digest: 18:00 ET weekdays

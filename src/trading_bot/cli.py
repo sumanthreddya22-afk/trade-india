@@ -1275,6 +1275,59 @@ def rank_command() -> None:
     click.echo(f"Stage-2 ranked {len(result.candidates)} candidates across {len(lanes)} lanes")
 
 
+@main.command("midday-snapshot")
+def midday_snapshot_cli() -> None:
+    """Build + send the midday snapshot email at 12:00 ET."""
+    import datetime as _dt_ms
+    import json as _json_ms
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    alpaca = AlpacaClient(settings)
+
+    account = alpaca.get_account()
+
+    # TODO: wire regime from live detect_regime once reliable
+    try:
+        market = MarketDataClient(settings)
+        regime = _live_regime(market, cfg).regime.value
+    except Exception:
+        regime = "unknown"
+
+    # git_sha + version from paper_active.json
+    git_sha = "unknown"
+    version = "unknown"
+    try:
+        _active_path = Path("strategy/paper_active.json")
+        if _active_path.exists():
+            _meta = _json_ms.loads(_active_path.read_text())
+            git_sha = _meta.get("git_sha", "unknown")
+            version = _meta.get("version", "unknown")
+    except Exception:
+        pass
+
+    from trading_bot.email_midday import SnapshotContext, build_midday_snapshot_email
+    ctx = SnapshotContext(
+        as_of=_dt_ms.datetime.now(_dt_ms.timezone.utc),
+        equity=account.equity,
+        starting_equity=account.equity,   # TODO: use today's open equity
+        realized_pnl_today=Decimal("0"),  # TODO: wire from PnlStateBuilder
+        unrealized_pnl=Decimal("0"),      # TODO: wire from PnlStateBuilder
+        regime=regime,
+        positions=[],                     # TODO: format alpaca positions
+        trades_today=[],                  # TODO: wire from TradeJournal
+        watchlist_signals=[],             # TODO: wire from screener near-miss list
+        version=version,
+        git_sha=git_sha,
+    )
+    email = build_midday_snapshot_email(ctx)
+    sender = EmailSender(
+        user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
+    )
+    send_logged(sender=sender, subject=email.subject, html_body=email.html_body,
+                kind="midday", recipient=cfg.email.to)
+    click.echo(f"[midday-snapshot] sent to {cfg.email.to}")
+
+
 @main.command("schedule-audit")
 def schedule_audit_cli() -> None:
     """Audit today's cron job firings vs expected. Writes to schedule_audits."""

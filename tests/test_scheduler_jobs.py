@@ -19,7 +19,7 @@ def test_register_jobs_creates_expected_jobs():
         "premarket_rank": MagicMock(),
         "vip_scan": MagicMock(),
         "daily_digest": MagicMock(),
-        "midday_report": MagicMock(),
+        "midday_snapshot": MagicMock(),
         "heartbeat": MagicMock(),
         "log_rotation": MagicMock(),
     }
@@ -36,7 +36,7 @@ def test_register_jobs_creates_expected_jobs():
         "news_warm_midday",
         "massive_refresh",
         "premarket_rank",
-        "midday_report",
+        "midday_snapshot",
         "daily_digest",
         "log_rotation",
     }
@@ -51,7 +51,7 @@ def test_register_jobs_uses_cadence_minutes():
         "portfolio_watch": MagicMock(), "verify_stops": MagicMock(),
         "news_warm": MagicMock(), "massive_refresh": MagicMock(),
         "premarket_rank": MagicMock(), "vip_scan": MagicMock(),
-        "daily_digest": MagicMock(), "midday_report": MagicMock(),
+        "daily_digest": MagicMock(), "midday_snapshot": MagicMock(),
         "heartbeat": MagicMock(),
         "log_rotation": MagicMock(),
     }
@@ -69,7 +69,7 @@ def test_heartbeat_job_runs_every_60s():
         "portfolio_watch": MagicMock(), "verify_stops": MagicMock(),
         "news_warm": MagicMock(), "massive_refresh": MagicMock(),
         "premarket_rank": MagicMock(), "vip_scan": MagicMock(),
-        "daily_digest": MagicMock(), "midday_report": MagicMock(),
+        "daily_digest": MagicMock(), "midday_snapshot": MagicMock(),
         "heartbeat": MagicMock(),
         "log_rotation": MagicMock(),
     }
@@ -87,7 +87,7 @@ def test_verify_stops_cron_is_24_7_at_20_and_50():
         "portfolio_watch": MagicMock(), "verify_stops": MagicMock(),
         "news_warm": MagicMock(), "massive_refresh": MagicMock(),
         "premarket_rank": MagicMock(), "vip_scan": MagicMock(),
-        "daily_digest": MagicMock(), "midday_report": MagicMock(),
+        "daily_digest": MagicMock(), "midday_snapshot": MagicMock(),
         "heartbeat": MagicMock(),
         "log_rotation": MagicMock(),
     }
@@ -110,7 +110,7 @@ def test_register_jobs_uses_misfire_grace_and_coalesce():
     runners = {name: MagicMock() for name in (
         "heartbeat", "intel_scan", "crypto_scan", "portfolio_watch",
         "verify_stops", "vip_scan", "news_warm", "massive_refresh",
-        "premarket_rank", "midday_rerank", "midday_snapshot", "midday_report",
+        "premarket_rank", "midday_rerank", "midday_snapshot",
         "daily_digest", "log_rotation", "hold_spy_coordinator",
         "strategy_coach", "reconciler", "schedule_audit", "alert_drain",
     )}
