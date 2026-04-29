@@ -32,6 +32,9 @@ class SnapshotContext:
     git_sha: str = "unknown"
     dashboard_url: str | None = None
 
+    # Phase 5: wheel watchlist (top CSP candidates by IV-rank)
+    wheel_watchlist: list[dict] = field(default_factory=list)
+
 
 def build_midday_snapshot_email(ctx: SnapshotContext) -> Email:
     pct = (
@@ -95,6 +98,27 @@ def build_midday_snapshot_email(ctx: SnapshotContext) -> Email:
             title="Watchlist (close to triggering)", glyph="\U0001f3af",
             body=data_table(headers=["Symbol", "Distance", "Note"], rows=rows,
                             right_align_cols=[1]),
+        ))
+
+    # Wheel watchlist (Phase 5)
+    if ctx.wheel_watchlist:
+        rows = [
+            [w.get("symbol", ""),
+             f"{w['iv_rank']:.0f}" if isinstance(w.get("iv_rank"), (int, float))
+             else str(w.get("iv_rank", "")),
+             f"{w['best_csp_delta']:.2f}" if isinstance(w.get("best_csp_delta"), (int, float))
+             else str(w.get("best_csp_delta", "")),
+             str(w.get("best_csp_strike", "")),
+             f"{w.get('annualized_yield_pct', '')}%"]
+            for w in ctx.wheel_watchlist
+        ]
+        body_sections.append(section(
+            title="Wheel watchlist", glyph="♻",
+            body=data_table(
+                headers=["Sym", "IV-rank", "Best CSP Δ", "Strike", "Ann. yield"],
+                rows=rows,
+                right_align_cols=[1, 2, 3, 4],
+            ),
         ))
 
     # Risk gauges (compact)

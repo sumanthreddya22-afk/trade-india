@@ -36,6 +36,19 @@ def test_midday_renders_kpi():
     assert "$14,962" in e.html_body or "14,962" in e.html_body
 
 
+def test_midday_includes_wheel_watchlist():
+    from trading_bot.email_midday import build_midday_snapshot_email
+    e = build_midday_snapshot_email(_ctx(
+        wheel_watchlist=[
+            {"symbol": "MSFT", "iv_rank": 42.0, "best_csp_delta": -0.25,
+             "best_csp_strike": "405", "annualized_yield_pct": "14.0"},
+        ],
+    ))
+    assert "Wheel" in e.html_body
+    assert "MSFT" in e.html_body
+    assert "405" in e.html_body
+
+
 def test_midday_watchlist_signals_render():
     from trading_bot.email_midday import build_midday_snapshot_email
     e = build_midday_snapshot_email(_ctx(
