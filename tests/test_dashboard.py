@@ -30,6 +30,16 @@ def _trade(symbol: str, pnl: float, exit_offset_h: int) -> ClosedTrade:
     )
 
 
+def test_wheel_fragment_route_returns_html():
+    """Phase 5: /fragment/wheel renders even with no open cycles."""
+    from fastapi.testclient import TestClient
+    from trading_bot.dashboard.app import app
+    client = TestClient(app)
+    r = client.get("/fragment/wheel")
+    assert r.status_code == 200
+    assert "Wheel" in r.text
+
+
 def test_stats_empty_journal():
     s = _build_stats([])
     assert s.total_trades == 0

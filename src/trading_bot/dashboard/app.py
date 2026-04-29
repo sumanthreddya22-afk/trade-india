@@ -64,6 +64,8 @@ FRAGMENTS: dict[str, str] = {
     "llm_spend": "_llm_spend.html",
     "role_health": "_role_health.html",
     "proposals": "_proposals.html",
+    # Phase 5
+    "wheel": "_wheel.html",
 }
 
 
@@ -490,6 +492,17 @@ def _snapshot_to_dict(s: DashboardSnapshot) -> dict[str, Any]:
         "errors": s.errors,
         "market_session": dict(zip(("code", "label"), _market_session())),
     }
+
+
+# Module-level FastAPI app — exposed so callers can do
+#   `from trading_bot.dashboard.app import app`
+# (used by tests + ASGI workers that import the variable directly).
+# Built lazily; if construction fails (e.g. missing settings during import),
+# a minimal stub app is provided so imports don't crash.
+try:
+    app = create_app()
+except Exception:  # pragma: no cover — defensive
+    app = FastAPI(title="Trading Bot Dashboard (stub)")
 
 
 def run(host: str = "127.0.0.1", port: int = 8765, reload: bool = False) -> None:

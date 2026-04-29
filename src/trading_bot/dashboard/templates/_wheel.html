@@ -1,0 +1,31 @@
+<section class="card" id="card-wheel">
+  <h2>♻ Wheel</h2>
+  <div class="kpi-row">
+    <div class="kpi"><span class="k">Open cycles</span><span class="v">{{ s.wheel_open_cycles | length }}</span></div>
+    <div class="kpi"><span class="k">Collateral</span><span class="v">{{ "%.1f"|format(s.wheel_collateral_pct) }}%</span></div>
+    <div class="kpi"><span class="k">30d P&amp;L</span><span class="v">${{ s.wheel_pnl_30d }}</span></div>
+    <div class="kpi"><span class="k">Win rate</span><span class="v">{{ "%.0f"|format(s.wheel_win_rate * 100) }}%</span></div>
+  </div>
+  {% if s.wheel_open_cycles %}
+  <table>
+    <thead>
+      <tr>
+        <th>Symbol</th><th>Phase</th><th>Strike</th><th>Exp</th><th>Credit</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in s.wheel_open_cycles %}
+      <tr>
+        <td>{{ c.symbol }}</td>
+        <td>{{ c.phase }}</td>
+        <td>{{ c.strike }}</td>
+        <td>{{ c.expiration }}</td>
+        <td>{{ c.credit }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No open wheel cycles.</p>
+  {% endif %}
+</section>

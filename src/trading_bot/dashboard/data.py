@@ -190,6 +190,13 @@ class DashboardSnapshot:
     allocation_drift: list[AllocationDriftRow] = field(default_factory=list)
     last_scan: LastScanBlock | None = None
     errors: list[str] = field(default_factory=list)
+    # Phase 5: wheel-strategy fields (safe empty defaults so existing
+    # constructions continue to work).
+    wheel_open_cycles: list[dict] = field(default_factory=list)
+    wheel_universe_top: list[dict] = field(default_factory=list)
+    wheel_pnl_30d: Decimal = Decimal("0")
+    wheel_win_rate: float = 0.0
+    wheel_collateral_pct: float = 0.0
 
 
 # ---------- helpers ----------
