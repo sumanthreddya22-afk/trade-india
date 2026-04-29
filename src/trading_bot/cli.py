@@ -333,86 +333,51 @@ def daily_report() -> None:
 
 @main.command("daily-digest")
 def daily_digest() -> None:
-    """Email the rebuilt 12-section daily digest (B3)."""
+    """Email the rebuilt 12-section daily digest (B3) — fully data-driven."""
     import datetime as _dt
     import json as _json
+    from trading_bot.digest_data import gather_all
     settings = Settings()
     cfg = load_config(CONFIG_PATH)
-    alpaca = AlpacaClient(settings)
     today = _dt.date.today()
 
-    account = alpaca.get_account()
+    # ── ALL the live numbers ──────────────────────────────────────────
+    data = gather_all(settings=settings, app_cfg=cfg, today=today)
 
-    # equity_30d — try state.db equity_high_water_mark table; fallback to empty
-    equity_30d: list[Decimal] = []
-    try:
-        from trading_bot.state_db import get_engine as _get_engine
-        from sqlalchemy import text as _text
-        _db_path = os.environ.get("TRADING_BOT_STATE_DB", "data/state.db")
-        _engine = _get_engine(_db_path)
-        with _engine.connect() as _conn:
-            rows = _conn.execute(
-                _text("SELECT equity FROM equity_high_water_mark ORDER BY recorded_at DESC LIMIT 30")
-            ).fetchall()
-        equity_30d = [Decimal(str(r[0])) for r in reversed(rows)]
-    except Exception:
-        pass  # table may not exist yet — degrade gracefully
-
-    # pending_promotions — from LabPromotionStore
+    # ── Auxiliary metadata that doesn't fit DigestData ────────────────
     pending_promotions: list[dict] = []
     try:
         from trading_bot.lab_promotions import LabPromotionStore as _LPS
-        import datetime as _dt2
-        _now = _dt2.datetime.now(_dt2.timezone.utc)
+        _now = _dt.datetime.now(_dt.timezone.utc)
         pending_promotions = [
             p if isinstance(p, dict) else p.__dict__
             for p in _LPS().pending_validation(now=_now)
         ]
     except Exception:
-        pass  # TODO: wire once LabPromotionStore.pending_validation is stable
+        pass
 
-    # closed_trades_7d — from ClosedTradeStore filtered to last 7d
-    closed_trades_7d: list[dict] = []
-    try:
-        import datetime as _dt3
-        _cutoff = _dt3.datetime.now(_dt3.timezone.utc) - _dt3.timedelta(days=7)
-        _all_closed = ClosedTradeStore(CLOSED_DB_PATH).all()
-        for _ct in _all_closed:
-            _closed_at = getattr(_ct, "closed_at", None)
-            if _closed_at and _closed_at >= _cutoff:
-                closed_trades_7d.append(
-                    _ct if isinstance(_ct, dict) else _ct.__dict__
-                )
-    except Exception:
-        pass  # TODO: enrich once ClosedTradeStore.all() is stable
-
-    # schedule_audit_warnings — from ScheduleAuditStore
     schedule_audit_warnings: list[dict] = []
     try:
         from trading_bot.schedule_audit import ScheduleAuditStore as _SAS
         _rows = _SAS().latest(audit_date=today)
         for _r in _rows:
-            _ratio = getattr(_r, "ratio", 1.0)
-            if _ratio < 0.5:
+            if getattr(_r, "ratio", 1.0) < 0.5:
                 schedule_audit_warnings.append(
                     _r if isinstance(_r, dict) else _r.__dict__
                 )
     except Exception:
-        pass  # TODO: wire once ScheduleAuditStore has data
+        pass
 
-    # emails_sent_by_kind — from EmailLogStore
     emails_sent_by_kind: dict[str, int] = {}
     try:
-        import datetime as _dt4
         from trading_bot.email_log import EmailLogStore as _ELS
-        _today_start = _dt4.datetime.combine(today, _dt4.time.min).replace(
-            tzinfo=_dt4.timezone.utc
+        _today_start = _dt.datetime.combine(today, _dt.time.min).replace(
+            tzinfo=_dt.timezone.utc
         )
         emails_sent_by_kind = _ELS().count_by_kind_since(_today_start)
     except Exception:
-        pass  # TODO: enrich once EmailLogStore is available
+        pass
 
-    # git_sha + version from paper_active.json
     git_sha = "unknown"
     version = "unknown"
     try:
@@ -424,29 +389,54 @@ def daily_digest() -> None:
     except Exception:
         pass
 
-    # regime
     market = MarketDataClient(settings)
     try:
         regime = _live_regime(market, cfg).regime.value
     except Exception:
         regime = "unknown"
 
+    # Realized P&L — derive from sum of today-closed trades' realized_pnl.
+    # closed_trades_7d already filtered; pull today's subset.
+    today_iso = today.isoformat()
+    todays_realized = Decimal("0")
+    for ct in data.closed_trades_7d:
+        if str(ct.get("exit_time", ""))[:10] == today_iso:
+            try:
+                todays_realized += Decimal(str(ct.get("pnl", 0)))
+            except Exception:
+                pass
+
     ctx = DigestContext(
         date=today,
-        starting_equity=account.equity,   # TODO: use yesterday's closing equity
-        ending_equity=account.equity,
-        realized_pnl=Decimal("0"),         # TODO: wire from PnlStateBuilder
-        unrealized_pnl=Decimal("0"),       # TODO: wire from PnlStateBuilder
+        starting_equity=data.starting_equity,
+        ending_equity=data.ending_equity,
+        realized_pnl=todays_realized,
+        unrealized_pnl=data.unrealized_pnl,
         regime=regime,
         active_config_version=version,
-        equity_30d=equity_30d,
+        trades=data.trades_today,
+        errors=data.errors,
+        equity_30d=data.equity_30d,
+        daily_loss_cap_pct=cfg.risk.daily_loss_limit_pct,
+        weekly_loss_cap_pct=cfg.risk.weekly_loss_limit_pct,
+        drawdown_pct=data.drawdown_pct,
+        consecutive_losing_days=data.consecutive_losing_days,
+        daily_loss_pct=data.daily_pnl_pct,
+        weekly_loss_pct=data.weekly_pnl_pct,
+        vix=data.vix,
+        vol_threshold_pct=cfg.regime.vol_threshold_pct,
+        positions=data.positions,
+        closed_trades_7d=data.closed_trades_7d,
         pending_promotions=pending_promotions,
-        closed_trades_7d=closed_trades_7d,
         schedule_audit_warnings=schedule_audit_warnings,
+        daemon_blips=data.daemon_blips,
         emails_sent_by_kind=emails_sent_by_kind,
         git_sha=git_sha,
         version=version,
-        # TODO: vix, watchlist_movers, sentiment_scores, positions formatting
+        wheel_open_cycles=data.wheel_open_cycles,
+        wheel_pnl_mtd=data.wheel_pnl_mtd,
+        wheel_collateral_pct=data.wheel_collateral_pct,
+        wheel_win_rate=data.wheel_win_rate,
     )
 
     email = build_daily_digest_email(ctx)
@@ -1356,23 +1346,21 @@ def rank_command() -> None:
 
 @main.command("midday-snapshot")
 def midday_snapshot_cli() -> None:
-    """Build + send the midday snapshot email at 12:00 ET."""
+    """Build + send the midday snapshot email at 12:00 ET — data-driven."""
     import datetime as _dt_ms
     import json as _json_ms
+    from trading_bot.digest_data import gather_all
     settings = Settings()
     cfg = load_config(CONFIG_PATH)
-    alpaca = AlpacaClient(settings)
 
-    account = alpaca.get_account()
+    data = gather_all(settings=settings, app_cfg=cfg)
 
-    # TODO: wire regime from live detect_regime once reliable
     try:
         market = MarketDataClient(settings)
         regime = _live_regime(market, cfg).regime.value
     except Exception:
         regime = "unknown"
 
-    # git_sha + version from paper_active.json
     git_sha = "unknown"
     version = "unknown"
     try:
@@ -1384,17 +1372,42 @@ def midday_snapshot_cli() -> None:
     except Exception:
         pass
 
+    # Today's realized = sum of today's closed-trade P&L
+    today_iso = _dt_ms.date.today().isoformat()
+    todays_realized = Decimal("0")
+    todays_trades_dicts: list[dict] = []
+    for ct in data.closed_trades_7d:
+        if str(ct.get("exit_time", ""))[:10] == today_iso:
+            try:
+                todays_realized += Decimal(str(ct.get("pnl", 0)))
+            except Exception:
+                pass
+    # Trades_today for midday = today's entry rows (TradeRow → dict)
+    for tr in data.trades_today:
+        todays_trades_dicts.append({
+            "time": tr.time.strftime("%H:%M"),
+            "side": tr.side,
+            "symbol": tr.symbol,
+            "qty": str(tr.qty),
+            "price": str(tr.price),
+            "strategy": tr.strategy,
+        })
+
     from trading_bot.email_midday import SnapshotContext, build_midday_snapshot_email
     ctx = SnapshotContext(
         as_of=_dt_ms.datetime.now(_dt_ms.timezone.utc),
-        equity=account.equity,
-        starting_equity=account.equity,   # TODO: use today's open equity
-        realized_pnl_today=Decimal("0"),  # TODO: wire from PnlStateBuilder
-        unrealized_pnl=Decimal("0"),      # TODO: wire from PnlStateBuilder
+        equity=data.ending_equity,
+        starting_equity=data.starting_equity,
+        realized_pnl_today=todays_realized,
+        unrealized_pnl=data.unrealized_pnl,
         regime=regime,
-        positions=[],                     # TODO: format alpaca positions
-        trades_today=[],                  # TODO: wire from TradeJournal
-        watchlist_signals=[],             # TODO: wire from screener near-miss list
+        positions=data.positions,
+        trades_today=todays_trades_dicts,
+        watchlist_signals=[],     # screener near-miss list — not yet exposed
+        daily_loss_pct=data.daily_pnl_pct,
+        drawdown_pct=data.drawdown_pct,
+        daily_loss_cap_pct=cfg.risk.daily_loss_limit_pct,
+        drawdown_cap_pct=20.0,
         version=version,
         git_sha=git_sha,
     )
