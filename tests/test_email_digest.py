@@ -70,6 +70,25 @@ def test_digest_status_amber_when_audit_warnings_present():
     assert "#fbbf24" in email.html_body
 
 
+def test_digest_includes_wheel_section():
+    from trading_bot.email_digest import build_daily_digest_email
+    email = build_daily_digest_email(_ctx(
+        wheel_open_cycles=[
+            {"symbol": "AAPL", "phase": "csp_open", "strike": "190",
+             "expiration": "2026-05-30", "dte": 32, "delta": -0.27,
+             "iv": "0.30", "credit": "2.10", "mark": "1.20",
+             "pnl": "+90", "trigger_distance": "8 days to 21-DTE"},
+        ],
+        wheel_pnl_mtd=Decimal("325"),
+        wheel_collateral_pct=8.5,
+        wheel_win_rate=0.80,
+    ))
+    assert "Wheel" in email.html_body or "WHEEL" in email.html_body
+    assert "AAPL" in email.html_body
+    assert "csp_open" in email.html_body
+    assert "$325" in email.html_body
+
+
 def test_digest_renders_lab_promotion_section_when_pending():
     from trading_bot.email_digest import build_daily_digest_email
     email = build_daily_digest_email(_ctx(

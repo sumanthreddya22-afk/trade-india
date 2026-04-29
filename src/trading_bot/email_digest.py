@@ -63,6 +63,12 @@ class DigestContext:
     dashboard_url: str | None = None
     tomorrow_first_job: str | None = None
 
+    # Wheel-strategy fields (Phase 5)
+    wheel_open_cycles: list[dict] = field(default_factory=list)
+    wheel_pnl_mtd: Decimal = Decimal("0")
+    wheel_collateral_pct: float = 0.0
+    wheel_win_rate: float = 0.0
+
 
 def build_digest_email(ctx: DigestContext) -> Email:
     if ctx.starting_equity == 0:
@@ -280,6 +286,45 @@ def build_daily_digest_email(ctx: DigestContext) -> Email:
                 rows=rows,
                 right_align_cols=[1, 2, 3],
             ),
+        ))
+
+    # 7b. Wheel cycles (Phase 5)
+    if (ctx.wheel_open_cycles
+            or ctx.wheel_pnl_mtd != Decimal("0")
+            or ctx.wheel_collateral_pct > 0
+            or ctx.wheel_win_rate > 0):
+        wheel_kpis = kpi_grid([
+            kpi_card(label="Open cycles", value=str(len(ctx.wheel_open_cycles))),
+            kpi_card(label="Collateral", value=f"{ctx.wheel_collateral_pct:.1f}%"),
+            kpi_card(label="MTD wheel P&L", value=f"${ctx.wheel_pnl_mtd}",
+                     delta_kind="good" if ctx.wheel_pnl_mtd >= 0 else "bad"),
+            kpi_card(label="Win rate", value=f"{ctx.wheel_win_rate * 100:.0f}%"),
+        ])
+        if ctx.wheel_open_cycles:
+            wheel_rows = [
+                [c.get("symbol", ""), c.get("phase", ""),
+                 str(c.get("strike", "")), str(c.get("expiration", "")),
+                 str(c.get("dte", "")),
+                 (f"{c['delta']:.2f}" if isinstance(c.get("delta"), (int, float))
+                  else str(c.get("delta", ""))),
+                 str(c.get("iv", "")), str(c.get("credit", "")),
+                 str(c.get("mark", "")), str(c.get("pnl", "")),
+                 str(c.get("trigger_distance", ""))]
+                for c in ctx.wheel_open_cycles
+            ]
+            wheel_body = wheel_kpis + data_table(
+                headers=["Sym", "Phase", "Strike", "Exp", "DTE", "Δ",
+                         "IV", "Credit", "Mark", "P&L", "Trigger"],
+                rows=wheel_rows,
+                right_align_cols=[2, 4, 5, 6, 7, 8, 9],
+            )
+        else:
+            wheel_body = wheel_kpis + (
+                f'<p style="color:{_TEXT_SECONDARY}">No open wheel cycles.</p>'
+            )
+        sections.append(section(
+            title="Wheel Cycles", glyph="♻",
+            body=wheel_body,
         ))
 
     # 8. Lab activity
