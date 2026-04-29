@@ -78,6 +78,27 @@ def test_heartbeat_job_runs_every_60s():
     assert hb.trigger.interval.total_seconds() == 60
 
 
+def test_verify_stops_cron_is_24_7_at_20_and_50():
+    """order_steward_sweep must fire at :20 and :50 every hour, every day (24/7)."""
+    sched = BackgroundScheduler(timezone="America/New_York")
+    cadence = CadenceConfig()
+    runners = {
+        "intel_scan": MagicMock(), "crypto_scan": MagicMock(),
+        "portfolio_watch": MagicMock(), "verify_stops": MagicMock(),
+        "news_warm": MagicMock(), "massive_refresh": MagicMock(),
+        "premarket_rank": MagicMock(), "vip_scan": MagicMock(),
+        "daily_digest": MagicMock(), "midday_report": MagicMock(),
+        "heartbeat": MagicMock(),
+        "log_rotation": MagicMock(),
+    }
+    register_jobs(scheduler=sched, cadence=cadence, runners=runners)
+    job = next(j for j in sched.get_jobs() if j.id == "order_steward_sweep")
+    fields = {f.name: str(f) for f in job.trigger.fields}
+    assert fields["minute"] == "20,50", f"Expected '20,50', got '{fields['minute']}'"
+    assert fields["hour"] == "*", f"Expected '*', got '{fields['hour']}'"
+    assert fields["day_of_week"] == "*", f"Expected '*', got '{fields['day_of_week']}'"
+
+
 def test_register_jobs_uses_misfire_grace_and_coalesce():
     """All cron jobs must have misfire_grace_time=300 + coalesce=True so a
     daemon stall during a fire window doesn't drop the job silently."""

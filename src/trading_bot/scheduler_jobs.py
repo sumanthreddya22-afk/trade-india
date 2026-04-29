@@ -68,16 +68,14 @@ def register_jobs(
         coalesce=True,
     )
 
-    # Order Steward sweep
-    os_min = cadence.order_steward_sweep_minutes
+    # Verify-stops: every :20 and :50, 24/7. Crypto positions need
+    # off-hours protection; stocks ignored gracefully outside RTH by
+    # the auto-protect logic. Old cadence (`0 9-16 * * 1-5`) was a
+    # weekday-market-only schedule that contradicted the auto-protect
+    # spec — fixed 2026-04-28.
     scheduler.add_job(
         runners["verify_stops"],
-        trigger=CronTrigger(
-            hour="9-16",
-            minute="0" if os_min >= 60 else f"*/{os_min}",
-            day_of_week="mon-fri",
-            timezone=et,
-        ),
+        trigger=CronTrigger(minute="20,50", timezone=et),
         id="order_steward_sweep",
         replace_existing=True,
         misfire_grace_time=300,
