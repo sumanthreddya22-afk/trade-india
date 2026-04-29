@@ -46,10 +46,20 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
     from trading_bot.intelligence_finnhub import FinnhubClient
     from trading_bot.options.alpaca_options import OptionAlpacaClient
     from trading_bot.options.iv_rank import compute_iv_rank
+
+    def _read_last_iv(engine, symbol):
+        from sqlalchemy import desc, select
+        from sqlalchemy.orm import Session as _S
+        from trading_bot.state_db import OptionIvHistory
+        with _S(engine) as s:
+            row = s.execute(
+                select(OptionIvHistory.atm_iv_30d)
+                .where(OptionIvHistory.symbol == symbol)
+                .order_by(desc(OptionIvHistory.recorded_at))
+                .limit(1)
+            ).scalar_one_or_none()
+            return float(row) if row is not None else None
     from trading_bot.options.wheel_runner import WheelDeps
-    from trading_bot.options.wheel_signals import (
-        produce_candidates, SignalDeps, _read_last_iv,
-    )
 
     finnhub = FinnhubClient(api_key=settings.finnhub_api_key)
     ape = ApeWisdomClient()
@@ -105,22 +115,6 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
         except Exception:
             return None
 
-    def _candidates_for_today():
-        """Signal-driven candidate sourcing — runs against the eligible set
-        and produces a small ranked list of symbols backed by an actual
-        signal (post-earnings / stable-elevated-IV). Empty if VIX out-of-band
-        or no signals fire."""
-        return produce_candidates(
-            SignalDeps(
-                finnhub=finnhub, iv_engine=state_engine,
-                sentiment_for=_sentiment_for,
-                macro_snapshotter=intelligence_macro,
-                today=dt.date.today(),
-            ),
-            eligible=_eligible_set(),
-            cfg=app_cfg.wheel,
-        )
-
     def _iv_rank_for(symbol: str) -> float | None:
         last_iv = _read_last_iv(state_engine, symbol)
         if last_iv is None:
@@ -131,7 +125,7 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
         cfg=app_cfg.wheel, engine=state_engine, option_alpaca=opt,
         alpaca_client=alpaca_client, risk_manager=risk_manager,
         intelligence_macro=intelligence_macro, regime_detector=regime_detector,
-        candidates_for_today=_candidates_for_today, iv_rank_for=_iv_rank_for,
+        eligible_for_today=_eligible_set, iv_rank_for=_iv_rank_for,
         spot_for=_spot_for, sentiment_for=_sentiment_for,
         finnhub=finnhub, apewisdom=ape, alert_queue=queue_alert,
     )

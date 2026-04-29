@@ -17,7 +17,6 @@ from trading_bot.intelligence_finnhub import FinnhubClient
 from trading_bot.options.alpaca_options import OptionAlpacaClient
 from trading_bot.options.chain import ChainContract
 from trading_bot.options.wheel_lane import WheelInputs, WheelLane
-from trading_bot.options.wheel_signals import WheelCandidate
 from trading_bot.options.wheel_state import (
     Phase, WheelStateRepo, close_cycle, increment_rolls, mark_assigned,
     open_cc, open_csp,
@@ -35,7 +34,7 @@ class WheelDeps:
     risk_manager: object
     intelligence_macro: object
     regime_detector: object
-    candidates_for_today: Callable[[], list[WheelCandidate]]
+    eligible_for_today: Callable[[], set[str]]  # universe (auto-discovered)
     iv_rank_for: Callable[[str], float | None]
     spot_for: Callable[[str], float | None]
     sentiment_for: Callable[[str], float | None]
@@ -128,6 +127,10 @@ def _sector_cap_check(
 
 
 def run_wheel_scan(deps: WheelDeps) -> None:
+    """Single per-scan flow, mirrors the equity orchestrator:
+        universe → per-symbol intel → lane.passes_preflight (cheap gates,
+        no chain) → chain fetch (only for survivors) → lane.evaluate
+        (contract pick) → risk gates → order."""
     if not deps.cfg.enabled:
         return
     today = _today()
@@ -135,7 +138,7 @@ def run_wheel_scan(deps: WheelDeps) -> None:
     macro = deps.intelligence_macro.snapshot()
     vix = getattr(macro, "vix", None)
     repo = WheelStateRepo(deps.engine)
-    candidates = deps.candidates_for_today()
+    eligible = deps.eligible_for_today()
     account = deps.alpaca_client.get_account()
     equity = Decimal(str(account.equity))
     existing_opt = _existing_options_value(deps)
@@ -164,8 +167,29 @@ def run_wheel_scan(deps: WheelDeps) -> None:
         option_collateral_by_symbol=open_collateral_by_symbol,
     )
 
-    for cand in candidates:
-        symbol = cand.symbol
+    for symbol in sorted(eligible):
+        # Per-symbol intel (cheap — all from cached data, no network calls
+        # except the Finnhub earnings calendar which Finnhub itself caches).
+        cycle = repo.get_active(symbol=symbol)
+        cost_basis: float | None = None
+        if cycle is not None and cycle.phase == Phase.ASSIGNED.value:
+            cost_basis = float(cycle.cost_basis or 0)
+        intel = WheelInputs(
+            symbol=symbol, regime=regime, vix=vix,
+            sentiment_score=deps.sentiment_for(symbol),
+            spot=(deps.spot_for(symbol) or 0.0),
+            iv_rank=deps.iv_rank_for(symbol),
+            finnhub=deps.finnhub, apewisdom=deps.apewisdom, today=today,
+            chain=[],  # filled in below if preflight passes
+            cycle=cycle, cost_basis=cost_basis,
+        )
+        # Stage 1: cheap gates (regime, VIX, sentiment, IV rank, WSB,
+        # earnings, cycle state). Skips ~95% of names on a typical day.
+        skip_reason = lane.passes_preflight(intel)
+        if skip_reason is not None:
+            continue
+
+        # Stage 2: chain fetch (only for symbols that passed preflight)
         try:
             chain = deps.option_alpaca.get_chain(
                 symbol,
@@ -177,26 +201,10 @@ def run_wheel_scan(deps: WheelDeps) -> None:
                   title=f"chain fetch failed: {symbol}",
                   detail_html=f"<p>{e}</p>", dedup_key=f"chain_fail_{symbol}_{today}")
             continue
-        cycle = repo.get_active(symbol=symbol)
-        # Guard: only the ASSIGNED phase or no-cycle should produce a new
-        # entry. csp_open / cc_open are already managed by run_wheel_manage.
-        if cycle is not None and cycle.phase != Phase.ASSIGNED.value:
-            continue
-        cost_basis: float | None = None
-        if cycle is not None and cycle.phase == Phase.ASSIGNED.value:
-            cost_basis = float(cycle.cost_basis or 0)
-        # Use the candidate's pre-computed IV rank when present; fall back to
-        # iv_rank_for for symbols where the lane still wants a fresh check
-        # (e.g., post-assignment CC entries that come without a signal).
-        iv_rank = cand.iv_rank if cand.iv_rank is not None else deps.iv_rank_for(symbol)
-        decision = lane.evaluate(WheelInputs(
-            symbol=symbol, regime=regime, vix=vix,
-            sentiment_score=deps.sentiment_for(symbol),
-            spot=(deps.spot_for(symbol) or 0.0),
-            iv_rank=iv_rank,
-            finnhub=deps.finnhub, apewisdom=deps.apewisdom, today=today,
-            chain=chain, cycle=cycle, cost_basis=cost_basis,
-        ))
+
+        # Stage 3: full lane evaluation (preflight + contract pick)
+        from dataclasses import replace
+        decision = lane.evaluate(replace(intel, chain=chain))
         if decision.action == "skip" or decision.contract is None:
             continue
         contract = decision.contract

@@ -57,12 +57,7 @@ def test_scan_then_assignment_then_cc_then_called_away(engine):
     deps.intelligence_macro.snapshot.return_value = MagicMock(vix=20.0)
     deps.regime_detector = MagicMock()
     deps.regime_detector.detect.return_value = "trending_up"
-    from trading_bot.options.wheel_signals import WheelCandidate
-    deps.candidates_for_today = MagicMock(return_value=[
-        WheelCandidate(symbol="AAPL", signal="stable_elevated_iv",
-                       confidence=0.55, reason="IV rank 55",
-                       iv_rank=55.0, last_iv=0.30),
-    ])
+    deps.eligible_for_today = MagicMock(return_value={"AAPL"})
     deps.iv_rank_for = MagicMock(return_value=55.0)
     deps.spot_for = MagicMock(return_value=200.0)
     deps.sentiment_for = MagicMock(return_value=0.1)
