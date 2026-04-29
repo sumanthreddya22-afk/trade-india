@@ -467,7 +467,7 @@ _KNOWN_SCHEDULED_JOBS: list[tuple[str, str, str]] = [
     ("news_warm_midday", "News sentiment warm (mid + late session)", "45 11,14 * * 1-5"),
     ("strategy_coach", "Strategy Coach (alpha-vs-SPY check)", "0 6 * * 1-5"),
     ("hold_spy_coordinator", "Hold-SPY Coordinator (transition mgmt)", "55 15 * * 1-5"),
-    ("midday_report", "Midday rich-report email", "31 12 * * 1-5"),
+    ("midday_snapshot", "Midday snapshot email", "0 12 * * 1-5"),
     ("daily_digest", "EOD digest email", "0 18 * * 1-5"),
     ("log_rotation", "Weekly log rotation", "0 3 * * 0"),
     ("heartbeat", "Heartbeat (every 60s)", "* * * * *"),

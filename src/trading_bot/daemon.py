@@ -33,6 +33,7 @@ STATE_DB = Path(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
 
 def _load_runners(log: StructuredLogger):
     """Instantiate Role objects and return runner callables that wrap role.safe_run(ctx)."""
+    import trading_bot.cli as cli_mod
     from trading_bot.state_db import get_engine
     from trading_bot.roles.health_pulse import HealthPulseRole
     from trading_bot.roles.stock_scanner import StockScannerRole
@@ -85,9 +86,9 @@ def _load_runners(log: StructuredLogger):
         def runner():
             log.event(f"{name}_start")
             # Block any job that may place orders.
-            # midday_report invokes rich-report which scans + trades.
+            # midday_snapshot is informational only (no orders placed).
             # daily_digest invokes eod-report (read-only) so it is safe during pause.
-            if is_paused(PAUSE_PATH) and name in {"intel_scan", "crypto_scan", "midday_report"}:
+            if is_paused(PAUSE_PATH) and name in {"intel_scan", "crypto_scan"}:
                 log.event(f"{name}_skipped", reason="pause.flag set")
                 write_heartbeat(HEARTBEAT_PATH, version=config_version,
                                 last_action=f"{name}_skipped_paused")
@@ -121,13 +122,16 @@ def _load_runners(log: StructuredLogger):
             ),
         ),
         "vip_scan": _wrap("vip_scan", lambda: vip_listener.safe_run(ctx={})),
-        "midday_report": _wrap("midday_report", lambda: reporter.run_midday(ctx={})),
+        "midday_snapshot": _wrap("midday_snapshot", lambda: cli_mod.midday_snapshot_cli.callback()),
         "daily_digest": _wrap("daily_digest", lambda: reporter.run_eod(ctx={})),
         "log_rotation": _wrap("log_rotation", lambda: rotate_logs(runs_dir=RUNS_DIR, keep_days=90)),
         "strategy_coach": _wrap("strategy_coach", lambda: strategy_coach.safe_run(ctx={})),
         "hold_spy_coordinator": _wrap(
             "hold_spy_coordinator", lambda: hold_spy_coordinator.safe_run(ctx={})
         ),
+        "reconciler": _wrap("reconciler", lambda: cli_mod.reconcile_cli.callback()),
+        "schedule_audit": _wrap("schedule_audit", lambda: cli_mod.schedule_audit_cli.callback()),
+        "alert_drain": _wrap("alert_drain", lambda: cli_mod.alert_drain_cli.callback()),
     }
 
 

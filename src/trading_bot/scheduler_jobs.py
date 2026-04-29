@@ -40,6 +40,8 @@ def register_jobs(
         ),
         id="stock_scanner",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Crypto Scanner: 24/7 at configured cadence
@@ -62,20 +64,22 @@ def register_jobs(
         ),
         id="portfolio_monitor",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
-    # Order Steward sweep
-    os_min = cadence.order_steward_sweep_minutes
+    # Verify-stops: every :20 and :50, 24/7. Crypto positions need
+    # off-hours protection; stocks ignored gracefully outside RTH by
+    # the auto-protect logic. Old cadence (`0 9-16 * * 1-5`) was a
+    # weekday-market-only schedule that contradicted the auto-protect
+    # spec — fixed 2026-04-28.
     scheduler.add_job(
         runners["verify_stops"],
-        trigger=CronTrigger(
-            hour="9-16",
-            minute="0" if os_min >= 60 else f"*/{os_min}",
-            day_of_week="mon-fri",
-            timezone=et,
-        ),
+        trigger=CronTrigger(minute="20,50", timezone=et),
         id="order_steward_sweep",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # VIP Listener: every N min during market hours
@@ -90,6 +94,8 @@ def register_jobs(
         ),
         id="vip_listener",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Sentiment warm: at configured ET times
@@ -101,6 +107,8 @@ def register_jobs(
             trigger=CronTrigger(hour=h, minute=m, day_of_week="mon-fri", timezone=et),
             id=f"news_warm_{label}",
             replace_existing=True,
+            misfire_grace_time=300,
+            coalesce=True,
         )
 
     # Pre-market: massive-refresh + rank
@@ -109,12 +117,16 @@ def register_jobs(
         trigger=CronTrigger(hour=6, minute=30, day_of_week="mon-fri", timezone=et),
         id="massive_refresh",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
     scheduler.add_job(
         runners["premarket_rank"],
         trigger=CronTrigger(hour=7, minute=30, day_of_week="mon-fri", timezone=et),
         id="premarket_rank",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Midday rerank: 12:00 ET weekdays. Refreshes opportunities.md with the
@@ -126,15 +138,20 @@ def register_jobs(
             trigger=CronTrigger(hour=12, minute=0, day_of_week="mon-fri", timezone=et),
             id="midday_rerank",
             replace_existing=True,
+            misfire_grace_time=300,
+            coalesce=True,
         )
 
-    # Midday report: 12:31 ET weekdays (offset 1 min from the 12:30 stock_scanner cycle
-    # so the two jobs don't compete for the same APScheduler worker thread).
+    # Midday snapshot: 12:00 ET weekdays. Light intraday digest — KPI grid,
+    # trades so far, open positions, watchlist signals, risk gauges.
+    # Replaces the old midday_report job that was firing at 16:31 ET due to
+    # a misfire accumulation on the old 12:31 cron.
     scheduler.add_job(
-        runners["midday_report"],
-        trigger=CronTrigger(hour=12, minute=31, day_of_week="mon-fri", timezone=et),
-        id="midday_report",
+        runners["midday_snapshot"],
+        trigger=CronTrigger(hour=12, minute=0, day_of_week="mon-fri", timezone=et),
+        id="midday_snapshot",
         replace_existing=True,
+        misfire_grace_time=300, coalesce=True,
     )
 
     # Daily digest: 18:00 ET weekdays
@@ -143,6 +160,8 @@ def register_jobs(
         trigger=CronTrigger(hour=18, minute=0, day_of_week="mon-fri", timezone=et),
         id="daily_digest",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Log rotation: weekly Sun 03:00 ET
@@ -151,6 +170,8 @@ def register_jobs(
         trigger=CronTrigger(hour=3, minute=0, day_of_week="sun", timezone=et),
         id="log_rotation",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Phase 4: Strategy Coach — daily 06:00 ET, weekdays. Evaluates 30d
@@ -161,6 +182,8 @@ def register_jobs(
             trigger=CronTrigger(hour=6, minute=0, day_of_week="mon-fri", timezone=et),
             id="strategy_coach",
             replace_existing=True,
+            misfire_grace_time=300,
+            coalesce=True,
         )
 
     # Phase 4: Hold-SPY Coordinator — 15:55 ET weekdays. Drives 5-day
@@ -171,4 +194,43 @@ def register_jobs(
             trigger=CronTrigger(hour=15, minute=55, day_of_week="mon-fri", timezone=et),
             id="hold_spy_coordinator",
             replace_existing=True,
+            misfire_grace_time=300,
+            coalesce=True,
+        )
+
+    # Schedule self-test: 21:55 ET (5 min before daily digest).
+    if "schedule_audit" in runners:
+        scheduler.add_job(
+            runners["schedule_audit"],
+            trigger=CronTrigger(hour=21, minute=55, timezone=et),
+            id="schedule_audit",
+            replace_existing=True,
+            misfire_grace_time=300, coalesce=True,
+        )
+
+    # Alert drain: every 1 min. The throttling logic inside drain_alerts
+    # checks whether enough time has passed since the last send.
+    if "alert_drain" in runners:
+        scheduler.add_job(
+            runners["alert_drain"],
+            trigger=IntervalTrigger(minutes=1),
+            id="alert_drain",
+            replace_existing=True,
+        )
+
+    # Reconciler: 16:05 ET (post-close) + 21:55 ET (pre-digest).
+    if "reconciler" in runners:
+        scheduler.add_job(
+            runners["reconciler"],
+            trigger=CronTrigger(hour=16, minute=5, day_of_week="mon-fri", timezone=et),
+            id="reconciler_close",
+            replace_existing=True,
+            misfire_grace_time=300, coalesce=True,
+        )
+        scheduler.add_job(
+            runners["reconciler"],
+            trigger=CronTrigger(hour=21, minute=55, timezone=et),
+            id="reconciler_pre_digest",
+            replace_existing=True,
+            misfire_grace_time=300, coalesce=True,
         )

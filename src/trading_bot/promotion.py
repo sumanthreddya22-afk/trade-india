@@ -106,3 +106,58 @@ def promote_atomically(
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(cfg, indent=2, sort_keys=True))
     os.replace(tmp, p)
+
+    # Record the promotion in the lab_promotions table for first-24h validation.
+    from trading_bot.lab_promotions import LabPromotionStore
+    import datetime as _dt
+
+    _store = LabPromotionStore()
+    _prev = _store.latest()  # capture BEFORE recording so diff is real
+
+    _store.record(
+        promoted_at=_dt.datetime.now(_dt.timezone.utc),
+        version=cfg["version"],
+        template=cfg["active_template"],
+        git_sha=cfg.get("git_sha", "unknown"),
+        fitness=float(cfg["fitness_at_promotion"]),
+        params=cfg.get("params", {}),
+        risk_caps=cfg.get("risk_caps", {}),
+    )
+
+    # Send strategy promotion email. Failure must not crash the promotion path.
+    try:
+        from trading_bot.email_promotion import build_promotion_email
+        from trading_bot.email_log import send_logged
+        from trading_bot.email_sender import EmailSender
+        from trading_bot.config import Settings, load_config
+        from pathlib import Path as _Path
+
+        _new_promo_dict = {
+            "promoted_at": _dt.datetime.now(_dt.timezone.utc),
+            "version": cfg["version"],
+            "template": cfg["active_template"],
+            "git_sha": cfg.get("git_sha", "unknown"),
+            "fitness_at_promotion": float(cfg["fitness_at_promotion"]),
+            "params": cfg.get("params", {}),
+            "risk_caps": cfg.get("risk_caps", {}),
+        }
+        _email = build_promotion_email(promo=_new_promo_dict, prev=_prev)
+        _settings = Settings()
+        _cfg = load_config(_Path("strategy/config.yaml"))
+        _sender = EmailSender(
+            user=_settings.gmail_user,
+            app_password=_settings.gmail_app_password,
+            to=_cfg.email.to,
+        )
+        send_logged(
+            sender=_sender,
+            subject=_email.subject,
+            html_body=_email.html_body,
+            kind="promotion",
+            recipient=_cfg.email.to,
+        )
+    except Exception as _exc:  # noqa: BLE001
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "promotion email failed (promotion still recorded): %s", _exc
+        )
