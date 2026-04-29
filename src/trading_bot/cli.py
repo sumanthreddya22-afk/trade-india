@@ -1358,6 +1358,60 @@ def alert_drain_cli() -> None:
     click.echo(f"[alert-drain] drained {n} event(s)")
 
 
+# ─── Phase 5: Wheel CLI subcommands ─────────────────────────────────────────
+# `wheel-scan` and `wheel-manage` raise SystemExit("…Phase 6") since the
+# WheelDeps wiring lives there. `wheel-status` queries the state DB directly
+# (no Alpaca needed). `wheel-close` also defers to Phase 6.
+
+
+@main.command("wheel-status")
+def wheel_status_cli() -> None:
+    """Print active wheel cycles from the state DB."""
+    from trading_bot.options.wheel_state import WheelStateRepo
+    from trading_bot.state_db import get_engine
+
+    db_path = os.environ.get("TRADING_BOT_STATE_DB", "data/state.db")
+    engine = get_engine(db_path)
+    try:
+        rows = WheelStateRepo(engine).list_active()
+    except Exception as e:
+        click.echo(f"[wheel-status] db query failed: {e}")
+        click.echo("No open wheel cycles.")
+        return
+
+    if not rows:
+        click.echo("No open wheel cycles.")
+        return
+
+    click.echo(f"[wheel-status] {len(rows)} active cycle(s):")
+    for c in rows:
+        contract = c.cc_contract or c.csp_contract or "—"
+        click.echo(
+            f"  {c.symbol:6s}  phase={c.phase:10s}  contract={contract}"
+        )
+
+
+@main.command("wheel-scan")
+def wheel_scan_cli() -> None:
+    """Run a one-shot wheel scan (Phase 6 will wire the runner)."""
+    raise SystemExit("wheel runners not wired yet — see Phase 6")
+
+
+@main.command("wheel-manage")
+def wheel_manage_cli() -> None:
+    """Run a one-shot wheel manage pass (Phase 6 will wire the runner)."""
+    raise SystemExit("wheel runners not wired yet — see Phase 6")
+
+
+@main.command("wheel-close")
+@click.argument("symbol")
+def wheel_close_cli(symbol: str) -> None:
+    """Emergency-close an active wheel position (Phase 6 will wire it)."""
+    raise SystemExit(
+        f"wheel-close not wired yet for {symbol} — see Phase 6"
+    )
+
+
 @main.command("schedule-audit")
 def schedule_audit_cli() -> None:
     """Audit today's cron job firings vs expected. Writes to schedule_audits."""

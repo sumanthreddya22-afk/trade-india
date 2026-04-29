@@ -132,6 +132,17 @@ def _load_runners(log: StructuredLogger):
         "reconciler": _wrap("reconciler", lambda: cli_mod.reconcile_cli.callback()),
         "schedule_audit": _wrap("schedule_audit", lambda: cli_mod.schedule_audit_cli.callback()),
         "alert_drain": _wrap("alert_drain", lambda: cli_mod.alert_drain_cli.callback()),
+        # Phase 5 stubs — register the keys so scheduler_jobs.register_jobs()
+        # finds them. Phase 6 will replace these lambdas with real
+        # run_wheel_scan(wheel_deps) / run_wheel_manage(wheel_deps) calls.
+        "wheel_scan": _wrap(
+            "wheel_scan",
+            lambda: log.event("wheel_scan_stub", reason="Phase 6 wiring pending"),
+        ),
+        "wheel_manage": _wrap(
+            "wheel_manage",
+            lambda: log.event("wheel_manage_stub", reason="Phase 6 wiring pending"),
+        ),
     }
 
 

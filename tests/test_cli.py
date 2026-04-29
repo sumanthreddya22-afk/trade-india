@@ -240,6 +240,34 @@ def test_load_active_universe_merges_opportunities_with_crypto(tmp_path, monkeyp
     assert "SPY" not in syms
 
 
+def test_cli_wheel_status_prints_open_cycles(tmp_path, monkeypatch):
+    """Phase 5: wheel-status on an empty DB prints "No open wheel cycles"."""
+    from trading_bot.cli import main
+
+    monkeypatch.setenv("TRADING_BOT_STATE_DB", str(tmp_path / "cli.db"))
+
+    # Bootstrap an empty wheel_cycles table so the query has somewhere to look.
+    from sqlalchemy import create_engine
+    from trading_bot.state_db import Base
+    Base.metadata.create_all(create_engine(f"sqlite:///{tmp_path / 'cli.db'}"))
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["wheel-status"])
+    assert result.exit_code == 0, result.output
+    assert "wheel" in result.output.lower()
+
+
+def test_cli_wheel_scan_stub(monkeypatch, tmp_path):
+    """Phase 5: wheel-scan exits cleanly with the Phase-6-pending stub message."""
+    from trading_bot.cli import main
+    monkeypatch.setenv("TRADING_BOT_STATE_DB", str(tmp_path / "scan.db"))
+    runner = CliRunner()
+    result = runner.invoke(main, ["wheel-scan"])
+    # Stub raises SystemExit("wheel runners not wired yet — see Phase 6").
+    assert result.exit_code != 0
+    assert "Phase 6" in (result.output + str(result.exception))
+
+
 def test_rank_writes_opportunities(tmp_path, monkeypatch):
     from trading_bot.cli import main
 
