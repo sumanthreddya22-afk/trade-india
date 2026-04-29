@@ -1,0 +1,11 @@
+# strategy/crypto_blocklist.yaml
+#
+# Crypto pairs to NEVER scan, even if Alpaca lists them as tradable.
+# Auto-discovery (crypto_universe.discover_crypto_universe) pulls Alpaca's
+# tradable USD-quoted crypto and excludes stablecoins. This file is for
+# additional operator-side exclusions (e.g., memecoins you specifically
+# don't want, or temporarily-suspect names).
+#
+# Symbols use Alpaca's slash format: BTC/USD, ETH/USD, ...
+
+symbols: []

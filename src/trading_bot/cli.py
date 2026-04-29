@@ -67,33 +67,90 @@ def _is_usd_crypto(symbol: str) -> bool:
     return symbol.endswith("/USD")
 
 
-def _load_active_universe(*, crypto_only: bool = False):
-    """Active trading universe = top-N ranked stocks from opportunities.md
-    + USD-quoted crypto pairs (from opportunities.md and watchlist.yaml).
-    Falls back to full watchlist.yaml if opportunities.md is missing/empty.
+CRYPTO_BLOCKLIST_PATH = Path("strategy/crypto_blocklist.yaml")
 
-    If crypto_only=True, returns only the crypto subset — used by the 24/7
-    crypto-scan loop when the equity market is closed.
+
+def _load_yaml_symbol_set(path: Path) -> set[str]:
+    """Read a {symbols: [...]} YAML and return uppercased symbol set.
+    Returns empty set if file is missing or malformed."""
+    try:
+        if not path.exists():
+            return set()
+        import yaml
+        data = yaml.safe_load(path.read_text()) or {}
+        return {str(s).upper() for s in (data.get("symbols") or [])}
+    except Exception:
+        return set()
+
+
+def _load_crypto_universe():
+    """Auto-discover crypto universe from Alpaca's tradable asset list.
+    Filters: USD-quoted, not stablecoin, not in operator blocklist.
+    Returns WatchlistEntry list. Failure returns []."""
+    from trading_bot.alpaca_client import AlpacaClient
+    from trading_bot.crypto_universe import discover_crypto_universe
+    try:
+        ac = AlpacaClient(Settings())
+    except Exception:
+        return []
+    blocklist = _load_yaml_symbol_set(CRYPTO_BLOCKLIST_PATH)
+    return discover_crypto_universe(ac, blocklist=blocklist)
+
+
+def _load_active_universe(*, crypto_only: bool = False):
+    """Active trading universe.
+
+      stocks = top-N ranked from strategy/opportunities.md (screener output;
+               source: market-wide Polygon grouped daily)
+      crypto = auto-discovered from Alpaca's tradable asset list
+               (USD-quoted, not stablecoin, not in crypto_blocklist.yaml)
+
+    Falls back to watchlist.yaml only if both auto-discovery sources fail
+    (Polygon down for stocks; Alpaca down for crypto). Falls back to ranked
+    crypto from opportunities.md if Alpaca crypto-discovery returns empty.
     """
-    fallback = load_watchlist(WATCHLIST_PATH)
     ranked = load_ranked_watchlist(OPPORTUNITIES_PATH)
 
-    if not ranked:
-        if crypto_only:
-            return [e for e in fallback if e.asset_class == "crypto" and _is_usd_crypto(e.symbol)]
-        return fallback
-
-    ranked_crypto = [
-        e for e in ranked if e.asset_class == "crypto" and _is_usd_crypto(e.symbol)
-    ]
-    fallback_crypto = [
-        e for e in fallback if e.asset_class == "crypto" and _is_usd_crypto(e.symbol)
-    ]
+    crypto_universe = _load_crypto_universe()
+    # Fall back to opportunities.md ranked crypto (then watchlist.yaml) if
+    # Alpaca crypto discovery fails — never leave the bot without a universe.
+    if not crypto_universe:
+        ranked_crypto = [
+            e for e in ranked if e.asset_class == "crypto" and _is_usd_crypto(e.symbol)
+        ]
+        if ranked_crypto:
+            crypto_universe = ranked_crypto
+        else:
+            try:
+                fallback = load_watchlist(WATCHLIST_PATH)
+            except Exception:
+                fallback = []
+            crypto_universe = [
+                e for e in fallback if e.asset_class == "crypto" and _is_usd_crypto(e.symbol)
+            ]
 
     if crypto_only:
         seen: set[str] = set()
         out: list = []
-        for e in ranked_crypto + fallback_crypto:
+        for e in crypto_universe:
+            if e.symbol in seen:
+                continue
+            seen.add(e.symbol)
+            out.append(e)
+        return out
+
+    if not ranked:
+        # No stock screener output → still scan crypto, but no equity universe
+        # (the orchestrator falls back to the equity watchlist via the existing
+        # path elsewhere — preserve historical behavior here).
+        try:
+            fallback = load_watchlist(WATCHLIST_PATH)
+        except Exception:
+            fallback = []
+        stocks_fallback = [e for e in fallback if e.asset_class != "crypto"]
+        seen = set()
+        out = []
+        for e in stocks_fallback + crypto_universe:
             if e.symbol in seen:
                 continue
             seen.add(e.symbol)
@@ -103,7 +160,7 @@ def _load_active_universe(*, crypto_only: bool = False):
     stocks = [e for e in ranked if e.asset_class != "crypto"][:ACTIVE_UNIVERSE_TOP_N_STOCKS]
     seen = set()
     out = []
-    for e in stocks + ranked_crypto + fallback_crypto:
+    for e in stocks + crypto_universe:
         if e.symbol in seen:
             continue
         seen.add(e.symbol)

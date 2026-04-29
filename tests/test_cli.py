@@ -198,7 +198,11 @@ def test_screen_universe_writes_snapshot(tmp_path, monkeypatch):
 
 
 def test_load_active_universe_falls_back_to_watchlist(tmp_path, monkeypatch):
-    """Phase 0a: with no opportunities.md, returns watchlist.yaml verbatim."""
+    """Phase 0a: with no opportunities.md AND no Alpaca crypto discovery,
+    returns watchlist.yaml verbatim. Stub _load_crypto_universe so the
+    test exercises the fallback path (real path is now Alpaca-discovered)."""
+    import trading_bot.cli as cli_mod
+    monkeypatch.setattr(cli_mod, "_load_crypto_universe", lambda: [])
     monkeypatch.chdir(tmp_path)
     (tmp_path / "strategy").mkdir()
     (tmp_path / "strategy" / "watchlist.yaml").write_text(
@@ -206,22 +210,28 @@ def test_load_active_universe_falls_back_to_watchlist(tmp_path, monkeypatch):
         "  - symbol: AAPL\n    asset_class: stock\n    notes: x\n"
         "  - symbol: BTC/USD\n    asset_class: crypto\n    notes: y\n"
     )
-    from trading_bot.cli import _load_active_universe
 
-    universe = _load_active_universe()
+    universe = cli_mod._load_active_universe()
     syms = [e.symbol for e in universe]
     assert syms == ["AAPL", "BTC/USD"]
 
 
 def test_load_active_universe_merges_opportunities_with_crypto(tmp_path, monkeypatch):
-    """Phase 0a: top stocks come from opportunities.md; crypto from watchlist.yaml."""
+    """Phase 0a: top stocks come from opportunities.md; crypto from auto-discovery
+    (or watchlist.yaml fallback). Stub crypto discovery to return ETH/USD + BTC/USD
+    so we test the merge logic deterministically."""
+    import trading_bot.cli as cli_mod
+    from trading_bot.state import WatchlistEntry
+    discovered_crypto = [
+        WatchlistEntry(symbol="BTC/USD", asset_class="crypto", notes="auto"),
+        WatchlistEntry(symbol="ETH/USD", asset_class="crypto", notes="auto"),
+    ]
+    monkeypatch.setattr(cli_mod, "_load_crypto_universe", lambda: discovered_crypto)
     monkeypatch.chdir(tmp_path)
     (tmp_path / "strategy").mkdir()
     (tmp_path / "strategy" / "watchlist.yaml").write_text(
         "symbols:\n"
         "  - symbol: SPY\n    asset_class: stock\n    notes: legacy\n"
-        "  - symbol: BTC/USD\n    asset_class: crypto\n    notes: btc\n"
-        "  - symbol: ETH/USD\n    asset_class: crypto\n    notes: eth\n"
     )
     (tmp_path / "strategy" / "opportunities.md").write_text(
         "# Opportunities\n"
@@ -229,11 +239,10 @@ def test_load_active_universe_merges_opportunities_with_crypto(tmp_path, monkeyp
         "### 2. AMD (us_equity)\n"
         "### 3. TSLA (us_equity)\n"
     )
-    from trading_bot.cli import _load_active_universe
 
-    universe = _load_active_universe()
+    universe = cli_mod._load_active_universe()
     syms = [e.symbol for e in universe]
-    # Top-ranked stocks first, then crypto from watchlist
+    # Top-ranked stocks first, then auto-discovered crypto
     assert syms[:3] == ["NVDA", "AMD", "TSLA"]
     assert "BTC/USD" in syms
     assert "ETH/USD" in syms
