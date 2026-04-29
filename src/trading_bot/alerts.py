@@ -39,7 +39,11 @@ _KEY_LAST_SENT = "last_alert_sent_at"
 @dataclass(frozen=True)
 class AlertEvent:
     kind: Literal["fill", "stop_hit", "auto_protect_summary",
-                  "vip_tweet", "daemon_critical", "portfolio_anomaly"]
+                  "vip_tweet", "daemon_critical", "portfolio_anomaly",
+                  "wheel_csp_opened", "wheel_cc_opened", "wheel_take_profit",
+                  "wheel_dte_close", "wheel_roll", "wheel_assignment",
+                  "wheel_called_away", "wheel_allocation_cap",
+                  "wheel_chain_fetch_failure"]
     severity: Literal["info", "warn", "bad"]
     title: str
     detail_html: str

@@ -123,3 +123,19 @@ def test_critical_severity_bypasses_throttle(state_db):
     )
     # Severity=bad bypasses throttle → sent immediately
     assert len(sent) == 1
+
+
+def test_wheel_alert_kinds_accepted():
+    from trading_bot.alerts import AlertEvent
+    import datetime as dt
+    e = AlertEvent(
+        kind="wheel_csp_opened", severity="info",
+        title="t", detail_html="<p/>", fired_at=dt.datetime.now(dt.timezone.utc),
+        dedup_key="x",
+    )
+    assert e.kind == "wheel_csp_opened"
+    for k in ("wheel_cc_opened", "wheel_take_profit", "wheel_dte_close",
+              "wheel_roll", "wheel_assignment", "wheel_called_away",
+              "wheel_allocation_cap", "wheel_chain_fetch_failure"):
+        AlertEvent(kind=k, severity="info", title="t", detail_html="<p/>",
+                   fired_at=dt.datetime.now(dt.timezone.utc), dedup_key=f"k_{k}")
