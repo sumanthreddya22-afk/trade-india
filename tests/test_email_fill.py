@@ -43,6 +43,36 @@ def test_fill_email_includes_slippage():
     assert "0.04" in email.html_body
 
 
+def test_fill_email_renders_for_option_csp_open():
+    ctx = FillContext(
+        side="option_csp_open", symbol="AAPL", qty=Decimal("1"),
+        fill_price=Decimal("2.10"), expected_price=Decimal("2.10"),
+        strategy="wheel", stop_price=None,
+        account_equity=Decimal("100000"),
+        contract="AAPL250516P00190000", strike=Decimal("190"),
+        expiration="2025-05-16", notes="entry",
+    )
+    email = build_fill_email(ctx)
+    assert "AAPL" in email.html_body
+    assert "190" in email.html_body
+    assert "AAPL250516P00190000" in email.html_body
+
+
+def test_fill_email_renders_for_option_assignment():
+    ctx = FillContext(
+        side="option_assignment", symbol="AAPL", qty=Decimal("100"),
+        fill_price=Decimal("190"), expected_price=Decimal("190"),
+        strategy="wheel", stop_price=None,
+        account_equity=Decimal("100000"),
+        contract="AAPL250516P00190000", strike=Decimal("190"),
+        expiration="2025-05-16",
+        notes="assigned 100 shares @ 190",
+    )
+    email = build_fill_email(ctx)
+    assert ("Assigned" in email.html_body
+            or "assignment" in email.html_body.lower())
+
+
 def test_stop_hit_subject_and_loss_amount():
     ctx = FillContext(
         side="STOP", symbol="BTC/USD", qty=Decimal("0.0935"),
