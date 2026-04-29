@@ -106,3 +106,42 @@ def test_append_evolution_log(tmp_path: Path):
     assert "performance review" in content
     assert "test prop" in content
     assert "0.05" in content and "0.04" in content
+
+
+def test_evolution_reports_wheel_cycle_metrics(tmp_path):
+    """Phase 5: report_wheel_kpis aggregates closed wheel cycles within
+    the lookback window."""
+    import datetime as dt
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from trading_bot.state_db import Base, WheelCycle
+    from trading_bot.evolution import report_wheel_kpis
+
+    e = create_engine(f"sqlite:///{tmp_path/'ev.db'}")
+    Base.metadata.create_all(e)
+    now = dt.datetime.now(dt.timezone.utc)
+    with Session(e) as s:
+        for i in range(4):
+            s.add(WheelCycle(
+                cycle_id=f"c{i}", symbol="AAPL", phase="closed",
+                opened_at=now - dt.timedelta(days=10),
+                closed_at=now - dt.timedelta(days=1),
+                realized_pnl=Decimal("100" if i < 3 else "-50"),
+            ))
+        s.commit()
+    kpis = report_wheel_kpis(e, lookback_days=30)
+    assert kpis["count"] == 4
+    assert kpis["win_rate"] == 0.75
+    assert kpis["total_pnl"] == Decimal("250")  # 3*100 + (-50)
+
+
+def test_evolution_wheel_kpis_empty_returns_zero(tmp_path):
+    import datetime as dt
+    from sqlalchemy import create_engine
+    from trading_bot.state_db import Base
+    from trading_bot.evolution import report_wheel_kpis
+
+    e = create_engine(f"sqlite:///{tmp_path/'ev_empty.db'}")
+    Base.metadata.create_all(e)
+    kpis = report_wheel_kpis(e, lookback_days=30)
+    assert kpis == {"count": 0, "win_rate": 0.0, "avg_pnl": Decimal(0), "total_pnl": Decimal(0)}

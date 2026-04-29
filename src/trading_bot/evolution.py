@@ -208,3 +208,41 @@ def apply_proposals(params: dict[str, Any], proposals: list[Proposal]) -> dict[s
         if strat in new_params:
             new_params[strat][param] = pr.suggested_value
     return new_params
+
+
+# ─── Phase 5: wheel-aware analysis ─────────────────────────────────────────
+import datetime as _dt
+from decimal import Decimal as _Decimal
+from sqlalchemy.engine import Engine as _Engine
+from sqlalchemy.orm import Session as _Session
+from trading_bot.state_db import WheelCycle as _WC
+
+
+def report_wheel_kpis(engine: _Engine, *, lookback_days: int = 30) -> dict:
+    """Aggregate closed-wheel-cycle metrics over the last N days.
+
+    Returns ``{count, win_rate, avg_pnl, total_pnl}``. ``win_rate`` is the
+    fraction of cycles whose realized_pnl is strictly > 0. Useful for the
+    daily digest "Wheel" KPI block and the lab's evolution log.
+    """
+    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=lookback_days)
+    with _Session(engine) as s:
+        rows = (
+            s.query(_WC)
+             .filter(_WC.phase == "closed", _WC.closed_at >= cutoff)
+             .all()
+        )
+    count = len(rows)
+    if count == 0:
+        return {
+            "count": 0, "win_rate": 0.0,
+            "avg_pnl": _Decimal(0), "total_pnl": _Decimal(0),
+        }
+    wins = sum(1 for r in rows if (r.realized_pnl or _Decimal(0)) > 0)
+    total = sum((r.realized_pnl or _Decimal(0) for r in rows), _Decimal(0))
+    return {
+        "count": count,
+        "win_rate": wins / count,
+        "avg_pnl": total / count,
+        "total_pnl": total,
+    }
