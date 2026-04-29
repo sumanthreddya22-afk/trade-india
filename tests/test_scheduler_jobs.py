@@ -126,3 +126,26 @@ def test_register_jobs_uses_misfire_grace_and_coalesce():
             f"Job {c.kwargs.get('id')} missing misfire_grace_time=300"
         assert c.kwargs.get("coalesce") is True, \
             f"Job {c.kwargs.get('id')} missing coalesce=True"
+
+
+def test_wheel_scan_and_manage_jobs_registered():
+    from trading_bot.scheduler_jobs import register_jobs
+    from trading_bot.cadence import CadenceConfig
+    from apscheduler.schedulers.background import BackgroundScheduler
+    sched = BackgroundScheduler()
+    runners = {k: (lambda: None) for k in (
+        "heartbeat", "intel_scan", "crypto_scan", "portfolio_watch",
+        "verify_stops", "vip_scan", "alerts_drain", "reconcile_post_close",
+        "reconcile_pre_digest", "schedule_audit", "wheel_scan", "wheel_manage",
+        "news_warm", "massive_refresh", "premarket_rank", "midday_snapshot",
+        "daily_digest", "log_rotation",
+    )}
+    cad = CadenceConfig(
+        heartbeat_seconds=10, stock_scanner_minutes=60,
+        crypto_scanner_minutes=60, portfolio_monitor_minutes=15,
+        vip_listener_minutes=15, wheel_scan_enabled=True,
+        wheel_manage_interval_minutes=30,
+    )
+    register_jobs(scheduler=sched, cadence=cad, runners=runners)
+    ids = {j.id for j in sched.get_jobs()}
+    assert "wheel_scan" in ids and "wheel_manage" in ids

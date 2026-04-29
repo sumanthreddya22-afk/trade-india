@@ -24,6 +24,8 @@ class CadenceConfig:
     vip_listener_minutes: int = 30
     sentiment_warm_times_et: tuple[str, ...] = ("08:55", "12:00")
     sentiment_stale_hours_for_on_demand: int = 4
+    wheel_scan_enabled: bool = True
+    wheel_manage_interval_minutes: int = 30
 
 
 def load_cadence(path: str | Path) -> CadenceConfig:
@@ -44,4 +46,6 @@ def load_cadence(path: str | Path) -> CadenceConfig:
         vip_listener_minutes=block.get("vip_listener_minutes", 30),
         sentiment_warm_times_et=tuple(times) if times else ("08:55", "12:00"),
         sentiment_stale_hours_for_on_demand=block.get("sentiment_stale_hours_for_on_demand", 4),
+        wheel_scan_enabled=block.get("wheel_scan_enabled", True),
+        wheel_manage_interval_minutes=int(block.get("wheel_manage_interval_minutes", 30)),
     )

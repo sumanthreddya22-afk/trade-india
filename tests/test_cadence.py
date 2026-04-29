@@ -50,3 +50,12 @@ def test_cadence_config_is_frozen():
     c = CadenceConfig()
     with pytest.raises(Exception):  # FrozenInstanceError or AttributeError
         c.heartbeat_seconds = 120
+
+
+def test_cadence_wheel_fields_default(tmp_path):
+    from trading_bot.cadence import load_cadence
+    p = tmp_path / "cad.json"
+    p.write_text('{"cadence": {}}')
+    c = load_cadence(p)
+    assert c.wheel_scan_enabled is True
+    assert c.wheel_manage_interval_minutes == 30

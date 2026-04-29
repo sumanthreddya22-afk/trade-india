@@ -234,3 +234,25 @@ def register_jobs(
             replace_existing=True,
             misfire_grace_time=300, coalesce=True,
         )
+
+    # Wheel scan: 10:15 ET weekdays (single daily entry pass).
+    if cadence.wheel_scan_enabled and "wheel_scan" in runners:
+        scheduler.add_job(
+            runners["wheel_scan"],
+            trigger=CronTrigger(hour=10, minute=15, day_of_week="mon-fri", timezone=et),
+            id="wheel_scan", replace_existing=True,
+            misfire_grace_time=300, coalesce=True,
+        )
+    # Wheel manage: every wheel_manage_interval_minutes within the 10-15 ET hours.
+    if cadence.wheel_scan_enabled and "wheel_manage" in runners:
+        interval = cadence.wheel_manage_interval_minutes
+        scheduler.add_job(
+            runners["wheel_manage"],
+            trigger=CronTrigger(
+                hour="10-15",
+                minute="0,30" if interval == 30 else f"*/{interval}",
+                day_of_week="mon-fri", timezone=et,
+            ),
+            id="wheel_manage", replace_existing=True,
+            misfire_grace_time=300, coalesce=True,
+        )
