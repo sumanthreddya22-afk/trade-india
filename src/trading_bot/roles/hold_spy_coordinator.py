@@ -136,7 +136,7 @@ class HoldSpyCoordinatorRole(BaseRole):
     def _exit_slice(self, day_index: int) -> list[dict]:
         """Sell 1/(remaining_days) of each active-strategy position; buy SPY with freed cash."""
         client = self._alpaca()
-        positions = client.list_positions()
+        positions = client.get_positions()
         actions: list[dict] = []
         remaining_days = TRANSITION_DAYS - day_index
         if remaining_days <= 0:
@@ -201,7 +201,7 @@ class HoldSpyCoordinatorRole(BaseRole):
     def _reverse_slice(self, day_index: int) -> list[dict]:
         """Sell 1/(remaining_days) of the SPY position; freed cash flows to scanners naturally."""
         client = self._alpaca()
-        positions = client.list_positions()
+        positions = client.get_positions()
         actions: list[dict] = []
         remaining_days = TRANSITION_DAYS - day_index
         if remaining_days <= 0:

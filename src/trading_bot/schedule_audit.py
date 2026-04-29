@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, text
 # Maps job_id (the APScheduler id) to the daemon log event emitted on
 # each fire. Keep in sync with scheduler_jobs.py.
 JOB_EVENT_MAP: dict[str, str] = {
-    "stock_scanner": "stock_scan_start",
+    "stock_scanner": "intel_scan_start",
     "crypto_scanner": "crypto_scan_start",
     "portfolio_monitor": "portfolio_watch_start",
     "order_steward_sweep": "verify_stops_start",

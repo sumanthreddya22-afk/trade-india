@@ -48,7 +48,7 @@ def test_exit_phase_sells_one_fifth(engine):
     with Session(engine) as s:
         set_flag(s, fallback_active=True, set_by="strategy_coach", reason="alpha drop")
     client = _fake_client()
-    client.list_positions = MagicMock(
+    client.get_positions = MagicMock(
         return_value=[
             _fake_position("AAPL", 50, 7500),  # 50 shares at ~$150
             _fake_position("TSLA", 25, 5000),  # 25 shares at $200
@@ -73,7 +73,7 @@ def test_exit_phase_idempotent_within_day(engine):
     with Session(engine) as s:
         set_flag(s, fallback_active=True, set_by="strategy_coach", reason="x")
     client = _fake_client()
-    client.list_positions = MagicMock(return_value=[_fake_position("AAPL", 50, 7500)])
+    client.get_positions = MagicMock(return_value=[_fake_position("AAPL", 50, 7500)])
     role = HoldSpyCoordinatorRole(engine=engine, alpaca_client=client)
     result1 = role.safe_run(ctx={})
     result2 = role.safe_run(ctx={})
@@ -87,7 +87,7 @@ def test_reverse_phase_sells_spy(engine):
     with Session(engine) as s:
         set_flag(s, fallback_active=False, set_by="strategy_coach", reason="resume")
     client = _fake_client()
-    client.list_positions = MagicMock(
+    client.get_positions = MagicMock(
         return_value=[_fake_position("SPY", 50, 25000)]  # 50 shares at $500
     )
     role = HoldSpyCoordinatorRole(engine=engine, alpaca_client=client)
@@ -112,7 +112,7 @@ def test_transition_complete_after_5_days(engine):
         )
         s.commit()
     client = _fake_client()
-    client.list_positions = MagicMock(return_value=[])
+    client.get_positions = MagicMock(return_value=[])
     role = HoldSpyCoordinatorRole(engine=engine, alpaca_client=client)
     result = role.safe_run(ctx={})
     assert result.outputs.get("skipped") is True
