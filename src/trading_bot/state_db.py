@@ -7,10 +7,13 @@ import datetime as dt
 from pathlib import Path
 
 from sqlalchemy import (
+    Boolean,
     Column,
+    Date,
     DateTime,
     Float,
     Integer,
+    Numeric,
     String,
     Text,
     create_engine,
@@ -188,6 +191,60 @@ class TemplateProposal(Base):
     review_status = Column(String(32), nullable=False, index=True)  # pending|accepted|rejected
     review_findings_json = Column(Text, nullable=True)
     accepted_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class OptionFill(Base):
+    __tablename__ = "option_fills"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ts = Column(DateTime(timezone=True), nullable=False, index=True)
+    underlying = Column(String(16), nullable=False, index=True)
+    contract_symbol = Column(String(32), nullable=False)
+    option_type = Column(String(4), nullable=False)  # CSP|CC|ROLL
+    side = Column(String(8), nullable=False)  # SELL|BUY
+    strike = Column(Numeric(20, 4), nullable=False)
+    expiration = Column(Date, nullable=False)
+    qty = Column(Integer, nullable=False)
+    premium = Column(Numeric(20, 4), nullable=False)
+    alpaca_order_id = Column(String(64), nullable=False, unique=True)
+    cycle_id = Column(String(64), nullable=True)
+    notes = Column(Text, nullable=False, default="")
+
+
+class OptionIvHistory(Base):
+    __tablename__ = "option_iv_history"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(16), nullable=False, index=True)
+    recorded_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    atm_iv_30d = Column(Float, nullable=False)
+
+
+class WheelCycle(Base):
+    __tablename__ = "wheel_cycles"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cycle_id = Column(String(64), nullable=False, unique=True)
+    symbol = Column(String(16), nullable=False, index=True)
+    phase = Column(String(32), nullable=False)
+    opened_at = Column(DateTime(timezone=True), nullable=False)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    csp_contract = Column(String(32), nullable=True)
+    csp_strike = Column(Numeric(20, 4), nullable=True)
+    csp_expiration = Column(Date, nullable=True)
+    csp_credit = Column(Numeric(20, 4), nullable=True)
+    cc_contract = Column(String(32), nullable=True)
+    cc_strike = Column(Numeric(20, 4), nullable=True)
+    cc_expiration = Column(Date, nullable=True)
+    cc_credit = Column(Numeric(20, 4), nullable=True)
+    rolls_used = Column(Integer, nullable=False, default=0)
+    cost_basis = Column(Numeric(20, 4), nullable=True)
+    realized_pnl = Column(Numeric(20, 4), nullable=False, default=0)
+
+
+class WheelUniverseCache(Base):
+    __tablename__ = "wheel_universe_cache"
+    symbol = Column(String(16), primary_key=True)
+    eligible = Column(Boolean, nullable=False)
+    reason = Column(Text, nullable=False, default="")
+    cached_at = Column(DateTime(timezone=True), nullable=False)
 
 
 def get_engine(db_path: str | Path = "data/state.db"):

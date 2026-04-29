@@ -130,3 +130,30 @@ def test_wheel_tables_present_after_migration(tmp_path, monkeypatch):
     con.close()
     for t in ("option_fills", "option_iv_history", "wheel_cycles", "wheel_universe_cache"):
         assert t in tables, f"missing table {t}"
+
+
+def test_wheel_orm_round_trip(tmp_path):
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    from trading_bot.state_db import Base, WheelCycle, OptionFill, OptionIvHistory, WheelUniverseCache
+    import datetime as dt
+    db_path = tmp_path / "rt.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    with Session(engine) as s:
+        s.add(WheelCycle(cycle_id="c1", symbol="AAPL", phase="csp_open",
+                         opened_at=dt.datetime.now(dt.timezone.utc)))
+        s.add(OptionFill(ts=dt.datetime.now(dt.timezone.utc), underlying="AAPL",
+                         contract_symbol="AAPL250516P00190000", option_type="CSP",
+                         side="SELL", strike=190, expiration=dt.date(2025, 5, 16),
+                         qty=1, premium=2.10, alpaca_order_id="ord1", cycle_id="c1"))
+        s.add(OptionIvHistory(symbol="AAPL",
+                              recorded_at=dt.datetime.now(dt.timezone.utc), atm_iv_30d=0.27))
+        s.add(WheelUniverseCache(symbol="AAPL", eligible=True, reason="",
+                                 cached_at=dt.datetime.now(dt.timezone.utc)))
+        s.commit()
+    with Session(engine) as s:
+        assert s.query(WheelCycle).count() == 1
+        assert s.query(OptionFill).count() == 1
+        assert s.query(OptionIvHistory).count() == 1
+        assert s.query(WheelUniverseCache).count() == 1
