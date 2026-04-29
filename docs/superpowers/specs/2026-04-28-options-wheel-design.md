@@ -75,18 +75,28 @@ I'm explicitly **not** adding Marketaux (100 reqs/day free is too tight — cove
                                   shares called away → back to top
 ```
 
-### 4.2 Universe (curated, hand-picked, ~20 names)
+### 4.2 Universe (dynamic, filtered each scan)
 
-Wheel candidates must be names you would happily own at the strike. Initial list (overridable in `strategy/wheel_universe.yaml`):
+The wheel runs against a **dynamically-filtered candidate set**, not a static list. Source pool is the existing screener output (the same shortlist momentum/mean-reversion lanes consume) plus optionable ETFs auto-discovered from Alpaca's asset list. Each candidate must pass *all* of:
 
-- **Mega-cap tech:** SPY, QQQ, AAPL, MSFT, GOOGL, AMZN, NVDA, META
-- **Dividend-payers / defensives:** KO, PG, JNJ, WMT, T, VZ, JPM, BAC
-- **Liquid ETFs:** XLK, XLF, XLE, IWM
+| Universe filter | Threshold | Source |
+|---|---|---|
+| Asset is optionable | `asset.options_enabled == True` | Alpaca assets endpoint |
+| Market cap (or is ETF) | ≥ $10B (equities) — ETFs auto-pass | Finnhub `/stock/profile2` |
+| Average underlying $-volume | ≥ $50M / day | Existing screener stats |
+| Average daily option volume | ≥ 5,000 contracts/day | Alpaca chain (sum across listed contracts) |
+| Listed for | ≥ 3 years | Finnhub profile (IPO date) |
+| No going-concern / penny-stock flag | Price ≥ $5, not OTC | Alpaca asset class |
+| No announced merger / spinoff / delisting | None pending in next 60 days | Finnhub corporate-actions |
+| Not in user blocklist | Not listed in `strategy/wheel_blocklist.yaml` | Local |
 
-Selection criteria (documented in the YAML, not hard-coded):
-- ≥ $50B market cap OR widely-held ETF
-- Average daily option volume > 5,000 contracts (ensures tight bid/ask)
-- No active spinoff / merger / delisting
+**Override hooks** (both in `strategy/`, both optional):
+- `wheel_blocklist.yaml` — names to permanently skip (e.g., a CEO scandal you read about that data feeds haven't caught up on).
+- `wheel_allowlist.yaml` — names to *force* into the candidate set even if filters don't pass (e.g., an ETF whose option volume sits just under the bar but you trust it).
+
+**Universe cache:** Filter results are cached for 24h in `state.db.wheel_universe_cache` to avoid hammering Finnhub. Refresh runs as part of the daily 10:15 ET scan.
+
+**Why dynamic over static:** Static lists miss elevated-IV opportunities (sector rotation, post-earnings drift, biotech cycles). Encoding "names worth owning" as filters keeps the protective intent without capping opportunity count. Cost: more Finnhub/Alpaca chain calls. We absorb that with the 24h universe cache + on-demand chain fetches only for candidates that *also* pass the per-cycle filters in §4.3.
 
 ### 4.3 Entry filters (CSP)
 
@@ -198,7 +208,99 @@ Existing files modified:
    └─→ on fill: update wheel_state, journal
 ```
 
-### 5.3 Failure modes
+### 5.3 End-to-end wiring (every existing surface gets a wheel touchpoint)
+
+#### 5.3.1 Config (`config.py` + `strategy/config.yaml`)
+- Add `WheelConfig` pydantic model — `enabled`, `delta_target_low/high`, `dte_min/max`, `take_profit_pct=0.50`, `dte_force_close=21`, `delta_breach_csp=0.45`, `delta_breach_cc=0.55`, `max_rolls_per_cycle=2`, `iv_rank_floor=30`, `vix_floor=15`, `vix_ceiling=30`, `wheel_sentiment_floor=-0.3`, `min_premium_abs=0.20`, `min_annualized_yield=0.12`, `min_open_interest=100`, `universe_cache_hours=24`, `wsb_spike_multiplier=2.0`.
+- Settings: `finnhub_api_key` (env, optional — degrade gracefully when missing).
+- YAML wheel block + `strategy/wheel_blocklist.yaml` + `strategy/wheel_allowlist.yaml`.
+
+#### 5.3.2 State / journal (`state_db.py`, `trade_journal.py`, new migration `migrations/versions/011_wheel_strategy.py`)
+- New table `wheel_cycles` — full CSP→assigned→CC lifecycle row per cycle (schema in §5.4).
+- New table `option_iv_history` — `(symbol, recorded_at, atm_iv_30d, iv_rank, iv_percentile)`.
+- New table `option_fills` — append-only option-fill journal mirroring `trades` table for equity.
+- New table `wheel_universe_cache` — `(symbol, eligible, reason, cached_at)`, 24h TTL.
+
+#### 5.3.3 Alpaca client (`alpaca_client.py`)
+- Add `OptionAlpacaClient` (or extend `AlpacaClient`) with: `get_option_chain(underlying, **filters)`, `get_option_snapshot(contract_id)`, `submit_option_order(contract_id, side, qty, limit_price, position_intent)`, `get_option_positions()`, `cancel_option_order(order_id)`.
+- `OrderRequest` model gains `OPTION` path that bypasses the equity stop-loss requirement (option shorts are managed by 50%/21-DTE/roll rules, not stop orders).
+
+#### 5.3.4 Risk manager (`risk_manager.py`)
+- Add `option_collateral_ok(symbol, strike, contracts) → (bool, reason)` — checks regime allocation cap (`options_max_pct`), per-symbol concentration (5%), and total wheel collateral.
+- Existing daily/weekly loss limits already cover wheel realized P&L via `pnl_state`.
+
+#### 5.3.5 New intelligence sources
+- `intelligence_finnhub.py` — `FinnhubClient` with `earnings_calendar(from, to)`, `company_profile(symbol)`, `corporate_actions(symbol)`. 60 req/min, key in env, soft-fail to "unknown".
+- `intelligence_apewisdom.py` — `ApeWisdomClient.wallstreetbets_mentions()` returning rank/mentions/24h-change. No-auth, soft-fail.
+- `options/iv_rank.py` — daily ATM-IV capture from Alpaca chain, store in `option_iv_history`, compute rank/percentile over trailing 252 trading days.
+
+#### 5.3.6 Strategy modules
+- `options/alpaca_options.py` — wraps option chain + order submission.
+- `options/chain.py` — chain helpers: `pick_csp_contract(chain, dte_band, delta_band)`, `pick_cc_contract(chain, cost_basis, dte_band, delta_band)`, `passes_liquidity(contract)`.
+- `options/wheel_universe.py` — filter pipeline: screener → optionable → cap/volume/age → blocklist/allowlist → cache.
+- `options/wheel_state.py` — read/advance the `wheel_cycles` state machine (`none → csp_open → {assigned, expired_worthless, closed_profit, rolled} → cc_open → {called_away, expired_worthless, closed_profit, rolled} → none`).
+- `options/wheel_lane.py` — implements the existing `Lane` protocol; produces `LaneCandidate`s with `lane="wheel"` for both CSP and CC entries.
+
+#### 5.3.7 Orchestrator (`orchestrator.py`)
+- Add `run_wheel_scan()` — daily 10:15 ET entry point: refresh universe → for each candidate, evaluate filters → for passing CSPs/CCs, call `RiskManager.option_collateral_ok` → submit via `OptionAlpacaClient` → record fill in `option_fills` + advance `wheel_cycles`.
+- Add `run_wheel_manage()` — every 30 min: for each open short option, fetch snapshot → apply 50% / 21-DTE / roll rules → submit close/roll orders → update `wheel_cycles` + journal + queue alerts.
+
+#### 5.3.8 Reconciler (`reconciler.py`)
+- Extend `reconcile()` to scan `option_fills` (open CSP/CC entries) against current Alpaca option positions.
+- On disappearance: query Alpaca closed orders to determine outcome — `expired_worthless`, `bought_to_close`, `assigned` (for CSP), or `called_away` (for CC) — and write a `closed_trades` row tagged `lane="wheel"`.
+- Special case: assignment shows up as a *new* equity position with no journal entry; reconciler advances the `wheel_cycles` row to `assigned` and seeds a synthetic `trades` row at the strike price so equity-side accounting stays consistent.
+
+#### 5.3.9 Scheduler (`scheduler_jobs.py`, `cadence.py`)
+- New cron jobs (Mon–Fri):
+  - `wheel_scan` — 10:15 ET (after open settles, well before close)
+  - `wheel_manage` — `hour=10-15, minute=0,30` (covers 10:30 → 15:30 ET)
+- Both with `misfire_grace_time=300, coalesce=True` (matches existing convention).
+- `CadenceConfig` extended: `wheel_scan_enabled: bool`, `wheel_manage_interval_minutes: int`. Both kill-switchable from `paper_active.json`.
+
+#### 5.3.10 Alerts (`alerts.py`)
+New `AlertEvent.kind` values + severity defaults:
+| kind | severity | When fired |
+|---|---|---|
+| `wheel_csp_opened` | `info` | New short put filled |
+| `wheel_cc_opened` | `info` | New short call filled |
+| `wheel_take_profit` | `info` | Closed at 50% gain |
+| `wheel_dte_close` | `info` | Closed at 21-DTE rule |
+| `wheel_roll` | `warn` | Defensive roll executed |
+| `wheel_assignment` | `warn` | Short put assigned, now holding shares |
+| `wheel_called_away` | `info` | CC called away, cycle complete |
+| `wheel_allocation_cap` | `bad` | Skipped a candidate because cap hit (1× per day, dedup'd) |
+| `wheel_chain_fetch_failure` | `bad` | ≥3 consecutive failures fetching option chain |
+
+Existing 20-min batched alert framework drains all of these; `bad` bypasses the throttle.
+
+#### 5.3.11 Email digests
+- **`email_digest.py`** (daily 16:30 ET) — new section "♻ Wheel Cycles" inserted after "Closed Trades (last 7d)":
+  - KPI row: open cycles, collateral deployed (% of equity), MTD wheel P&L, win rate (closed cycles).
+  - Table: each open cycle — Symbol / Phase / Strike / Exp / DTE / Δ / IV / Credit / Mark / P&L / Action-trigger-distance.
+- **`email_midday.py`** (12:00 ET) — new section "Wheel watchlist" — top 10 universe candidates with current IV-rank + best CSP candidate at delta -0.25 + estimated annualized yield.
+- **`email_fill.py`** — `FillContext.fill_type` extended to `"option_csp_open"`, `"option_csp_close"`, `"option_cc_open"`, `"option_cc_close"`, `"option_roll"`, `"option_assignment"`. Subject lines + body adjust accordingly.
+- **`email_critical.py`** — wheel `bad`-severity alerts route through this path with severity pill.
+- **`email_promotion.py`** — out of scope (wheel parameters tuned by `evolution.py` later, not promoted via lab path).
+
+#### 5.3.12 Web dashboard (`dashboard/app.py`, `data.py`, `templates/`)
+- New fragment route `GET /fragment/wheel` → renders `_wheel.html`.
+- `DashboardSnapshot` extended:
+  - `wheel_cycles_open: list[WheelCycleRow]` — symbol, phase, strike, exp, DTE, delta-now, IV-now, credit, mark, P&L, distance-to-trigger.
+  - `wheel_universe_top: list[WheelCandidateRow]` — top 20 candidates by IV-rank with annualized-yield estimate.
+  - `wheel_pnl_30d: Decimal`, `wheel_win_rate: float`, `wheel_collateral_pct: float`.
+- New `_wheel.html` partial — three cards: KPI strip, open cycles table, universe IV-rank heatmap (simple table, color cells by IV-rank quartile using existing color tokens).
+- Add `"wheel"` to the `FRAGMENTS` dict and to the main dashboard template's fragment list so it auto-loads.
+
+#### 5.3.13 CLI (`cli.py`)
+- `bot wheel-scan` — manual trigger of `run_wheel_scan` (bypasses cron, for ad-hoc / testing).
+- `bot wheel-manage` — manual trigger of `run_wheel_manage`.
+- `bot wheel-status` — pretty-print open cycles + universe top-N, identical to dashboard data.
+- `bot wheel-close <symbol>` — emergency manual close (buy-to-close any open short option for a symbol).
+
+#### 5.3.14 Evolution / lab (`evolution.py`)
+- After 30+ closed wheel cycles exist, `evolution.py`'s analyzer reads from `wheel_cycles` (not just `closed_trades`) and proposes parameter tweaks (delta band, IV-rank floor, premium floor) to `strategy/config.yaml`. Same propose-via-PR-style emit pattern as today.
+
+### 5.4 Failure modes
 
 | What fails | What we do |
 |---|---|
@@ -209,7 +311,7 @@ Existing files modified:
 | Assignment we didn't expect (gap-down overnight) | Reconciler picks up the share position; next scan advances state to CC phase automatically |
 | Option order rejected (e.g., not optionable) | Mark symbol disabled in `wheel_universe.yaml` runtime cache; alert via existing critical-email path |
 
-### 5.4 Tests
+### 5.5 Tests
 
 - **Unit:** Strike/expiry picker (synthetic chain → expected contract). IV rank from a fixed history. Roll trigger logic. Sizing math against allocation cap.
 - **Integration (paper):** End-to-end CSP → wait for fill → verify journal. Mocked Alpaca for CI; live paper for one-off smoke runs.
