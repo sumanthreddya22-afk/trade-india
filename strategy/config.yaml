@@ -10,10 +10,9 @@ risk:
   unprotected_stop_pct: 0.05            # protective stop for unprotected positions
 
 allocation:
-  stocks_max_pct: 70.0
-  crypto_max_pct: 30.0
-  options_max_pct: 20.0
-  cash_floor_pct: 10.0
+  options_max_pct: 20.0  # honored by wheel collateral gate
+  # stocks_max_pct / crypto_max_pct / cash_floor_pct removed in Bucket F
+  # — they were never enforced by any code path.
 
 regime_allocations:
   trending_up:    {stocks: 60.0, crypto: 25.0, options: 15.0, cash: 0.0}
@@ -23,8 +22,9 @@ regime_allocations:
 
 email:
   to: bharath8887@gmail.com
-  daily_summary_time_et: "16:30"
-  weekly_summary_day: "Sunday"
+  # daily_summary_time_et / weekly_summary_day removed in Bucket F — the
+  # 16:30 ET digest schedule is hardcoded in scheduler_jobs.py and there's
+  # no weekly digest job.
 
 storage:
   trade_journal_path: data/trade_journal.db

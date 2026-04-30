@@ -166,6 +166,25 @@ def run_stage2(
     return Stage2Result(candidates=merged, lane_counts=lane_counts)
 
 
+def _normalize_asset_class(value) -> str:
+    """Bucket F: collapse the many shapes asset_class can arrive in
+    (AlpacaSDK enum repr ``"AssetClass.US_EQUITY"``, plain ``"us_equity"``,
+    enum object) into the canonical lowercase string the readers expect.
+
+    Pre-Bucket-F the screener wrote the raw enum repr ``"AssetClass.CRYPTO"``
+    into opportunities.md; orchestrator code worked around this with
+    substring-matches and a `_normalise_asset_class` helper. Normalising at
+    the WRITE site means downstream code can rely on the on-disk format.
+    """
+    if value is None:
+        return ""
+    v = getattr(value, "value", value)
+    s = str(v).lower().strip()
+    if s.startswith("assetclass."):
+        s = s.split(".", 1)[1]
+    return s
+
+
 def render_opportunities_snapshot(
     result: Stage2Result,
     *,
@@ -185,7 +204,7 @@ def render_opportunities_snapshot(
         lines.append(f"- {lane}: {count}")
     lines.extend(["", "## Ranked Candidates", ""])
     for idx, c in enumerate(result.candidates, start=1):
-        lines.append(f"### {idx}. {c.symbol} ({c.asset_class})")
+        lines.append(f"### {idx}. {c.symbol} ({_normalize_asset_class(c.asset_class)})")
         lines.append("")
         lines.append(f"- Lanes: {', '.join(c.lane_attribution)}")
         lines.append(f"- Conviction: {c.conviction:.2f}")
@@ -201,7 +220,7 @@ def render_opportunities_snapshot(
     if shortlist and not result.candidates:
         lines.extend(["", "## Stage-1 Shortlist (no lane endorsements)", ""])
         for idx, c in enumerate(shortlist, start=1):
-            lines.append(f"### {idx}. {c.symbol} ({c.asset_class})")
+            lines.append(f"### {idx}. {c.symbol} ({_normalize_asset_class(c.asset_class)})")
             lines.append("")
             lines.append(f"- Stage-1 score: {c.score:.2f}")
             lines.append(f"- Last price: ${c.last_price}")

@@ -54,10 +54,14 @@ class RiskConfig(BaseModel):
 
 
 class AllocationConfig(BaseModel):
-    stocks_max_pct: float = Field(ge=0, le=100)
-    crypto_max_pct: float = Field(ge=0, le=100)
+    """Bucket F: stocks_max_pct / crypto_max_pct / cash_floor_pct were
+    dead config knobs (no enforcement code anywhere). Only options_max_pct
+    is honored — the wheel collateral gate reads it. Pre-Bucket-F YAMLs
+    set the dead keys; Pydantic v2's default extra=ignore makes those
+    silently ignored, so keeping them here would only re-create the
+    illusion that they do something.
+    """
     options_max_pct: float = Field(ge=0, le=100)
-    cash_floor_pct: float = Field(ge=0, le=100)
 
 
 class RegimeAllocation(BaseModel):
@@ -68,9 +72,12 @@ class RegimeAllocation(BaseModel):
 
 
 class EmailConfig(BaseModel):
+    """Bucket F: daily_summary_time_et / weekly_summary_day were dead config
+    knobs. The 16:30 ET digest schedule is hardcoded in scheduler_jobs.py
+    and there's no weekly digest job. ``to`` is the only field actually
+    consumed (by EmailSender).
+    """
     to: str
-    daily_summary_time_et: str
-    weekly_summary_day: str
 
 
 class StorageConfig(BaseModel):

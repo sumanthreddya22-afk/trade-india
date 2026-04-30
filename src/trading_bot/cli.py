@@ -1258,7 +1258,10 @@ def vip_scan() -> None:
             title=f"VIP tweet — {_post.handle}: {_post.text[:80]}",
             detail_html=html,
             fired_at=_now_vip,
-            dedup_key=f"vip:{getattr(_post, 'id', _post.text[:32])}",
+            # Bucket F: VipPost.post_id, not .id — pre-Bucket-F getattr
+            # always missed and fell back to text[:32], collapsing retweets
+            # and quotes whose first 32 chars matched into a single alert.
+            dedup_key=f"vip:{getattr(_post, 'post_id', _post.text[:32])}",
         ))
     click.echo(f"[vip-scan] {len(high)} high-severity tweet alert(s) queued")
 

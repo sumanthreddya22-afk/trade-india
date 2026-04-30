@@ -128,6 +128,7 @@ class ScheduledJobRow:
     cron: str
     next_run_local: str
     fires_per_day_estimate: str
+    last_run_local: str  # "Tue 11:55 PM ET (3m ago)" or "—" if never recorded
 
 
 @dataclass(frozen=True)
@@ -536,9 +537,28 @@ _KNOWN_SCHEDULED_JOBS: list[tuple[str, str, str]] = [
 ]
 
 
+def _format_last_run(last_dt: datetime | None, now_et: datetime, et) -> str:
+    """Format last-run as `Tue 11:55 PM ET (3m ago)` or `—` if never."""
+    if last_dt is None:
+        return "—"
+    local = last_dt.astimezone(et)
+    delta = (now_et - local).total_seconds()
+    if delta < 60:
+        ago = f"{int(delta)}s ago"
+    elif delta < 3600:
+        ago = f"{int(delta // 60)}m ago"
+    elif delta < 86400:
+        ago = f"{int(delta // 3600)}h ago"
+    else:
+        ago = f"{int(delta // 86400)}d ago"
+    return f"{local.strftime('%a %-I:%M %p ET')} ({ago})"
+
+
 def _build_scheduled_jobs(errors: list[str]) -> list[ScheduledJobRow]:
     """All cron expressions are interpreted in America/New_York (ET).
-    Returned `next_run_local` strings are formatted as `Tue 12:00 PM ET`."""
+    Returned `next_run_local` strings are formatted as `Tue 12:00 PM ET`.
+    `last_run_local` is sourced from data/scheduler_last_run.json (written
+    by scheduler_history.attach_listener on every successful job run)."""
     try:
         from croniter import croniter
     except Exception as e:
@@ -550,8 +570,15 @@ def _build_scheduled_jobs(errors: list[str]) -> list[ScheduledJobRow]:
         errors.append(f"zoneinfo unavailable: {e}")
         return []
 
+    from trading_bot.scheduler_history import read_last_runs
+
     et = ZoneInfo("America/New_York")
     now_et = datetime.now(et)
+    try:
+        last_runs = read_last_runs()
+    except Exception as e:
+        errors.append(f"scheduler_history unavailable: {e}")
+        last_runs = {}
     out: list[ScheduledJobRow] = []
     for task_id, label, cron in _KNOWN_SCHEDULED_JOBS:
         try:
@@ -577,9 +604,11 @@ def _build_scheduled_jobs(errors: list[str]) -> list[ScheduledJobRow]:
             errors.append(f"cron {task_id}: {e}")
             label_str = "—"
             est = "—"
+        last_str = _format_last_run(last_runs.get(task_id), now_et, et)
         out.append(ScheduledJobRow(
             task_id=task_id, label=label, cron=cron,
             next_run_local=label_str, fires_per_day_estimate=est,
+            last_run_local=last_str,
         ))
     return out
 
@@ -771,8 +800,31 @@ def _build_wheel_blocks(
         win_rate = float(kpis.get("win_rate", 0.0))
     except Exception as e:
         errors.append(f"wheel kpis: {e}")
-    # universe_top: TODO — populate when iv-rank capture job is wired and
-    # wheel_universe_cache + option_iv_history have meaningful rows.
+    # Bucket F: populate universe_top from wheel_universe_cache. Stale TODO
+    # was wrong — iv_capture has been wired since Plan 6, and
+    # wheel_universe_cache has been populated nightly since Plan 7.
+    try:
+        from sqlalchemy import desc
+        from sqlalchemy.orm import Session as _S
+        from trading_bot.state_db import OptionIvHistory, WheelUniverseCache
+        engine = get_engine(state_db_path)
+        with _S(engine) as s:
+            eligible = (s.query(WheelUniverseCache)
+                        .filter_by(eligible=True)
+                        .order_by(WheelUniverseCache.symbol)
+                        .limit(20).all())
+            for row in eligible:
+                last_iv = (s.query(OptionIvHistory.atm_iv_30d)
+                           .filter_by(symbol=row.symbol)
+                           .order_by(desc(OptionIvHistory.recorded_at))
+                           .limit(1).scalar())
+                universe_top.append({
+                    "symbol": row.symbol,
+                    "atm_iv_30d": float(last_iv) if last_iv is not None else None,
+                    "reason": row.reason or "",
+                })
+    except Exception as e:
+        errors.append(f"wheel universe_top: {e}")
     return open_cycles, universe_top, pnl_30d, win_rate, collateral_pct
 
 

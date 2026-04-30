@@ -164,7 +164,8 @@ def stock_insider_cluster_gate(
             "/stock/insider-transactions",
             {"symbol": symbol, "from": start.isoformat(), "to": end.isoformat()},
         )
-    except Exception:
+    except Exception as e:
+        log.warning("insider_cluster_gate: finnhub fetch failed for %s: %s", symbol, e)
         return None
     rows = body.get("data", []) if isinstance(body, dict) else []
     sells = [r for r in rows if (r.get("transactionCode", "") or "").upper().startswith("S")]
@@ -239,7 +240,8 @@ def _fetch_crypto_mentions() -> dict[str, dict]:
                          headers={"User-Agent": _USER_AGENT})
         r.raise_for_status()
         body = r.json()
-    except Exception:
+    except Exception as e:
+        log.warning("apewisdom crypto fetch failed: %s", e)
         return {}
     out: dict[str, dict] = {}
     for row in (body.get("results") or []):
@@ -295,7 +297,8 @@ def _fetch_gdelt_score() -> float | None:
             query="stock market OR S&P 500 OR Federal Reserve",
             max_records=8,
         )
-    except Exception:
+    except Exception as e:
+        log.warning("gdelt macro fetch failed: %s", e)
         return None
     if not events:
         return None
@@ -355,7 +358,8 @@ def _fetch_coingecko_sentiment(coin_id: str) -> float | None:
         r.raise_for_status()
         body = r.json()
         score = float(body.get("sentiment_votes_up_percentage") or 0.0)
-    except Exception:
+    except Exception as e:
+        log.warning("coingecko sentiment fetch failed for %s: %s", coin_id, e)
         return None
     _cache_put(key, score, ttl_seconds=1800)
     return score
