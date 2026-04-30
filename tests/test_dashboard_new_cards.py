@@ -131,6 +131,7 @@ class TestFragments:
         assert 'id="decision_activity"' in r.text
         assert 'id="freshness"' in r.text
         assert 'id="lessons"' in r.text
+        assert "Since Inception" in r.text
         # Sidebar nav links present
         assert "Decision log" in r.text
         assert "Data health" in r.text
@@ -233,6 +234,85 @@ class TestLessonsFragment:
         r = client.get("/fragment/lessons")
         assert r.status_code == 200
         assert "Decision Lessons" in r.text
+
+
+class TestSinceInceptionTile:
+    """Verify the Since Inception KPI tile populates from Alpaca's
+    portfolio_history.base_value and degrades gracefully on failure."""
+
+    def _settings(self):
+        class _S:
+            alpaca_paper = True
+            alpaca_api_key = "k"
+            alpaca_api_secret = "s"
+        return _S()
+
+    def test_fetch_inception_baseline_returns_decimal(self, monkeypatch):
+        from decimal import Decimal as D
+        from types import SimpleNamespace
+
+        from trading_bot.dashboard import data as dash_data
+
+        class _FakeClient:
+            def __init__(self, *a, **kw): pass
+            def get_portfolio_history(self, req):
+                return SimpleNamespace(base_value=15000.0)
+
+        monkeypatch.setattr(dash_data, "TradingClient", _FakeClient)
+        out = dash_data._fetch_inception_baseline(self._settings())
+        assert out == D("15000.0")
+
+    def test_fetch_inception_returns_none_on_error(self, monkeypatch):
+        from trading_bot.dashboard import data as dash_data
+
+        class _BoomClient:
+            def __init__(self, *a, **kw): pass
+            def get_portfolio_history(self, req):
+                raise RuntimeError("no network")
+
+        monkeypatch.setattr(dash_data, "TradingClient", _BoomClient)
+        assert dash_data._fetch_inception_baseline(self._settings()) is None
+
+    def test_fetch_inception_returns_none_when_field_missing(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from trading_bot.dashboard import data as dash_data
+
+        class _FakeClient:
+            def __init__(self, *a, **kw): pass
+            def get_portfolio_history(self, req):
+                return SimpleNamespace(equity=[], timestamp=[])  # no base_value
+
+        monkeypatch.setattr(dash_data, "TradingClient", _FakeClient)
+        assert dash_data._fetch_inception_baseline(self._settings()) is None
+
+    def test_kpi_block_carries_inception_fields_when_settings_present(self, monkeypatch):
+        """Smoke check: when _fetch returns a value, the KpiBlock carries
+        the computed pnl/pct."""
+        from decimal import Decimal as D
+        from unittest.mock import MagicMock
+
+        from trading_bot.dashboard import data as dash_data
+
+        monkeypatch.setattr(
+            dash_data, "_fetch_inception_baseline", lambda s: D("15000")
+        )
+        alpaca = MagicMock()
+        alpaca.get_account.return_value = MagicMock(
+            equity=D("14948.66"), cash=D("13783.14")
+        )
+        alpaca.get_positions.return_value = []
+
+        class _S:
+            alpaca_paper = True
+            alpaca_api_key = "k"
+            alpaca_api_secret = "s"
+
+        kpi, _ = dash_data._build_kpi(alpaca, [], settings=_S())
+        assert kpi.inception_equity == D("15000")
+        assert kpi.inception_pnl == D("-51.34")
+        assert kpi.inception_pnl_pct is not None
+        assert kpi.inception_pnl_pct < 0
 
 
 class TestPromotionDebateBanner:

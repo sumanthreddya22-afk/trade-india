@@ -10,6 +10,7 @@ flaky) external API.
 """
 from __future__ import annotations
 
+import decimal
 import statistics
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -42,6 +43,12 @@ class KpiBlock:
     today_pnl_pct: Decimal
     max_drawdown_pct: Decimal
     open_position_count: int
+    # Cumulative since the account was opened. Sourced from Alpaca's
+    # portfolio_history ``base_value``. None when the API call fails or
+    # base_value is missing — the tile renders an em-dash in that case.
+    inception_equity: Decimal | None = None
+    inception_pnl: Decimal | None = None
+    inception_pnl_pct: float | None = None
 
 
 @dataclass(frozen=True)
@@ -284,6 +291,47 @@ def _safe_decimal(v: Any) -> Decimal:
         return Decimal("0")
 
 
+def _fetch_inception_baseline(settings: Settings) -> Decimal | None:
+    """Pull Alpaca's portfolio_history ``base_value`` (= equity at the
+    start of the requested window). Using ``period=all`` gives the
+    all-time-since-account-open baseline, which is what the "Since
+    Inception" tile needs.
+
+    Returns ``None`` on any failure (auth, network, missing field) so the
+    tile renders an em-dash. Callers MUST treat None as "unknown", not 0.
+    """
+    try:
+        client = TradingClient(
+            api_key=settings.alpaca_api_key,
+            secret_key=settings.alpaca_api_secret,
+            paper=getattr(settings, "alpaca_paper", True),
+        )
+        hist = client.get_portfolio_history(
+            GetPortfolioHistoryRequest(period="all", timeframe="1D")
+        )
+    except Exception:
+        # Fall back to the 1W window — base_value still works for accounts
+        # opened within the last week (typical paper-account lifetime).
+        try:
+            client = TradingClient(
+                api_key=settings.alpaca_api_key,
+                secret_key=settings.alpaca_api_secret,
+                paper=getattr(settings, "alpaca_paper", True),
+            )
+            hist = client.get_portfolio_history(
+                GetPortfolioHistoryRequest(period="1W", timeframe="1D")
+            )
+        except Exception:
+            return None
+    bv = getattr(hist, "base_value", None)
+    if bv is None or not isinstance(bv, (int, float, str, Decimal)):
+        return None
+    try:
+        return Decimal(str(bv))
+    except (ValueError, TypeError, decimal.InvalidOperation):
+        return None
+
+
 def _empty_kpi() -> KpiBlock:
     z = Decimal("0")
     return KpiBlock(
@@ -318,7 +366,12 @@ def _asset_class_label(raw: object) -> str:
     return "stock"
 
 
-def _build_kpi(alpaca: AlpacaClient, errors: list[str]) -> tuple[KpiBlock, list[PositionRow]]:
+def _build_kpi(
+    alpaca: AlpacaClient,
+    errors: list[str],
+    *,
+    settings: Settings | None = None,
+) -> tuple[KpiBlock, list[PositionRow]]:
     try:
         account = alpaca.get_account()
         positions = alpaca.get_positions()
@@ -356,11 +409,25 @@ def _build_kpi(alpaca: AlpacaClient, errors: list[str]) -> tuple[KpiBlock, list[
             errors.append(f"position {getattr(p, 'symbol', '?')}: {e}")
             continue
 
+    inception_equity: Decimal | None = None
+    inception_pnl: Decimal | None = None
+    inception_pnl_pct: float | None = None
+    if settings is not None:
+        inception_equity = _fetch_inception_baseline(settings)
+        if inception_equity is not None and inception_equity > 0:
+            inception_pnl = (equity - inception_equity).quantize(Decimal("0.01"))
+            inception_pnl_pct = float(
+                (equity / inception_equity - 1) * 100
+            )
+
     return KpiBlock(
         equity=equity, cash=cash,
         cash_pct=cash_pct, invested_pct=invested_pct,
         open_pnl=open_pnl,
         today_pnl_pct=Decimal("0"),  # filled in by curve
+        inception_equity=inception_equity,
+        inception_pnl=inception_pnl,
+        inception_pnl_pct=inception_pnl_pct,
         max_drawdown_pct=Decimal("0"),  # filled in by curve
         open_position_count=len(rows),
     ), rows
@@ -959,7 +1026,7 @@ def build_snapshot(
         vol_pct = 0.0
 
     # Account + positions
-    kpi, positions = _build_kpi(alpaca, errors)
+    kpi, positions = _build_kpi(alpaca, errors, settings=settings)
 
     # Equity curve + today P&L + max drawdown
     curve, today_pct, max_dd = _build_equity_curve(settings, errors)
@@ -970,6 +1037,9 @@ def build_snapshot(
         today_pnl_pct=today_pct,
         max_drawdown_pct=max_dd,
         open_position_count=kpi.open_position_count,
+        inception_equity=kpi.inception_equity,
+        inception_pnl=kpi.inception_pnl,
+        inception_pnl_pct=kpi.inception_pnl_pct,
     )
 
     # Closed-trade stats
