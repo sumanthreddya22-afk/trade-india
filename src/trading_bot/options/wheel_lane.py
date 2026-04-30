@@ -21,7 +21,6 @@ import datetime as dt
 from dataclasses import dataclass
 
 from trading_bot.config import WheelConfig
-from trading_bot.intelligence_apewisdom import ApeWisdomClient
 from trading_bot.intelligence_finnhub import FinnhubClient
 from trading_bot.options.chain import (
     ChainContract, pick_csp_contract, pick_cc_contract,
@@ -31,7 +30,14 @@ from trading_bot.options.chain import (
 @dataclass(frozen=True)
 class WheelInputs:
     """Per-symbol snapshot of everything the lane consults. The runner
-    builds this once per symbol per scan."""
+    builds this once per symbol per scan.
+
+    Bucket C: ``apewisdom`` was removed — the WSB spike gate was dead
+    (wallstreetbets_mentions() was never warmed for the wheel pipeline,
+    so is_spike() always returned False). VIX floor/ceiling + IV rank
+    floor already cover the volatility-avoidance intent from a more
+    reliable angle.
+    """
     symbol: str
     regime: str
     vix: float | None
@@ -39,7 +45,6 @@ class WheelInputs:
     spot: float
     iv_rank: float | None
     finnhub: FinnhubClient
-    apewisdom: ApeWisdomClient
     today: dt.date
     chain: list[ChainContract]
     cycle: object | None  # WheelCycle row when present
@@ -79,8 +84,6 @@ class WheelLane:
             return f"sentiment={inp.sentiment_score:.2f}"
         if inp.iv_rank is None or inp.iv_rank < self.cfg.iv_rank_floor:
             return f"iv_rank={inp.iv_rank}"
-        if inp.apewisdom.is_spike(inp.symbol, multiplier=self.cfg.wsb_spike_multiplier):
-            return "wsb_spike"
         # Earnings window = today .. today + dte_max + 2 (avoid binary gap
         # risk on a CSP whose expiration straddles an earnings print).
         end = inp.today + dt.timedelta(days=self.cfg.dte_max + 2)

@@ -141,7 +141,6 @@ class WheelConfig(BaseModel):
     min_annualized_yield: float = Field(default=0.12, ge=0)
     min_open_interest: int = Field(default=100, ge=0)
     universe_cache_hours: int = Field(default=24, ge=1, le=168)
-    wsb_spike_multiplier: float = Field(default=2.0, ge=1.0, le=10.0)
     blocklist_path: str = "strategy/wheel_blocklist.yaml"
     allowlist_path: str = "strategy/wheel_allowlist.yaml"
 

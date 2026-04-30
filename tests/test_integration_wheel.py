@@ -39,8 +39,9 @@ def test_scan_then_assignment_then_cc_then_called_away(engine):
     deps.cfg = MagicMock(enabled=True, dte_min=30, dte_max=45,
                          delta_target_low=0.20, delta_target_high=0.30,
                          vix_floor=15, vix_ceiling=30, sentiment_floor=-0.3,
-                         iv_rank_floor=30, wsb_spike_multiplier=2.0,
+                         iv_rank_floor=30,
                          min_premium_abs=0.20, min_open_interest=100,
+                         min_annualized_yield=0.0,  # Bucket C
                          take_profit_pct=0.50, dte_force_close=21,
                          delta_breach_csp=0.45, delta_breach_cc=0.55,
                          max_rolls_per_cycle=2)

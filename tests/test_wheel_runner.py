@@ -52,7 +52,6 @@ def _deps(engine):
     d.spot_for = MagicMock(return_value=200.0)
     d.sentiment_for = MagicMock(return_value=0.1)
     d.finnhub = MagicMock(); d.finnhub.has_earnings_in_window.return_value = False
-    d.apewisdom = MagicMock(); d.apewisdom.is_spike.return_value = False
     d.alert_queue = MagicMock()
     d.cfg = MagicMock()
     d.cfg.enabled = True
@@ -64,8 +63,8 @@ def _deps(engine):
     d.cfg.vix_ceiling = 30
     d.cfg.sentiment_floor = -0.3
     d.cfg.iv_rank_floor = 30
-    d.cfg.wsb_spike_multiplier = 2.0
     d.cfg.min_premium_abs = 0.20
+    d.cfg.min_annualized_yield = 0.0  # Bucket C: gate exists in pickers; default off here
     d.cfg.min_open_interest = 100
     d.cfg.take_profit_pct = 0.50
     d.cfg.dte_force_close = 21

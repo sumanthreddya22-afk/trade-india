@@ -6,7 +6,11 @@ from trading_bot.options.chain import (
 from trading_bot.config import WheelConfig
 
 
-def _c(strike, kind, delta, *, dte=35, bid=2.0, ask=2.10, oi=500, iv=0.30):
+def _c(strike, kind, delta, *, dte=35, bid=2.5, ask=2.60, oi=500, iv=0.30):
+    """Bucket C: bid bumped 2.0 -> 2.5 so the default 35-DTE / strike-190
+    contract clears the WheelConfig.min_annualized_yield (12%) gate.
+    Tests that need to fail liquidity / premium gates pass explicit bids.
+    """
     today = dt.date(2026, 4, 28)
     exp = today + dt.timedelta(days=dte)
     return ChainContract(

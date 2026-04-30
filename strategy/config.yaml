@@ -67,4 +67,3 @@ wheel:
   min_annualized_yield: 0.12
   min_open_interest: 100
   universe_cache_hours: 24
-  wsb_spike_multiplier: 2.0

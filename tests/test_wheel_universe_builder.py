@@ -131,6 +131,59 @@ def test_finnhub_unavailable_caches_unknown_for_retry(engine):
     assert all(r.eligible is False and r.reason == "finnhub_unavailable" for r in rows)
 
 
+def test_finnhub_unavailable_uses_short_retry_backoff(engine):
+    """Bucket C: a Finnhub outage must NOT poison the cache for 14 days.
+
+    The unavailable branch stamps cached_at well in the past so the next
+    nightly build re-checks the symbol within ~24h instead of waiting two
+    weeks for the TTL to expire.
+    """
+    fin = MagicMock()
+    fin.company_profile.side_effect = FinnhubUnavailable("rate limit")
+    deps = _deps(engine, optionable={"AAPL"}, finnhub=fin)
+    run_universe_build(deps)
+    with Session(engine) as s:
+        row = s.query(WheelUniverseCache).filter_by(symbol="AAPL").one()
+    cached_at = row.cached_at
+    if cached_at.tzinfo is None:
+        cached_at = cached_at.replace(tzinfo=dt.timezone.utc)
+    age = (dt.datetime.now(dt.timezone.utc) - cached_at).days
+    # Backoff stamps cached_at ~13 days back so a 14d TTL re-checks tomorrow.
+    assert 12 <= age <= 14
+
+
+def test_unhealthy_build_emits_alert(engine, monkeypatch):
+    """Bucket C: a build with eligible=0 fires a daemon_critical alert."""
+    captured = []
+    monkeypatch.setattr(
+        "trading_bot.options.wheel_universe_builder.queue_alert",
+        lambda ev: captured.append(ev),
+    )
+    fin = MagicMock()
+    fin.company_profile.side_effect = FinnhubUnavailable("rate limit")
+    deps = _deps(engine, optionable={"AAPL", "MSFT", "GOOG"}, finnhub=fin)
+    run_universe_build(deps)
+    assert any(ev.kind == "daemon_critical" for ev in captured), [
+        (ev.kind, ev.title) for ev in captured
+    ]
+
+
+def test_healthy_build_does_not_alert(engine, monkeypatch):
+    """Bucket C: an all-eligible build (well above the floor) emits no alert."""
+    captured = []
+    monkeypatch.setattr(
+        "trading_bot.options.wheel_universe_builder.queue_alert",
+        lambda ev: captured.append(ev),
+    )
+    fin = MagicMock()
+    fin.company_profile.return_value = _profile(market_cap_musd=50_000.0)
+    # 60 names — comfortably above the 50-name floor.
+    universe = {f"X{i:02d}" for i in range(60)}
+    deps = _deps(engine, optionable=universe, finnhub=fin)
+    run_universe_build(deps)
+    assert captured == []
+
+
 def test_skips_recently_cached_symbols(engine):
     """Builder respects the 14d cache TTL — symbols cached <14d ago aren't
     re-queried (saves Finnhub quota)."""

@@ -43,7 +43,11 @@ def pick_csp_contract(
     chain: list[ChainContract], *, cfg: WheelConfig, today: dt.date,
 ) -> ChainContract | None:
     """Pick the put with abs(delta) closest to 0.25 inside [delta_target_low, high]
-    and DTE inside [dte_min, dte_max]. Liquidity must pass. Returns None if no fit."""
+    and DTE inside [dte_min, dte_max]. Liquidity, min_premium_abs, and
+    min_annualized_yield must all pass. Returns None if no fit.
+
+    Bucket C: ``min_annualized_yield`` is now enforced (was dead config).
+    """
     target = (cfg.delta_target_low + cfg.delta_target_high) / 2.0
     candidates = [
         c for c in chain
@@ -52,6 +56,7 @@ def pick_csp_contract(
         and cfg.delta_target_low <= abs(c.delta) <= cfg.delta_target_high
         and passes_liquidity(c, cfg)
         and c.bid >= cfg.min_premium_abs
+        and annualized_yield(c, today) >= cfg.min_annualized_yield
     ]
     if not candidates:
         return None
@@ -61,7 +66,10 @@ def pick_csp_contract(
 def pick_cc_contract(
     chain: list[ChainContract], *, cost_basis: float, cfg: WheelConfig, today: dt.date,
 ) -> ChainContract | None:
-    """Pick a call with strike >= cost_basis, abs(delta) inside band, DTE in window."""
+    """Pick a call with strike >= cost_basis, abs(delta) inside band, DTE in window.
+
+    Bucket C: ``min_annualized_yield`` is now enforced for CCs as well.
+    """
     target = (cfg.delta_target_low + cfg.delta_target_high) / 2.0
     candidates = [
         c for c in chain
@@ -71,6 +79,7 @@ def pick_cc_contract(
         and cfg.delta_target_low <= abs(c.delta) <= cfg.delta_target_high
         and passes_liquidity(c, cfg)
         and c.bid >= cfg.min_premium_abs
+        and annualized_yield(c, today) >= cfg.min_annualized_yield
     ]
     if not candidates:
         return None
@@ -78,6 +87,8 @@ def pick_cc_contract(
 
 
 def annualized_yield(c: ChainContract, today: dt.date) -> float:
+    """Annualized yield = (bid * 100 / collateral) * (365 / DTE).
+    Used by wheel pickers to enforce ``min_annualized_yield`` (Bucket C)."""
     dte = max(_dte(c, today), 1)
     collateral = c.strike * 100.0
     if collateral <= 0:

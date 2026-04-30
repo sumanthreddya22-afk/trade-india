@@ -38,11 +38,10 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
 
     All wheel-runner external IO clients are imported lazily here so the
     daemon doesn't need them until wheel.enabled flips True. Keeps cold
-    boot fast and avoids a Finnhub/ApeWisdom dep being load-bearing for
+    boot fast and avoids a Finnhub dep being load-bearing for
     paper-with-wheel-disabled deployments.
     """
     import datetime as dt
-    from trading_bot.intelligence_apewisdom import ApeWisdomClient
     from trading_bot.intelligence_finnhub import FinnhubClient
     from trading_bot.options.alpaca_options import OptionAlpacaClient
     from trading_bot.options.iv_rank import compute_iv_rank
@@ -62,7 +61,6 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
     from trading_bot.options.wheel_runner import WheelDeps
 
     finnhub = FinnhubClient(api_key=settings.finnhub_api_key)
-    ape = ApeWisdomClient()
     opt = OptionAlpacaClient(settings)
 
     def _load_yaml_symbols(path_str: str) -> set[str]:
@@ -80,9 +78,13 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
         """Wheel-eligible universe = discovered set (wheel_universe_cache,
         eligible=True) plus operator allowlist override, minus blocklist
         override, intersected with currently-optionable. The discovered set
-        is built nightly by wheel_universe_builder. If the cache is empty
-        (first-ever run hasn't completed), falls back to allowlist-only.
-        Signals decide which of these to act on TODAY."""
+        is built nightly by wheel_universe_builder.
+
+        Bucket C: when both discovered AND allowlist are empty (first-ever
+        run hasn't completed, or the universe builder cratered), fire a
+        daemon_critical alert so the operator notices instead of the wheel
+        silently iterating an empty set.
+        """
         from trading_bot.state_db import WheelUniverseCache
         from sqlalchemy.orm import Session as _S
         optionable = opt.list_optionable_us_equities()
@@ -94,7 +96,26 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
                 _s.query(WheelUniverseCache).filter_by(eligible=True).all()
             }
         if not discovered and not allowlist:
-            return set()  # no discovered universe and no override → opt in required
+            try:
+                from trading_bot.alerts import AlertEvent
+                queue_alert(AlertEvent(
+                    kind="daemon_critical", severity="warn",
+                    title="Wheel eligible-set is empty",
+                    detail_html=(
+                        "<p>wheel_universe_cache has zero <code>eligible=True</code> "
+                        "rows AND <code>wheel_allowlist.yaml</code> is empty. The "
+                        "wheel scan will iterate an empty universe — no entries "
+                        "will be opened.</p>"
+                        "<p>Verify the nightly <code>wheel_universe_build</code> "
+                        "(21:30 ET) ran successfully. If cold-starting, populate "
+                        "the allowlist or wait for the first nightly build.</p>"
+                    ),
+                    fired_at=dt.datetime.now(dt.timezone.utc),
+                    dedup_key=f"wheel_universe_empty:{dt.date.today().isoformat()}",
+                ))
+            except Exception:
+                pass
+            return set()
         return ((discovered | allowlist) & optionable) - blocklist
 
     def _sentiment_for(symbol: str) -> float | None:

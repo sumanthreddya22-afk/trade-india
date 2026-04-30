@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session
 
 from trading_bot.alerts import AlertEvent
 from trading_bot.config import WheelConfig
-from trading_bot.intelligence_apewisdom import ApeWisdomClient
 from trading_bot.intelligence_finnhub import FinnhubClient
 from trading_bot.options.alpaca_options import OptionAlpacaClient
 from trading_bot.options.chain import ChainContract
@@ -39,7 +38,6 @@ class WheelDeps:
     spot_for: Callable[[str], float | None]
     sentiment_for: Callable[[str], float | None]
     finnhub: FinnhubClient
-    apewisdom: ApeWisdomClient
     alert_queue: Callable[[AlertEvent], None]
 
 
@@ -179,7 +177,7 @@ def run_wheel_scan(deps: WheelDeps) -> None:
             sentiment_score=deps.sentiment_for(symbol),
             spot=(deps.spot_for(symbol) or 0.0),
             iv_rank=deps.iv_rank_for(symbol),
-            finnhub=deps.finnhub, apewisdom=deps.apewisdom, today=today,
+            finnhub=deps.finnhub, today=today,
             chain=[],  # filled in below if preflight passes
             cycle=cycle, cost_basis=cost_basis,
         )

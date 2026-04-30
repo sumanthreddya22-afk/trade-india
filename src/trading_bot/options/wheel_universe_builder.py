@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from trading_bot.alerts import AlertEvent, queue_alert
 from trading_bot.intelligence_finnhub import (
     CompanyProfile, FinnhubClient, FinnhubUnavailable,
 )
@@ -46,7 +47,18 @@ log = logging.getLogger(__name__)
 _MIN_MARKET_CAP_MUSD = 10_000.0  # $10B in $-millions
 _MIN_LISTING_YEARS = 3
 _CACHE_TTL = dt.timedelta(days=14)
+# Bucket C: a transient Finnhub outage must NOT purge a real $10B+ name from
+# the universe for 14 days. Stamp the cached_at 13 days back when a Finnhub
+# call fails so the next nightly build re-checks the symbol within ~24h.
+_FINNHUB_RETRY_BACKOFF = dt.timedelta(days=13)
 _FINNHUB_RATE_DELAY_S = 1.05  # ~57 calls/min, comfortably under 60/min ceiling
+
+# Bucket C: alert thresholds. If the eligible-set count drops below this
+# floor OR the per-build Finnhub-unavailable rate exceeds this fraction of
+# the total processed names, fire a daemon_critical alert. Operator decides
+# whether to investigate (real issue) or wait it out (transient outage).
+_ELIGIBLE_FLOOR_ALERT = 50
+_UNAVAILABLE_RATE_ALERT = 0.10  # 10% of processed names
 
 
 # Sector-ETF detection: yfinance has no market cap for ETFs. We treat any
@@ -171,9 +183,13 @@ def run_universe_build(deps: BuilderDeps) -> dict[str, int]:
         try:
             profile = deps.finnhub.company_profile(symbol)
         except FinnhubUnavailable:
+            # Bucket C: stamp cached_at well in the past so the next
+            # nightly run re-checks this symbol — DON'T let a transient
+            # Finnhub outage purge a good name for 14 days.
+            retry_at = now - _FINNHUB_RETRY_BACKOFF
             with Session(deps.engine) as s:
                 _upsert(s, symbol, eligible=False,
-                        reason="finnhub_unavailable", cached_at=now)
+                        reason="finnhub_unavailable", cached_at=retry_at)
                 s.commit()
             counts["unavailable"] += 1
             if deps.rate_delay_s > 0:
@@ -188,7 +204,61 @@ def run_universe_build(deps: BuilderDeps) -> dict[str, int]:
             counts["eligible"] += 1
         else:
             counts["rejected"] += 1
-        time.sleep(_FINNHUB_RATE_DELAY_S)
+        if deps.rate_delay_s > 0:
+            time.sleep(deps.rate_delay_s)
 
     log.info("wheel_universe_build complete: %s", counts)
+    _alert_if_unhealthy(counts)
     return counts
+
+
+def _alert_if_unhealthy(counts: dict[str, int]) -> None:
+    """Bucket C: fire a daemon_critical alert when the build looks unhealthy.
+
+    Two triggers:
+    1. Eligible count below floor → likely Finnhub-wide outage or filter bug.
+    2. Unavailable rate above threshold → Finnhub flaking, which would
+       silently shrink the universe over time without this signal.
+
+    Best-effort — alerting must never raise. Idempotent dedup keys so the
+    operator gets one alert per build, not per failure.
+    """
+    try:
+        eligible = counts.get("eligible", 0)
+        unavailable = counts.get("unavailable", 0)
+        rejected = counts.get("rejected", 0)
+        processed = eligible + unavailable + rejected
+        unavailable_rate = unavailable / processed if processed else 0.0
+
+        msgs: list[str] = []
+        if eligible < _ELIGIBLE_FLOOR_ALERT:
+            msgs.append(
+                f"<b>eligible={eligible}</b> &lt; floor {_ELIGIBLE_FLOOR_ALERT}"
+            )
+        if unavailable_rate > _UNAVAILABLE_RATE_ALERT:
+            msgs.append(
+                f"<b>finnhub_unavailable rate {unavailable_rate:.1%}</b> "
+                f"&gt; {_UNAVAILABLE_RATE_ALERT:.0%}"
+            )
+        if not msgs:
+            return
+        detail = (
+            "<p>Wheel universe build looks unhealthy.</p>"
+            f"<p>Counts: eligible={eligible}, rejected={rejected}, "
+            f"unavailable={unavailable}, fell_out={counts.get('fell_out', 0)}, "
+            f"cached_skip={counts.get('cached_skip', 0)}.</p>"
+            "<ul>" + "".join(f"<li>{m}</li>" for m in msgs) + "</ul>"
+            "<p>Affected names will be re-checked tomorrow due to the "
+            "Bucket-C retry backoff. If this persists 2+ nights, investigate "
+            "Finnhub status or the optionable-set source.</p>"
+        )
+        queue_alert(AlertEvent(
+            kind="daemon_critical",
+            severity="warn",
+            title=f"Wheel universe degraded: eligible={eligible}",
+            detail_html=detail,
+            fired_at=dt.datetime.now(dt.timezone.utc),
+            dedup_key=f"wheel_universe_unhealthy:{dt.date.today().isoformat()}",
+        ))
+    except Exception as e:  # pragma: no cover - alert path is best-effort
+        log.warning("wheel_universe_unhealthy alert failed: %s", e)
