@@ -8,9 +8,12 @@ from click.testing import CliRunner
 def test_bot_status_runs_and_calls_email():
     from trading_bot.cli import main
 
+    # Equity intentionally != $100k so the empty-paper-account guard
+    # (cli.py:status) doesn't suppress the send — that guard only fires on
+    # the exact $100k / 0 positions / unknown regime signature.
     fake_account = MagicMock(
-        equity=Decimal("100000"), cash=Decimal("50000"),
-        buying_power=Decimal("200000"), portfolio_value=Decimal("100000"),
+        equity=Decimal("100001"), cash=Decimal("50000"),
+        buying_power=Decimal("200000"), portfolio_value=Decimal("100001"),
     )
     fake_positions = []
 
@@ -39,7 +42,7 @@ def test_bot_status_runs_and_calls_email():
         kwargs = sender.send.call_args.kwargs
         assert "Status" in kwargs["subject"]
         # Equity is formatted with thousands separator in the polished email shell.
-        assert "100,000" in kwargs["html_body"]
+        assert "100,001" in kwargs["html_body"]
 
 
 def test_bot_dry_run_passes_risk_manager():

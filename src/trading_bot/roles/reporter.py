@@ -39,7 +39,11 @@ class ReporterRole(BaseRole):
         from trading_bot import cli as cli_mod
         job = (ctx or {}).get("subjob") or getattr(self, "_current_subjob", None)
         if job == "eod":
-            cli_mod.eod_report.callback()
+            # `daily_digest` is the data-driven 12-section digest backed by
+            # gather_all(). The older `eod_report` builds a stub DigestContext
+            # with starting_equity == ending_equity and zeroed P&L — what
+            # shipped on 2026-04-30 as "the EOD report is wrong".
+            cli_mod.daily_digest.callback()
         elif job == "midday":
             cli_mod.rich_report.callback(period="mid")
         else:

@@ -355,6 +355,23 @@ def status() -> None:
         for p in positions
     ]
 
+    # Guard: account.equity == $100,000 + 0 positions + regime resolution failed
+    # is the unambiguous "freshly-initialized paper account / misconfigured Alpaca
+    # client" signature. Sending this is misleading and pollutes the inbox; on
+    # 2026-04-30 it accounted for 21 of 71 emails for the day.
+    if (
+        not pos_dicts
+        and regime == "unknown"
+        and Decimal(str(account.equity)) == Decimal("100000")
+    ):
+        click.echo(
+            "[status] refusing to send — empty paper-account signature "
+            "($100k / 0 positions / unknown regime). "
+            "Check ALPACA_API_KEY/ALPACA_API_SECRET if this is unexpected.",
+            err=True,
+        )
+        return
+
     ctx = StatusContext(
         as_of=_dt_status.datetime.now(_dt_status.timezone.utc),
         equity=account.equity, cash=account.cash,
@@ -1173,8 +1190,16 @@ def verify_stops() -> None:
     try:
         alpaca = AlpacaClient(settings)
         positions = alpaca.get_positions()
+        # nested=True returns parents WITH their child legs in `.legs`. Without
+        # it, bracket-order stop legs (the protective stop attached to a BUY
+        # parent) don't show up in the OPEN list, so we'd think the position
+        # was unprotected and try to place a duplicate stop — Alpaca then
+        # rejects it. This is what produced the 13 [BAD] verify-stops emails
+        # for ARM on 2026-04-30 between 13:50 and 19:50 UTC.
         open_orders = alpaca._client.get_orders(
-            filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200)
+            filter=GetOrdersRequest(
+                status=QueryOrderStatus.OPEN, limit=200, nested=True
+            )
         )
     except Exception as e:
         click.echo(f"[verify-stops] alpaca query failed: {e}")
@@ -1183,10 +1208,27 @@ def verify_stops() -> None:
     def _canon(sym: str) -> str:
         return str(sym).replace("/", "").upper()
 
+    def _is_live_stop(o) -> bool:
+        type_ok = str(getattr(o, "type", "")).lower().endswith(
+            ("stop", "stop_limit")
+        )
+        if not type_ok:
+            return False
+        # Treat any non-terminal state as protective. ACCEPTED legs of a bracket
+        # whose parent has filled are live-but-pending-route from Alpaca's view
+        # and will trigger; we must not classify them as missing.
+        terminal = {"filled", "canceled", "expired", "rejected", "replaced",
+                    "done_for_day", "suspended"}
+        return str(getattr(o, "status", "")).split(".")[-1].lower() not in terminal
+
     stops_by_symbol: dict[str, list] = {}
+    def _ingest(order) -> None:
+        if _is_live_stop(order):
+            stops_by_symbol.setdefault(_canon(order.symbol), []).append(order)
+        for leg in (getattr(order, "legs", None) or []):
+            _ingest(leg)
     for o in open_orders:
-        if str(getattr(o, "type", "")).lower().endswith(("stop", "stop_limit")):
-            stops_by_symbol.setdefault(_canon(o.symbol), []).append(o)
+        _ingest(o)
 
     unprotected = [p for p in positions if _canon(p.symbol) not in stops_by_symbol]
 
@@ -1592,14 +1634,16 @@ def midday_snapshot_cli() -> None:
                 todays_realized += Decimal(str(ct.get("pnl", 0)))
             except Exception:
                 pass
-    # Trades_today for midday = today's entry rows (TradeRow → dict)
+    # Trades_today for midday = today's entry rows (TradeRow → dict).
+    # qty/price stay numeric — email_midday.py:66 formats price with `:,.2f`
+    # which raises ValueError on str inputs.
     for tr in data.trades_today:
         todays_trades_dicts.append({
             "time": tr.time.strftime("%H:%M"),
             "side": tr.side,
             "symbol": tr.symbol,
-            "qty": str(tr.qty),
-            "price": str(tr.price),
+            "qty": tr.qty,
+            "price": float(tr.price),
             "strategy": tr.strategy,
         })
 
