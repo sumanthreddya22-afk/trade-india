@@ -38,6 +38,8 @@ JOB_EVENT_MAP: dict[str, str] = {
     "wheel_manage": "wheel_manage_start",
     "wheel_universe_build": "wheel_universe_build_start",
     "iv_capture": "iv_capture_start",
+    # Bucket G: nightly self-review at 17:00 ET (every day, weekends too).
+    "nightly_review": "nightly_review_start",
 }
 
 
@@ -64,6 +66,7 @@ def expected_fires_for_date(*, audit_date: dt.date) -> dict[str, int]:
         "reconciler_pre_digest": 1,
         "schedule_audit": 1,
         "alert_drain": 24 * 60,                            # every 1 min
+        "nightly_review": 1,                               # 17:00 ET daily (Bucket G)
         # Bucket E: wheel cadence is config-driven (cadence.wheel_*); we
         # leave concrete counts out and rely on log presence rather than
         # exact-count comparison. The map entries above ensure missing-fire

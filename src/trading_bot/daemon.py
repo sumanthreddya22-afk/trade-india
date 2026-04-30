@@ -454,6 +454,12 @@ def _load_runners(log: StructuredLogger):
         "wheel_manage": _wrap("wheel_manage", wheel_manage_runner),
         "iv_capture": _wrap("iv_capture", iv_capture_runner),
         "wheel_universe_build": _wrap("wheel_universe_build", wheel_universe_build_runner),
+        # Bucket G: nightly self-review at 17:00 ET. Read-only — sends a
+        # summary email; does not mutate state. Wired via cli_mod so the
+        # operator can also run it manually with `bot nightly-review`.
+        "nightly_review": _wrap(
+            "nightly_review", lambda: cli_mod.nightly_review_cli.callback()
+        ),
     }
 
 

@@ -1526,6 +1526,34 @@ def rank_command() -> None:
     click.echo(f"Stage-2 ranked {len(result.candidates)} candidates across {len(lanes)} lanes")
 
 
+@main.command("nightly-review")
+def nightly_review_cli() -> None:
+    """Bucket G: build + send the nightly self-review email.
+
+    Read-only summary: decision rollup, drift watch, freshness audit,
+    risk state, system health. Wired into the daemon at 17:00 ET; this
+    CLI lets the operator invoke it manually for testing or after-hours
+    triage.
+    """
+    from trading_bot.nightly_review import run_nightly_review
+    from trading_bot.state_db import get_engine
+    settings = Settings()
+    cfg = load_config(CONFIG_PATH)
+    sender = EmailSender(
+        user=settings.gmail_user, app_password=settings.gmail_app_password,
+        to=cfg.email.to,
+    )
+    engine = get_engine(STATE_DB_PATH)
+    review = run_nightly_review(
+        engine=engine, sender=sender, recipient=cfg.email.to,
+    )
+    click.echo(
+        f"Sent nightly review to {cfg.email.to}: "
+        f"placed={review.decisions.placed_order} "
+        f"drift_findings={len(review.drift)}"
+    )
+
+
 @main.command("midday-snapshot")
 def midday_snapshot_cli() -> None:
     """Build + send the midday snapshot email at 12:00 ET — data-driven."""

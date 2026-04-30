@@ -174,6 +174,21 @@ def register_jobs(
         coalesce=True,
     )
 
+    # Bucket G: nightly self-review at 17:00 ET (30 min after the digest, so
+    # the operator has time to skim the digest first). Read-only morning
+    # brief: decision rollup, drift watch, freshness, risk state, system
+    # health. Sent every day (incl. weekends) so a Friday-night job miss
+    # surfaces Saturday morning, not Monday afternoon.
+    if "nightly_review" in runners:
+        scheduler.add_job(
+            runners["nightly_review"],
+            trigger=CronTrigger(hour=17, minute=0, timezone=et),
+            id="nightly_review",
+            replace_existing=True,
+            misfire_grace_time=600,
+            coalesce=True,
+        )
+
     # Log rotation: weekly Sun 03:00 ET
     scheduler.add_job(
         runners["log_rotation"],
