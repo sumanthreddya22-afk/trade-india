@@ -970,6 +970,8 @@ def _build_last_scan() -> LastScanBlock | None:
             return "emerald"
         if action == "rejected_by_risk":
             return "rose"
+        if action == "rejected_by_risk_debate":
+            return "fuchsia"
         if action == "hold":
             return "amber"
         return "slate"
@@ -982,7 +984,10 @@ def _build_last_scan() -> LastScanBlock | None:
         for d in persisted.decisions
     ]
     placed = sum(1 for d in persisted.decisions if d.action == "placed_order")
-    rejected = sum(1 for d in persisted.decisions if d.action == "rejected_by_risk")
+    rejected = sum(
+        1 for d in persisted.decisions
+        if d.action in ("rejected_by_risk", "rejected_by_risk_debate")
+    )
     holds = sum(1 for d in persisted.decisions if d.action == "hold")
     return LastScanBlock(
         command=persisted.command, regime=persisted.regime,

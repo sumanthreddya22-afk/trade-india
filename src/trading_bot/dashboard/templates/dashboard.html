@@ -114,8 +114,12 @@
     </div>
 
     {% include "_decision_activity.html" %}
-    {% include "_lessons.html" %}
-    {% include "_last_scan.html" %}
+    {# Lessons + last-scan as a pair: balances Recent Work's visual weight
+       and avoids three full-width cards stacked vertically. #}
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {% include "_lessons.html" %}
+      {% include "_last_scan.html" %}
+    </section>
 
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {% include "_opportunities.html" %}

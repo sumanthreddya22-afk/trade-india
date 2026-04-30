@@ -131,7 +131,9 @@ class TestFragments:
         assert 'id="decision_activity"' in r.text
         assert 'id="freshness"' in r.text
         assert 'id="lessons"' in r.text
-        assert "Since Inception" in r.text
+        # Cumulative-since-start P&L is inlined on the Account Value
+        # tile rather than a standalone tile. Confirm the marker copy.
+        assert "since start" in r.text
         # Sidebar nav links present
         assert "Decision log" in r.text
         assert "Data health" in r.text

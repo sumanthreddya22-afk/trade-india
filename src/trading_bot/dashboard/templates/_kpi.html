@@ -1,26 +1,21 @@
-<section id="kpi" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4"
+<section id="kpi" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"
          hx-get="/fragment/kpi" hx-trigger="every 60s" hx-swap="outerHTML">
-  <div class="card p-5" title="Total account value (cash + market value of all positions).">
+  <div class="card p-5" title="Total account value (cash + market value of all positions). The 'since start' line is cumulative P&amp;L vs the account's funding baseline — includes realized wins, realized losses, fees, slippage, and current unrealized.">
     <div class="label">Account Value</div>
     <div class="kpi-num text-emerald-400 mt-2">{{ fmt.usd(s.kpi.equity) }}</div>
-    <div class="kpi-sub">{{ s.kpi.open_position_count }} open position{{ "" if s.kpi.open_position_count == 1 else "s" }}</div>
-  </div>
-  <div class="card p-5" title="Cumulative P&amp;L since the account was funded. Includes everything: realized wins, realized losses, fees, slippage, and current unrealized.">
-    <div class="label">Since Inception</div>
-    {% if s.kpi.inception_pnl is not none and s.kpi.inception_pnl_pct is not none %}
-      <div class="kpi-num text-{{ fmt.pnl_color(s.kpi.inception_pnl) }}-400 mt-2">{{ fmt.usd(s.kpi.inception_pnl, sign=true) }}</div>
-      <div class="kpi-sub">{{ fmt.pct(s.kpi.inception_pnl_pct, sign=true) }}{% if s.kpi.inception_equity %} from {{ fmt.usd(s.kpi.inception_equity) }}{% endif %}</div>
-    {% else %}
-      <div class="kpi-num text-slate-500 mt-2">—</div>
-      <div class="kpi-sub">baseline unavailable</div>
-    {% endif %}
+    <div class="kpi-sub">
+      {{ s.kpi.open_position_count }} open position{{ "" if s.kpi.open_position_count == 1 else "s" }}
+      {% if s.kpi.inception_pnl is not none and s.kpi.inception_pnl_pct is not none %}
+        · <span class="text-{{ fmt.pnl_color(s.kpi.inception_pnl) }}-400">{{ fmt.usd(s.kpi.inception_pnl, sign=true) }} ({{ fmt.pct(s.kpi.inception_pnl_pct, sign=true) }})</span> since start
+      {% endif %}
+    </div>
   </div>
   <div class="card p-5" title="Account value change since yesterday's close.">
     <div class="label">Today's P&amp;L</div>
     <div class="kpi-num text-{{ fmt.pnl_color(s.kpi.today_pnl_pct) }}-400 mt-2">{{ fmt.pct(s.kpi.today_pnl_pct, sign=true) }}</div>
     <div class="kpi-sub">since yesterday's close</div>
   </div>
-  <div class="card p-5" title="Profit/loss across positions that are still open. Becomes realized once closed. NOTE: this is open-only — closed-trade P&amp;L is folded into Since Inception.">
+  <div class="card p-5" title="Profit/loss across positions that are still open. Becomes realized once closed. NOTE: this is open-only — closed-trade P&amp;L rolls into Account Value's 'since start' line.">
     <div class="label">Open Trades P&amp;L</div>
     <div class="kpi-num text-{{ fmt.pnl_color(s.kpi.open_pnl) }}-400 mt-2">{{ fmt.usd(s.kpi.open_pnl, sign=true) }}</div>
     <div class="kpi-sub">on currently open positions</div>
