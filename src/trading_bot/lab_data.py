@@ -139,18 +139,36 @@ def active_halts(session: Session) -> list[HaltView]:
 
 @dataclass
 class LabEvolutionView:
+    # Most-recent attempt — may be a 0-trial no-op when nothing changed.
     last_run_started_at: dt.datetime | None
     last_run_finished_at: dt.datetime | None
     last_run_n_trials: int
     last_run_best_fitness: float | None
     last_run_template: str | None
     last_run_promoted: bool
+    # Most-recent run with n_trials > 0 — what the operator usually wants to
+    # see ("the last time this thing actually did work"). Equal to last_run_*
+    # when the latest attempt was productive; differs when today's run was a
+    # no-op (e.g., params hadn't drifted; nothing new to search). Without this
+    # split, the card showed "0 trials / —" on no-op days even though the
+    # leaderboard still had real numbers from yesterday.
+    last_productive_run_started_at: dt.datetime | None
+    last_productive_run_n_trials: int
+    last_productive_run_best_fitness: float | None
+    last_productive_run_template: str | None
+    last_productive_run_promoted: bool
     top_leaderboard: list[dict]
 
 
 def lab_evolution(session: Session) -> LabEvolutionView:
     last_run = (
         session.query(EvolutionRun).order_by(desc(EvolutionRun.started_at)).first()
+    )
+    last_productive = (
+        session.query(EvolutionRun)
+        .filter(EvolutionRun.n_trials > 0)
+        .order_by(desc(EvolutionRun.started_at))
+        .first()
     )
     top = (
         session.query(Leaderboard)
@@ -172,12 +190,14 @@ def lab_evolution(session: Session) -> LabEvolutionView:
     ]
     if last_run is None:
         return LabEvolutionView(
-            last_run_started_at=None,
-            last_run_finished_at=None,
-            last_run_n_trials=0,
-            last_run_best_fitness=None,
-            last_run_template=None,
-            last_run_promoted=False,
+            last_run_started_at=None, last_run_finished_at=None,
+            last_run_n_trials=0, last_run_best_fitness=None,
+            last_run_template=None, last_run_promoted=False,
+            last_productive_run_started_at=None,
+            last_productive_run_n_trials=0,
+            last_productive_run_best_fitness=None,
+            last_productive_run_template=None,
+            last_productive_run_promoted=False,
             top_leaderboard=leaderboard,
         )
     return LabEvolutionView(
@@ -187,6 +207,21 @@ def lab_evolution(session: Session) -> LabEvolutionView:
         last_run_best_fitness=last_run.best_fitness,
         last_run_template=last_run.template_name,
         last_run_promoted=bool(last_run.auto_promoted),
+        last_productive_run_started_at=(
+            last_productive.started_at if last_productive else None
+        ),
+        last_productive_run_n_trials=(
+            last_productive.n_trials if last_productive else 0
+        ),
+        last_productive_run_best_fitness=(
+            last_productive.best_fitness if last_productive else None
+        ),
+        last_productive_run_template=(
+            last_productive.template_name if last_productive else None
+        ),
+        last_productive_run_promoted=(
+            bool(last_productive.auto_promoted) if last_productive else False
+        ),
         top_leaderboard=leaderboard,
     )
 

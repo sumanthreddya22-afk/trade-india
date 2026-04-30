@@ -12,24 +12,62 @@
   {% if ev is none or (ev.last_run_started_at is none and not ev.top_leaderboard) %}
     <div class="text-sm text-slate-500">Lab has not produced any leaderboard rows yet. First successful nightly run will populate this.</div>
   {% else %}
-    {# Last run summary KPIs #}
+    {# Last run summary KPIs.
+       Two-tier display so 0-trial no-op runs (which produce a row but no new
+       optimization output) don't make the card look like the Lab is broken.
+       When today's run was productive we show it as the headline; when today
+       was a no-op we show the most-recent productive run as the headline +
+       a faded "today" sub-line so the operator knows the cron did fire. #}
     {% if ev.last_run_started_at %}
-    <div class="grid grid-cols-2 gap-3 mb-4">
-      <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
-        <div class="text-[10px] uppercase tracking-wider text-slate-500">Last Search</div>
-        <div class="text-lg font-semibold mt-0.5">{{ ev.last_run_n_trials }} trials</div>
-        <div class="text-[11px] text-slate-500 mt-0.5">{{ ev.last_run_template }} · {{ ev.last_run_started_at | et('%b %d %-I:%M %p ET') }}</div>
-      </div>
-      <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
-        <div class="text-[10px] uppercase tracking-wider text-slate-500">Best Fitness</div>
-        <div class="text-lg font-semibold mt-0.5 {% if ev.last_run_promoted %}text-emerald-300{% else %}text-slate-100{% endif %}">
-          {% if ev.last_run_best_fitness is not none %}{{ "%.2f"|format(ev.last_run_best_fitness) }}{% else %}—{% endif %}
+      {% if ev.last_run_n_trials > 0 %}
+        {% set headline_started = ev.last_run_started_at %}
+        {% set headline_trials = ev.last_run_n_trials %}
+        {% set headline_template = ev.last_run_template %}
+        {% set headline_fitness = ev.last_run_best_fitness %}
+        {% set headline_promoted = ev.last_run_promoted %}
+        {% set headline_label = "Last Search" %}
+      {% else %}
+        {% set headline_started = ev.last_productive_run_started_at %}
+        {% set headline_trials = ev.last_productive_run_n_trials %}
+        {% set headline_template = ev.last_productive_run_template %}
+        {% set headline_fitness = ev.last_productive_run_best_fitness %}
+        {% set headline_promoted = ev.last_productive_run_promoted %}
+        {% set headline_label = "Last Productive Search" %}
+      {% endif %}
+
+      {% if ev.last_run_n_trials == 0 %}
+        <div class="mb-3 px-3 py-2 rounded-lg border border-amber-700/40 bg-amber-900/20 text-[11px] text-amber-200">
+          ⚠ Today's run ({{ ev.last_run_started_at | et('%b %d %-I:%M %p ET') }})
+          produced 0 new trials — likely a no-op (params didn't drift).
+          Headline below is the most-recent productive run.
         </div>
-        <div class="text-[11px] mt-0.5 {% if ev.last_run_promoted %}text-emerald-400{% else %}text-slate-500{% endif %}">
-          {% if ev.last_run_promoted %}auto-promoted{% else %}no promotion{% endif %}
+      {% endif %}
+
+      <div class="grid grid-cols-2 gap-3 mb-4">
+        <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500">{{ headline_label }}</div>
+          <div class="text-lg font-semibold mt-0.5">
+            {% if headline_trials %}{{ headline_trials }} trials{% else %}—{% endif %}
+          </div>
+          <div class="text-[11px] text-slate-500 mt-0.5">
+            {% if headline_template %}
+              {{ headline_template }} ·
+              {{ headline_started | et('%b %d %-I:%M %p ET') }}
+            {% else %}
+              no productive runs yet
+            {% endif %}
+          </div>
+        </div>
+        <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500">Best Fitness</div>
+          <div class="text-lg font-semibold mt-0.5 {% if headline_promoted %}text-emerald-300{% else %}text-slate-100{% endif %}">
+            {% if headline_fitness is not none %}{{ "%.2f"|format(headline_fitness) }}{% else %}—{% endif %}
+          </div>
+          <div class="text-[11px] mt-0.5 {% if headline_promoted %}text-emerald-400{% else %}text-slate-500{% endif %}">
+            {% if headline_promoted %}auto-promoted{% else %}no promotion{% endif %}
+          </div>
         </div>
       </div>
-    </div>
     {% endif %}
 
     {# Top leaderboard table #}

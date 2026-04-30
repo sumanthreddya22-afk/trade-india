@@ -12,9 +12,16 @@
   {% if sp is none or sp.n_calls_mtd == 0 %}
     <div class="space-y-2">
       <div class="text-sm text-slate-500">No Anthropic API calls this month.</div>
-      <div class="text-[11px] text-slate-600">First call fires Saturday 06:00 ET (Strategy Architect)</div>
+      <div class="text-[11px] text-slate-600">
+        Configured callers (all pinned to <span class="font-mono text-slate-400">claude-opus-4-7</span>):
+      </div>
+      <ul class="text-[11px] text-slate-600 ml-4 list-disc space-y-0.5">
+        <li>Strategy Architect — Saturday 06:00 ET (weekly)</li>
+        <li>Tone Analyst — on-demand (sentiment-warm path)</li>
+        <li>News Controller (W4) — wired via <code class="text-slate-500">propose_news_trade()</code>; scheduler cron pending</li>
+      </ul>
       {% if sp %}
-      <div class="text-[11px] text-slate-600">Cap: ${{ "%.0f"|format(sp.monthly_cap_usd) }}/mo</div>
+      <div class="text-[11px] text-slate-600 pt-1">Cap: ${{ "%.0f"|format(sp.monthly_cap_usd) }}/mo</div>
       {% endif %}
     </div>
   {% else %}
