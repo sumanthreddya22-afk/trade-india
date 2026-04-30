@@ -231,28 +231,68 @@ def main() -> None:
 @main.command()
 def status() -> None:
     """Email a snapshot of the current paper account state."""
+    import datetime as _dt_status
+    import json as _json_status
+    from trading_bot.email_alerts import StatusContext, build_status_email
+
     settings = Settings()
     cfg = load_config(CONFIG_PATH)
     client = AlpacaClient(settings)
     account = client.get_account()
     positions = client.get_positions()
 
-    import datetime as _dt_status
-    _ctx_status = DigestContext(
-        date=_dt_status.date.today(),
-        starting_equity=account.equity,
-        ending_equity=account.equity,
-        realized_pnl=Decimal("0"),
-        unrealized_pnl=Decimal("0"),
-        regime="trending_up",
-        active_config_version="unknown",
+    # Open-order count + heartbeat — best-effort, never block the email.
+    try:
+        open_orders = client.get_open_order_symbols()
+        open_order_count = len(open_orders)
+    except Exception:
+        open_order_count = 0
+
+    last_heartbeat_age = None
+    last_action = None
+    try:
+        hb_path = Path("data/heartbeat.json")
+        if hb_path.exists():
+            hb = _json_status.loads(hb_path.read_text())
+            ts = _dt_status.datetime.fromisoformat(hb["ts"].replace("Z", "+00:00"))
+            last_heartbeat_age = (
+                _dt_status.datetime.now(_dt_status.timezone.utc) - ts
+            ).total_seconds() / 60.0
+            last_action = hb.get("last_action")
+    except Exception:
+        pass
+
+    # Detect regime live so the subject reflects current market state.
+    market = MarketDataClient(settings)
+    try:
+        regime = _live_regime(market, cfg).regime.value
+    except Exception:
+        regime = "unknown"
+
+    pos_dicts = [
+        {
+            "symbol": p.symbol, "qty": p.qty,
+            "avg_entry_price": p.avg_entry_price,
+            "market_value": p.market_value,
+            "unrealized_pl": p.unrealized_pl,
+        }
+        for p in positions
+    ]
+
+    ctx = StatusContext(
+        as_of=_dt_status.datetime.now(_dt_status.timezone.utc),
+        equity=account.equity, cash=account.cash,
+        buying_power=account.buying_power, regime=regime,
+        open_positions=pos_dicts, open_order_count=open_order_count,
+        last_heartbeat_age_minutes=last_heartbeat_age,
+        last_action=last_action,
     )
-    _email_status = build_daily_digest_email(_ctx_status)
+    email = build_status_email(ctx)
 
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    send_logged(sender=sender, subject="Trading Bot — Status", html_body=_email_status.html_body,
+    send_logged(sender=sender, subject=email.subject, html_body=email.html_body,
                 kind="status", recipient=cfg.email.to)
     click.echo(f"Sent status email to {cfg.email.to}")
 
@@ -328,37 +368,12 @@ def scan(regime: str) -> None:
 
 
 @main.command("daily-report")
-def daily_report() -> None:
-    """Email the daily P&L summary."""
-    settings = Settings()
-    cfg = load_config(CONFIG_PATH)
-    alpaca = AlpacaClient(settings)
-    market = MarketDataClient(settings)
-
-    import datetime as _dt_dr
-    account = alpaca.get_account()
-    try:
-        regime_dr = _live_regime(market, cfg).regime.value
-    except Exception:
-        regime_dr = "unknown"
-
-    _ctx_dr = DigestContext(
-        date=_dt_dr.date.today(),
-        starting_equity=account.equity,
-        ending_equity=account.equity,
-        realized_pnl=Decimal("0"),
-        unrealized_pnl=Decimal("0"),
-        regime=regime_dr,
-        active_config_version="unknown",
-    )
-    _email_dr = build_daily_digest_email(_ctx_dr)
-
-    sender = EmailSender(
-        user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
-    )
-    send_logged(sender=sender, subject="Trading Bot — Daily Report", html_body=_email_dr.html_body,
-                kind="digest", recipient=cfg.email.to)
-    click.echo(f"Sent daily report to {cfg.email.to}")
+@click.pass_context
+def daily_report(ctx) -> None:
+    """Deprecated alias for `daily-digest` — both use the data-driven 12-section
+    template. Forwards to daily-digest so any cron / muscle memory keeps working."""
+    click.echo("[daily-report] deprecated; forwarding to daily-digest", err=True)
+    ctx.invoke(daily_digest)
 
 
 @main.command("daily-digest")
@@ -628,25 +643,76 @@ def intel_scan() -> None:
 
     # Email only if action taken or risk-rejected (interesting events)
     if placed or rejected:
-        import datetime as _dt_is
-        account = alpaca.get_account()
-        _ctx_is = DigestContext(
-            date=_dt_is.date.today(),
-            starting_equity=account.equity,
-            ending_equity=account.equity,
-            realized_pnl=Decimal("0"),
-            unrealized_pnl=Decimal("0"),
-            regime=regime,
-            active_config_version="unknown",
+        _send_workflow_alert(
+            settings=settings, cfg=cfg, workflow="intel-scan",
+            regime=regime, decisions=result.decisions,
         )
-        _email_is = build_daily_digest_email(_ctx_is)
-        sender = EmailSender(
-            user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
-        )
-        send_logged(sender=sender,
-                    subject=f"Trading Bot — Intel Scan ({len(placed)} placed)",
-                    html_body=_email_is.html_body, kind="alert", recipient=cfg.email.to)
-        click.echo(f"[email] sent (action taken)")
+        click.echo("[email] sent (action taken)")
+
+
+def _send_workflow_alert(*, settings, cfg, workflow: str, regime: str, decisions) -> None:
+    """Send a focused alert email summarising what one scan-flavoured
+    workflow just did. Replaces the old pattern of rendering the full
+    daily-digest skeleton with empty fields — see email_alerts.py for the
+    dedicated template."""
+    import datetime as _dt_alert
+    from trading_bot.email_alerts import AlertContext, build_alert_email
+
+    placed = [d for d in decisions if d.action == "placed_order"]
+    rejected = [d for d in decisions if d.action == "rejected_by_risk"]
+    skipped_intel = [d for d in decisions if d.action == "skipped_intel"]
+    skipped_dq = [
+        d for d in decisions
+        if d.action in ("skipped_stale_data", "skipped_incomplete_data",
+                        "skipped_restricted")
+    ]
+
+    counts: dict[str, int] = {}
+    for d in decisions:
+        counts[d.action] = counts.get(d.action, 0) + 1
+
+    git_sha = "unknown"
+    version = "unknown"
+    try:
+        import json as _json_alert
+        _active_path = Path("strategy/paper_active.json")
+        if _active_path.exists():
+            _meta = _json_alert.loads(_active_path.read_text())
+            git_sha = _meta.get("git_sha", "unknown")
+            version = _meta.get("version", "unknown")
+    except Exception:
+        pass
+
+    ctx = AlertContext(
+        as_of=_dt_alert.datetime.now(_dt_alert.timezone.utc),
+        workflow=workflow, regime=regime,
+        placed=[
+            {"symbol": d.symbol, "reason": d.reason,
+             "entry_order_id": d.entry_order_id} for d in placed
+        ],
+        rejected=[
+            {"symbol": d.symbol, "reason": d.reason} for d in rejected
+        ],
+        skipped_intel=[
+            {"symbol": d.symbol, "action": d.action, "reason": d.reason}
+            for d in skipped_intel
+        ],
+        skipped_data_quality=[
+            {"symbol": d.symbol, "action": d.action, "reason": d.reason}
+            for d in skipped_dq
+        ],
+        decision_counts=counts,
+        git_sha=git_sha, version=version,
+    )
+    email = build_alert_email(ctx)
+    sender = EmailSender(
+        user=settings.gmail_user, app_password=settings.gmail_app_password,
+        to=cfg.email.to,
+    )
+    send_logged(
+        sender=sender, subject=email.subject, html_body=email.html_body,
+        kind="alert", recipient=cfg.email.to,
+    )
 
 
 @main.command("portfolio-watch")
@@ -797,6 +863,13 @@ def crypto_scan() -> None:
         click.echo(f"  PLACED {d.symbol}: {d.reason} (entry={d.entry_order_id})")
     for d in rejected:
         click.echo(f"  REJECTED {d.symbol}: {d.reason}")
+
+    if placed or rejected:
+        _send_workflow_alert(
+            settings=settings, cfg=cfg, workflow="crypto-scan",
+            regime=regime, decisions=result.decisions,
+        )
+        click.echo("[email] sent (action taken)")
 
 
 @main.command("eod-report")

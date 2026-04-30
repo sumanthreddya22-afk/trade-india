@@ -8,7 +8,10 @@ from click.testing import CliRunner
 def test_bot_status_runs_and_calls_email():
     from trading_bot.cli import main
 
-    fake_account = MagicMock(equity=Decimal("100000"), cash=Decimal("50000"))
+    fake_account = MagicMock(
+        equity=Decimal("100000"), cash=Decimal("50000"),
+        buying_power=Decimal("200000"), portfolio_value=Decimal("100000"),
+    )
     fake_positions = []
 
     with patch("trading_bot.cli.AlpacaClient") as MockClient, patch(
