@@ -82,6 +82,7 @@ class OrderRow:
     order_type: str
     status: str
     submitted_at: datetime | None
+    stop_price: float | None = None   # populated for stop / stop_limit orders
 
 
 @dataclass(frozen=True)
@@ -268,6 +269,19 @@ def _empty_stats() -> StatsBlock:
     )
 
 
+def _asset_class_label(raw: object) -> str:
+    """Normalize Alpaca's `AssetClass.US_EQUITY` / `AssetClass.CRYPTO` enum
+    repr into plain "stock" / "crypto" / "option" so dashboard rows don't
+    leak the SDK's class name into the UI.
+    """
+    s = str(raw).lower()
+    if "crypto" in s:
+        return "crypto"
+    if "option" in s:
+        return "option"
+    return "stock"
+
+
 def _build_kpi(alpaca: AlpacaClient, errors: list[str]) -> tuple[KpiBlock, list[PositionRow]]:
     try:
         account = alpaca.get_account()
@@ -297,7 +311,7 @@ def _build_kpi(alpaca: AlpacaClient, errors: list[str]) -> tuple[KpiBlock, list[
             pct = ((last / avg_e - 1) * 100).quantize(Decimal("0.01")) if avg_e > 0 else Decimal("0")
             rows.append(PositionRow(
                 symbol=p.symbol,
-                asset_class=str(p.asset_class),
+                asset_class=_asset_class_label(p.asset_class),
                 qty=qty,
                 avg_entry=avg_e, last_price=last,
                 market_value=mv, unrealized_pl=ue, unrealized_pl_pct=pct,
@@ -367,6 +381,12 @@ def _build_equity_curve(
 
 
 def _build_stats(closed: list[ClosedTrade]) -> StatsBlock:
+    # Reconciler can emit closed_trade rows where entry_price == exit_price
+    # (cancel/expire paths or zero-fill mismatches) — these aren't real
+    # trades and would skew win-rate / best-trade. Drop them before
+    # computing stats so the panel reflects only trades that actually
+    # made or lost money.
+    closed = [t for t in closed if t.realized_pnl != 0]
     if not closed:
         return _empty_stats()
 
@@ -445,6 +465,11 @@ def _build_orders(settings: Settings, errors: list[str]) -> list[OrderRow]:
     rows: list[OrderRow] = []
     for o in orders:
         try:
+            sp = getattr(o, "stop_price", None)
+            try:
+                sp_f = float(sp) if sp is not None else None
+            except Exception:
+                sp_f = None
             rows.append(OrderRow(
                 symbol=str(o.symbol),
                 side=str(o.side).split(".")[-1].lower(),
@@ -452,6 +477,7 @@ def _build_orders(settings: Settings, errors: list[str]) -> list[OrderRow]:
                 order_type=str(o.order_type).split(".")[-1].lower(),
                 status=str(o.status).split(".")[-1].lower(),
                 submitted_at=getattr(o, "submitted_at", None),
+                stop_price=sp_f,
             ))
         except Exception:
             continue
@@ -461,7 +487,10 @@ def _build_orders(settings: Settings, errors: list[str]) -> list[OrderRow]:
 def _build_opportunities(opp_path: Path) -> list[OpportunityRow]:
     entries = load_ranked_watchlist(opp_path)
     return [
-        OpportunityRow(rank=i + 1, symbol=e.symbol, asset_class=e.asset_class)
+        OpportunityRow(
+            rank=i + 1, symbol=e.symbol,
+            asset_class=_asset_class_label(e.asset_class),
+        )
         for i, e in enumerate(entries[:25])
     ]
 

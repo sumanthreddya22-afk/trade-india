@@ -4,18 +4,17 @@
          hx-trigger="every 60s"
          hx-swap="outerHTML">
   <div class="flex items-center justify-between mb-4">
-    <span class="label">Role Health</span>
-    <span class="text-[11px] text-slate-500">last 30 days · success rate</span>
+    <span class="label" title="Each background job (scanner, reconciler, news warmer, etc.) is one 'role'. This card shows whether each is running cleanly.">Background Jobs</span>
+    <span class="text-[11px] text-slate-500">success rate over last 30 days</span>
   </div>
 
   {% if not lab.role_health %}
-    <div class="text-sm text-slate-500">No role runs in last 30 days.</div>
+    <div class="text-sm text-slate-500">No background jobs have run in the last 30 days.</div>
   {% else %}
     <p class="text-[11px] text-slate-500 mb-3">
-      Tone reflects the LATEST run status — not the 30-day average — so a single
-      transient failure on a low-volume role doesn't paint the card red. Red
-      means the most recent run errored AND the rate is below 70%; amber means
-      either condition; green means latest run was ok and rate ≥ 95%.
+      Color reflects the most recent run, not the 30-day average — so one
+      blip on a rarely-used job doesn't make everything red. Green = healthy;
+      amber = needs a glance; red = failing now.
     </p>
     <div class="grid grid-cols-2 lg:grid-cols-3 gap-2">
       {% for r in lab.role_health %}

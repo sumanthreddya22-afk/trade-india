@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, time as dtime, timezone
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ from fastapi.templating import Jinja2Templates
 
 from trading_bot.config import Settings, load_config
 from trading_bot.dashboard.data import DashboardSnapshot, build_snapshot
+from trading_bot.dashboard.insights import InsightsSnapshot, build_insights
 
 CONFIG_PATH = Path("strategy/config.yaml")
 WATCHLIST_PATH = Path("strategy/watchlist.yaml")
@@ -40,36 +42,48 @@ CLOSED_DB_PATH = Path("data/closed_trades.db")
 CACHE_TTL_SECONDS = 25
 BG_REFRESH_INTERVAL = 25
 
-# Whitelist of fragment names → partial template files.
+# Whitelist of fragment names → partial template files. Each fragment is
+# its own HTMX refresh target.
 FRAGMENTS: dict[str, str] = {
+    # Top-of-page triage
+    "action_required": "_action_required.html",
     "header": "_header.html",
-    "regime": "_regime.html",
+    # "Right Now" section
+    "strategy_mode": "_strategy_mode.html",
+    "regime": "_regime.html",   # now folds in the macro feed
     "kpi": "_kpi.html",
     "risk": "_risk.html",
-    "macro_alloc": "_macro_alloc.html",
-    "last_scan": "_last_scan.html",
-    "exposure": "_exposure.html",
+    "exposure": "_exposure.html",  # holdings table with stop column + drill-down rows
     "equity": "_equity.html",
-    "stats": "_stats.html",
-    "opportunities": "_opportunities.html",
     "orders": "_orders.html",
-    "scheduled": "_scheduled.html",
-    "errors": "_errors.html",
-    "sidebar_status": "_sidebar_status.html",
-    # Phase 1-6 surfaces
-    "strategy_mode": "_strategy_mode.html",
-    "halts": "_halts.html",
+    "activity_feed": "_activity_feed.html",   # NEW: live log tail
+    # Recent activity
+    "decision_activity": "_decision_activity.html",
+    "last_scan": "_last_scan.html",
+    "opportunities": "_opportunities.html",
+    "stats": "_stats.html",
+    # Strategy lab
     "lab_evolution": "_lab_evolution.html",
     "calibrator": "_calibrator.html",
-    "llm_spend": "_llm_spend.html",
-    "role_health": "_role_health.html",
     "proposals": "_proposals.html",
-    # Phase 5
+    "llm_spend": "_llm_spend.html",
     "wheel": "_wheel.html",
-    # PDF-parity additions (W1, W6)
-    "decision_activity": "_decision_activity.html",
+    # System health
+    "role_health": "_role_health.html",
     "freshness": "_freshness.html",
+    "email_firehose": "_email_firehose.html",  # NEW
+    "process_registry": "_process_registry.html",  # NEW
+    "sidebar_status": "_sidebar_status.html",
 }
+
+
+@dataclass
+class _CombinedSnapshot:
+    """Holds the data + insights bundles together. Built once per cache
+    refresh so every fragment sees a consistent view (one Alpaca read,
+    one log tail, one email count)."""
+    data: DashboardSnapshot
+    insights: InsightsSnapshot | None
 
 
 class _SnapshotCache:
@@ -78,14 +92,14 @@ class _SnapshotCache:
     def __init__(self, ttl: float) -> None:
         self._ttl = ttl
         self._stamp: float = 0.0
-        self._snap: DashboardSnapshot | None = None
+        self._snap: _CombinedSnapshot | None = None
         self._lock = threading.Lock()
         self._build_lock = threading.Lock()
 
     def _is_fresh(self, now: float) -> bool:
         return self._snap is not None and (now - self._stamp) <= self._ttl
 
-    def get(self) -> DashboardSnapshot:
+    def get(self) -> _CombinedSnapshot:
         now = time.time()
         with self._lock:
             if self._is_fresh(now):
@@ -102,7 +116,7 @@ class _SnapshotCache:
                 self._stamp = time.time()
             return snap
 
-    def force_refresh(self) -> DashboardSnapshot:
+    def force_refresh(self) -> _CombinedSnapshot:
         with self._build_lock:
             snap = self._build()
             with self._lock:
@@ -115,14 +129,23 @@ class _SnapshotCache:
             self._snap = None
             self._stamp = 0.0
 
-    def _build(self) -> DashboardSnapshot:
-        return build_snapshot(
+    def _build(self) -> _CombinedSnapshot:
+        data = build_snapshot(
             settings=Settings(),
             config=load_config(CONFIG_PATH),
             opportunities_path=OPPORTUNITIES_PATH,
             watchlist_path=WATCHLIST_PATH,
             closed_db_path=CLOSED_DB_PATH,
         )
+        try:
+            insights = build_insights(
+                settings=Settings(),
+                positions=data.positions,
+                orders=data.orders,
+            )
+        except Exception:
+            insights = None
+        return _CombinedSnapshot(data=data, insights=insights)
 
 
 def _start_background_refresher(cache: _SnapshotCache, interval: float) -> threading.Event:
@@ -223,11 +246,13 @@ def create_app() -> FastAPI:
         pass
     _start_background_refresher(cache, BG_REFRESH_INTERVAL)
 
-    def _ctx(snap: DashboardSnapshot, range_key: str = "1m") -> dict[str, Any]:
+    def _ctx(combined: _CombinedSnapshot, range_key: str = "1m") -> dict[str, Any]:
+        snap = combined.data
         session_code, session_label = _market_session()
         curve = _filter_equity_range(list(snap.equity_curve), range_key)
         return {
             "s": snap,
+            "insights": combined.insights,
             "fmt": _formatters(),
             "equity_points": [
                 {"ts": p.ts.isoformat(), "equity": float(p.equity)} for p in curve
@@ -241,8 +266,8 @@ def create_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> Any:
-        snap = cache.get()
-        return templates.TemplateResponse(request, "dashboard.html", _ctx(snap))
+        combined = cache.get()
+        return templates.TemplateResponse(request, "dashboard.html", _ctx(combined))
 
     @app.get("/architecture", response_class=HTMLResponse)
     def architecture(request: Request) -> Any:
@@ -250,25 +275,25 @@ def create_app() -> FastAPI:
 
     @app.get("/refresh", response_class=HTMLResponse)
     def refresh(request: Request) -> Any:
-        snap = cache.force_refresh()
-        return templates.TemplateResponse(request, "dashboard.html", _ctx(snap))
+        combined = cache.force_refresh()
+        return templates.TemplateResponse(request, "dashboard.html", _ctx(combined))
 
     @app.get("/fragment/{name}", response_class=HTMLResponse)
     def fragment(request: Request, name: str, range: str = "1m") -> Any:
         if name not in FRAGMENTS:
             raise HTTPException(status_code=404, detail=f"unknown fragment: {name}")
-        snap = cache.get()
-        return templates.TemplateResponse(request, FRAGMENTS[name], _ctx(snap, range))
+        combined = cache.get()
+        return templates.TemplateResponse(request, FRAGMENTS[name], _ctx(combined, range))
 
     @app.get("/api/snapshot")
     def api_snapshot() -> Any:
-        snap = cache.get()
-        return JSONResponse(_snapshot_to_dict(snap))
+        combined = cache.get()
+        return JSONResponse(_snapshot_to_dict(combined.data))
 
     @app.get("/api/equity-curve")
     def api_equity_curve(range: str = "1m") -> Any:
-        snap = cache.get()
-        curve = _filter_equity_range(list(snap.equity_curve), range)
+        combined = cache.get()
+        curve = _filter_equity_range(list(combined.data.equity_curve), range)
         return JSONResponse({
             "range": range,
             "points": [

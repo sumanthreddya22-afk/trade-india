@@ -138,8 +138,9 @@ class TestTemplateRendering:
         html = env.get_template("_lab_evolution.html").render(
             lab={"lab_evolution": ev},
         )
-        assert "produced 0 new trials" in html  # warning banner
-        assert "Last Productive Search" in html
+        # Banner + headline copy were rewritten in plain English in Apr 2026.
+        assert "finished with no new variants" in html  # warning banner
+        assert "Most recent useful tuning" in html
         # Headline numbers come from yesterday's productive run
-        assert "30 trials" in html
+        assert "30 variants tested" in html
         assert "3.96" in html

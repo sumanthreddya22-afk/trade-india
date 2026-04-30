@@ -14,10 +14,10 @@
       </a>
       {% endif %}
     </div>
-    <h1 class="text-3xl lg:text-4xl font-bold mt-1">Today's Trading Command Center</h1>
+    <h1 class="text-3xl lg:text-4xl font-bold mt-1">Trading Bot — Today</h1>
   </div>
   <div class="text-right">
-    <div class="text-xs text-slate-500">Cache 25s · per-section refresh 60s</div>
+    <div class="text-xs text-slate-500" title="Each panel refreshes itself on its own schedule (most every 30–60 seconds).">Live · panels refresh every 30–60s</div>
     <div class="mt-1 flex items-center gap-2 justify-end">
       <button hx-get="/refresh" hx-target="body" hx-select="body" hx-swap="outerHTML"
               class="px-3 py-1.5 rounded-md border border-slate-700 hover:border-cyan-500 hover:text-cyan-300 text-sm">

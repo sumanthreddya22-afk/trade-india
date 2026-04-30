@@ -1,33 +1,33 @@
 <section id="kpi" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"
          hx-get="/fragment/kpi" hx-trigger="every 60s" hx-swap="outerHTML">
-  <div class="card p-5">
-    <div class="label">Equity</div>
+  <div class="card p-5" title="Total account value (cash + market value of all positions).">
+    <div class="label">Account Value</div>
     <div class="kpi-num text-emerald-400 mt-2">{{ fmt.usd(s.kpi.equity) }}</div>
     <div class="kpi-sub">{{ s.kpi.open_position_count }} open position{{ "" if s.kpi.open_position_count == 1 else "s" }}</div>
   </div>
-  <div class="card p-5">
-    <div class="label">Today P&amp;L</div>
+  <div class="card p-5" title="Account value change since yesterday's close.">
+    <div class="label">Today's P&amp;L</div>
     <div class="kpi-num text-{{ fmt.pnl_color(s.kpi.today_pnl_pct) }}-400 mt-2">{{ fmt.pct(s.kpi.today_pnl_pct, sign=true) }}</div>
-    <div class="kpi-sub">vs prior close</div>
+    <div class="kpi-sub">since yesterday's close</div>
   </div>
-  <div class="card p-5">
-    <div class="label">Open P&amp;L</div>
+  <div class="card p-5" title="Profit/loss across positions that are still open. Becomes realized once closed.">
+    <div class="label">Open Trades P&amp;L</div>
     <div class="kpi-num text-{{ fmt.pnl_color(s.kpi.open_pnl) }}-400 mt-2">{{ fmt.usd(s.kpi.open_pnl, sign=true) }}</div>
-    <div class="kpi-sub">unrealised on open</div>
+    <div class="kpi-sub">on currently open positions</div>
   </div>
-  <div class="card p-5">
-    <div class="label">Cash</div>
+  <div class="card p-5" title="Cash sitting idle, ready to deploy on the next trade.">
+    <div class="label">Cash on Hand</div>
     <div class="kpi-num text-cyan-400 mt-2">{{ fmt.pct(s.kpi.cash_pct) }}</div>
-    <div class="kpi-sub">{{ fmt.usd(s.kpi.cash) }} dry powder</div>
+    <div class="kpi-sub">{{ fmt.usd(s.kpi.cash) }} available</div>
   </div>
-  <div class="card p-5">
-    <div class="label">Invested</div>
+  <div class="card p-5" title="Share of the account currently tied up in open positions.">
+    <div class="label">Money at Work</div>
     <div class="kpi-num text-cyan-400 mt-2">{{ fmt.pct(s.kpi.invested_pct) }}</div>
-    <div class="kpi-sub">deployed capital</div>
+    <div class="kpi-sub">deployed in positions</div>
   </div>
-  <div class="card p-5">
-    <div class="label">Max Drawdown</div>
+  <div class="card p-5" title="Largest peak-to-trough decline in account value over the last 30 days.">
+    <div class="label">Worst Drop (30d)</div>
     <div class="kpi-num text-rose-400 mt-2">{{ fmt.pct(s.kpi.max_drawdown_pct) }}</div>
-    <div class="kpi-sub">30d trailing</div>
+    <div class="kpi-sub">peak-to-trough</div>
   </div>
 </section>

@@ -104,13 +104,15 @@ class TestFreshnessLoader:
 
 
 class TestFragments:
+    # Card titles were rewritten in plain English in Apr 2026 — these
+    # assertions track the new copy.
     def test_decision_activity_fragment_renders(self):
         from trading_bot.dashboard.app import create_app
         app = create_app()
         client = TestClient(app)
         r = client.get("/fragment/decision_activity")
         assert r.status_code == 200
-        assert "Decision Activity" in r.text
+        assert "Decision Log" in r.text
 
     def test_freshness_fragment_renders(self):
         from trading_bot.dashboard.app import create_app
@@ -118,7 +120,7 @@ class TestFragments:
         client = TestClient(app)
         r = client.get("/fragment/freshness")
         assert r.status_code == 200
-        assert "Freshness Audit" in r.text
+        assert "Data Health" in r.text
 
     def test_full_page_includes_new_cards(self):
         from trading_bot.dashboard.app import create_app
@@ -129,5 +131,5 @@ class TestFragments:
         assert 'id="decision_activity"' in r.text
         assert 'id="freshness"' in r.text
         # Sidebar nav links present
-        assert "Audit Log" in r.text
-        assert "Data Health" in r.text
+        assert "Decision log" in r.text
+        assert "Data health" in r.text

@@ -1,0 +1,36 @@
+<section id="process_registry" class="card p-5"
+         hx-get="/fragment/process_registry"
+         hx-trigger="every 60s"
+         hx-swap="outerHTML">
+  <div class="flex items-baseline justify-between mb-3">
+    <span class="label" title="The bot is supposed to run a single daemon, plus a supervisor and lab. If you see duplicates here, something started a second copy and every email is being sent twice.">Running Processes</span>
+    <span class="text-[11px] text-slate-500">live</span>
+  </div>
+  {% set procs = insights.process_registry if insights else [] %}
+  {% if not procs %}
+    <div class="text-sm text-slate-500">No bot processes detected.</div>
+  {% else %}
+    {% set seen_labels = [] %}
+    <ul class="divide-y divide-slate-800/60 text-sm">
+      {% for pr in procs %}
+        {% set is_dup = pr.label in seen_labels %}
+        {% if seen_labels.append(pr.label) %}{% endif %}
+        <li class="flex items-start gap-3 py-2">
+          <span class="shrink-0 mt-1 text-{{ 'rose-300' if is_dup else 'emerald-300' }}">
+            {% if is_dup %}⚠{% else %}●{% endif %}
+          </span>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-baseline justify-between gap-2 flex-wrap">
+              <span class="text-slate-100 font-medium">{{ pr.label }}</span>
+              <span class="text-[11px] text-slate-500 font-mono shrink-0">PID {{ pr.pid }}</span>
+            </div>
+            <div class="text-[11px] text-slate-500 mt-0.5">
+              started {{ pr.started }}
+              {% if is_dup %} · <span class="text-rose-300">duplicate — every email/job runs twice</span>{% endif %}
+            </div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</section>

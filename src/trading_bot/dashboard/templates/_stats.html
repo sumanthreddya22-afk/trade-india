@@ -2,29 +2,29 @@
          hx-get="/fragment/stats" hx-trigger="every 120s" hx-swap="outerHTML">
   <div class="flex items-baseline justify-between">
     <div>
-      <div class="label">Closed-Trade Stats</div>
-      <h3 class="text-xl font-semibold mt-1">Journal Summary</h3>
+      <div class="label">Track Record</div>
+      <h3 class="text-xl font-semibold mt-1">How trades have done</h3>
     </div>
     {% if s.stats.total_trades == 0 %}
-    <span class="text-xs text-amber-400/80">no closed trades yet — metrics populate after first reconcile</span>
+    <span class="text-xs text-amber-400/80">No closed trades yet — numbers fill in once positions start closing for real P&amp;L.</span>
     {% else %}
-    <span class="text-xs text-slate-500">{{ s.stats.wins }}W / {{ s.stats.losses }}L over {{ s.stats.total_trades }} trades</span>
+    <span class="text-xs text-slate-500">{{ s.stats.wins }} wins · {{ s.stats.losses }} losses · {{ s.stats.total_trades }} trades total</span>
     {% endif %}
   </div>
 
   <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mt-5">
     {% set entries = [
-      ("Total trades", s.stats.total_trades or "—", "slate"),
-      ("Win rate", (fmt.pct(s.stats.win_rate_pct) if s.stats.win_rate_pct is not none else "—"), "emerald"),
-      ("Profit factor", fmt.num_or_dash(s.stats.profit_factor), "cyan"),
-      ("Avg R:R", fmt.num_or_dash(s.stats.avg_rr), "cyan"),
-      ("Expectancy", (fmt.usd(s.stats.expectancy, sign=true) if s.stats.expectancy is not none else "—"), "emerald"),
-      ("Best trade", (fmt.usd(s.stats.best_trade, sign=true) ~ ' · ' ~ s.stats.best_trade_symbol if s.stats.best_trade is not none else "—"), "emerald"),
-      ("Worst trade", (fmt.usd(s.stats.worst_trade, sign=true) ~ ' · ' ~ s.stats.worst_trade_symbol if s.stats.worst_trade is not none else "—"), "rose"),
-      ("Streak", s.stats.streak, "cyan"),
+      ("Trades closed", s.stats.total_trades or "—", "slate", "How many trades have fully closed (entered and exited)."),
+      ("Win rate", (fmt.pct(s.stats.win_rate_pct) if s.stats.win_rate_pct is not none else "—"), "emerald", "Percentage of closed trades that finished profitable."),
+      ("Win/loss ratio", fmt.num_or_dash(s.stats.profit_factor), "cyan", "Total profits ÷ total losses. Above 1.0 means winners outweigh losers."),
+      ("Avg win vs loss", fmt.num_or_dash(s.stats.avg_rr), "cyan", "How big the average winner is compared to the average loser. 2.0 means winners are twice as big."),
+      ("Avg per trade", (fmt.usd(s.stats.expectancy, sign=true) if s.stats.expectancy is not none else "—"), "emerald", "Average dollar P&L of every closed trade. Positive = the strategy is making money on average."),
+      ("Best trade", (fmt.usd(s.stats.best_trade, sign=true) ~ ' · ' ~ s.stats.best_trade_symbol if s.stats.best_trade is not none else "—"), "emerald", "Biggest dollar winner so far."),
+      ("Worst trade", (fmt.usd(s.stats.worst_trade, sign=true) ~ ' · ' ~ s.stats.worst_trade_symbol if s.stats.worst_trade is not none else "—"), "rose", "Biggest dollar loser so far."),
+      ("Recent run", s.stats.streak, "cyan", "Current streak of consecutive winners (W) or losers (L)."),
     ] %}
-    {% for label, val, color in entries %}
-    <div class="p-3 rounded-lg bg-slate-900/60 border border-slate-800">
+    {% for label, val, color, tip in entries %}
+    <div class="p-3 rounded-lg bg-slate-900/60 border border-slate-800" title="{{ tip }}">
       <div class="text-[10px] uppercase tracking-wider text-slate-500">{{ label }}</div>
       <div class="text-{{ color }}-400 font-semibold mt-1 text-sm break-all">{{ val }}</div>
     </div>

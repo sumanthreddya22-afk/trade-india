@@ -4,13 +4,13 @@
          hx-trigger="every 120s"
          hx-swap="outerHTML">
   <div class="flex items-center justify-between mb-3">
-    <span class="label">Calibrator</span>
-    <span class="text-[11px] text-slate-500">backtest predicted ↔ paper realized P&amp;L</span>
+    <span class="label" title="Compares the bot's historical-data predictions to what actually happened in real trading. If they match, backtest results are trustworthy.">Backtest vs Reality</span>
+    <span class="text-[11px] text-slate-500">how well backtest forecasts match real trades</span>
   </div>
 
   {% set c = lab.calibrator %}
   {% if c is none or c.latest_at is none %}
-    <div class="text-sm text-slate-500">Calibrator has not run yet. First firing tomorrow at 05:00 ET.</div>
+    <div class="text-sm text-slate-500">Hasn't run yet — first check tomorrow at 5:00 AM ET.</div>
   {% else %}
     {% set sev = c.latest_severity %}
     {% set sev_color = {
@@ -20,16 +20,23 @@
         "insufficient_data": "slate-400",
         "never_run": "slate-400",
     }[sev] %}
+    {% set sev_label = {
+        "ok": "in sync",
+        "warning": "drifting",
+        "high": "broken — backtest unreliable",
+        "insufficient_data": "not enough data",
+        "never_run": "never run",
+    }[sev] %}
     <div class="flex items-baseline gap-3">
-      <span class="text-3xl font-bold font-mono text-{{ sev_color }}">
+      <span class="text-3xl font-bold font-mono text-{{ sev_color }}" title="A score from -1 to +1. Closer to +1 means backtest predictions reliably match real outcomes.">
         {% if c.latest_corr is not none %}{{ "%.3f"|format(c.latest_corr) }}{% else %}—{% endif %}
       </span>
       <span class="px-2 py-0.5 rounded-full bg-{{ sev_color }}/20 text-{{ sev_color }} text-[11px] font-semibold uppercase tracking-wider">
-        {{ sev|replace('_', ' ') }}
+        {{ sev_label }}
       </span>
     </div>
     <div class="text-xs text-slate-500 mt-2">
-      Spearman corr · {{ c.latest_n }} trade pair{{ '' if c.latest_n == 1 else 's' }} · last run {{ c.latest_at | et('%b %d %-I:%M %p ET') }}
+      Match score · {{ c.latest_n }} trade pair{{ '' if c.latest_n == 1 else 's' }} compared · checked {{ c.latest_at | et('%b %d · %-I:%M %p ET') }}
     </div>
 
     {% if c.history|length > 1 %}
@@ -55,7 +62,7 @@
 
     {% if sev == "high" %}
     <div class="mt-4 p-3 rounded-lg bg-rose-950/30 border border-rose-700/40 text-xs text-rose-200">
-      <strong>Promoter halted:</strong> backtest model has decoupled from real conditions. Auto-promotion paused for 7d.
+      <strong>Auto-promotion paused.</strong> Backtest results have stopped matching real trades, so the bot won't swap to a new variant until the gap closes. Will re-evaluate in 7 days.
     </div>
     {% endif %}
   {% endif %}

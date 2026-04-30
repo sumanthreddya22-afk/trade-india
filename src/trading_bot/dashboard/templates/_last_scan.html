@@ -2,10 +2,10 @@
          hx-get="/fragment/last_scan" hx-trigger="every 60s" hx-swap="outerHTML">
   <div class="flex items-baseline justify-between flex-wrap gap-2">
     <div>
-      <div class="label">Decision Pipeline</div>
-      <h3 class="text-xl font-semibold mt-1">Last Scan
+      <div class="label">Most Recent Scan</div>
+      <h3 class="text-xl font-semibold mt-1">What the bot saw last
         {% if s.last_scan %}
-          <span class="text-slate-500 text-sm font-normal">— {{ s.last_scan.command }} · {{ s.last_scan.regime }} · {{ s.last_scan.universe_size }} symbols</span>
+          <span class="text-slate-500 text-sm font-normal">— {{ s.last_scan.command }} · {{ s.last_scan.universe_size }} symbols checked</span>
           {% set age = scan_age_seconds %}
           {% if age is not none %}
             {% set age_color = "emerald" if age < 1800 else ("amber" if age < 7200 else "rose") %}
@@ -17,13 +17,13 @@
     {% if s.last_scan %}
     <div class="flex gap-2 text-xs" id="decision-filter">
       <button data-filter="all"
-              class="filter-btn active px-2 py-1 rounded bg-slate-700/40 border border-slate-600 text-slate-200">ALL {{ s.last_scan.decisions|length }}</button>
+              class="filter-btn active px-2 py-1 rounded bg-slate-700/40 border border-slate-600 text-slate-200">All {{ s.last_scan.decisions|length }}</button>
       <button data-filter="placed_order"
-              class="filter-btn px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">PLACED {{ s.last_scan.placed }}</button>
+              class="filter-btn px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">Traded {{ s.last_scan.placed }}</button>
       <button data-filter="rejected_by_risk"
-              class="filter-btn px-2 py-1 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300">REJECTED {{ s.last_scan.rejected }}</button>
+              class="filter-btn px-2 py-1 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300">Blocked {{ s.last_scan.rejected }}</button>
       <button data-filter="hold"
-              class="filter-btn px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">HOLD {{ s.last_scan.holds }}</button>
+              class="filter-btn px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">Waited {{ s.last_scan.holds }}</button>
     </div>
     {% endif %}
   </div>
@@ -32,13 +32,25 @@
   <div class="mt-4 max-h-80 overflow-y-auto scroll-thin">
     <table class="w-full text-sm" id="decision-table">
       <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-slate-950/95">
-        <tr><th class="text-left py-2 pr-2">Symbol</th><th class="text-left py-2 pr-2">Action</th><th class="text-left py-2">Reason</th></tr>
+        <tr><th class="text-left py-2 pr-2">Symbol</th><th class="text-left py-2 pr-2">What happened</th><th class="text-left py-2">Why</th></tr>
       </thead>
       <tbody class="divide-y divide-slate-800/60">
+        {% set action_short = {
+          "placed_order": "Traded",
+          "rejected_by_risk": "Blocked by risk",
+          "rejected_by_intel": "Blocked by news",
+          "skipped_existing_position": "Already holding",
+          "skipped_pending_order": "Order already in flight",
+          "skipped_intel": "Waiting on news",
+          "skipped_no_signal": "No signal",
+          "skipped_signal_filter": "Signal filter",
+          "hold": "Waited",
+          "api_error": "Broker error",
+        } %}
         {% for d in s.last_scan.decisions %}
         <tr class="pos-row decision-row" data-action="{{ d.action }}">
           <td class="py-2 pr-2 font-mono">{{ d.symbol }}</td>
-          <td class="py-2 pr-2"><span class="px-2 py-0.5 rounded bg-{{ d.badge_color }}-500/10 border border-{{ d.badge_color }}-500/30 text-{{ d.badge_color }}-300 text-xs">{{ d.action.replace('_', ' ') }}</span></td>
+          <td class="py-2 pr-2"><span class="px-2 py-0.5 rounded bg-{{ d.badge_color }}-500/10 border border-{{ d.badge_color }}-500/30 text-{{ d.badge_color }}-300 text-xs">{{ action_short.get(d.action, d.action.replace('_', ' ')) }}</span></td>
           <td class="py-2 text-slate-400 text-xs">{{ d.reason }}</td>
         </tr>
         {% endfor %}

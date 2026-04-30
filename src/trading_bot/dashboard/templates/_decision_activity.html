@@ -2,17 +2,18 @@
          hx-get="/fragment/decision_activity" hx-trigger="every 30s" hx-swap="outerHTML">
   <div class="flex items-baseline justify-between flex-wrap gap-2">
     <div>
-      <div class="label">Audit Log · W1</div>
-      <h3 class="text-xl font-semibold mt-1">Decision Activity
+      <div class="label">Decision Log</div>
+      <h3 class="text-xl font-semibold mt-1">What the bot looked at recently
         {% if s.decision_activity %}
           <span class="text-slate-500 text-sm font-normal">
-            — last {{ s.decision_activity.window_hours }}h · {{ s.decision_activity.total }} total
+            — last {{ s.decision_activity.window_hours }}h · {{ s.decision_activity.total }} symbols evaluated
           </span>
         {% endif %}
       </h3>
       <p class="text-xs text-slate-500 mt-1">
-        Every decision the bot considered — placed, rejected, skipped, escalated.
-        Reads from the new <code class="text-slate-400">decisions</code> table; refreshes every 30s.
+        Every symbol the bot looked at — what it decided to do, and why. Most
+        of the time the answer is "wait" because filters weren't met. The
+        breakdown below shows which filters fire most often.
       </p>
     </div>
     {% if s.decision_activity and s.decision_activity.last_decision_at %}
@@ -24,7 +25,7 @@
 
   {% if not s.decision_activity or s.decision_activity.total == 0 %}
     <div class="mt-4 text-sm text-slate-500 italic">
-      No decisions in the last 24 hours. (Daemon idle or freshly migrated.)
+      No decisions logged in the last 24 hours. The bot may be idle or scanning paused.
     </div>
   {% else %}
     <div class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -35,18 +36,28 @@
         </div>
         <table class="w-full text-sm">
           <tbody class="divide-y divide-slate-800/60">
+            {% set action_labels = {
+              "placed_order": ("Trade placed", "emerald"),
+              "rejected_by_risk": ("Blocked by risk limits", "rose"),
+              "rejected_by_intel": ("Blocked by news/sentiment filter", "rose"),
+              "skipped_restricted": ("Skipped (restricted symbol)", "rose"),
+              "skipped_existing_position": ("Skipped (already holding it)", "amber"),
+              "skipped_pending_order": ("Skipped (order already in flight)", "amber"),
+              "skipped_intel": ("Skipped (waiting on news/sentiment)", "amber"),
+              "skipped_no_signal": ("Skipped (no entry signal)", "amber"),
+              "skipped_signal_filter": ("Skipped (signal filter)", "amber"),
+              "hold": ("Wait — filters not met", "slate"),
+              "api_error": ("Broker error — see Decision Pipeline", "rose"),
+              "escalate_to_human": ("Needs your review", "cyan"),
+            } %}
             {% for action, count in s.decision_activity.action_counts %}
-              {% set color =
-                ("emerald" if action == "placed_order"
-                  else ("rose" if action == "rejected_by_risk"
-                  else ("rose" if action == "skipped_restricted"
-                  else ("amber" if action.startswith("skipped")
-                  else ("cyan" if action == "escalate_to_human"
-                  else "slate"))))) %}
+              {% set tup = action_labels.get(action) %}
+              {% set label = tup[0] if tup else action.replace('_', ' ') %}
+              {% set color = tup[1] if tup else "slate" %}
               <tr class="pos-row">
                 <td class="py-1.5 pr-2">
                   <span class="px-2 py-0.5 rounded bg-{{ color }}-500/10 border border-{{ color }}-500/30 text-{{ color }}-300 text-xs">
-                    {{ action.replace('_', ' ') }}
+                    {{ label }}
                   </span>
                 </td>
                 <td class="py-1.5 text-right tabular-nums">{{ count }}</td>

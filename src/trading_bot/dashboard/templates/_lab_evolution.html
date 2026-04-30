@@ -4,8 +4,8 @@
          hx-trigger="every 120s"
          hx-swap="outerHTML">
   <div class="flex items-center justify-between mb-4">
-    <span class="label">Lab Evolution</span>
-    <span class="text-[11px] text-slate-500">nightly param search · top variants</span>
+    <span class="label" title="Every night the bot tries variations of its strategy parameters against historical data and ranks them. The best performers can replace the live strategy.">Strategy Tuning</span>
+    <span class="text-[11px] text-slate-500">nightly auto-tuning · best variants on top</span>
   </div>
 
   {% set ev = lab.lab_evolution %}
@@ -37,34 +37,34 @@
 
       {% if ev.last_run_n_trials == 0 %}
         <div class="mb-3 px-3 py-2 rounded-lg border border-amber-700/40 bg-amber-900/20 text-[11px] text-amber-200">
-          ⚠ Today's run ({{ ev.last_run_started_at | et('%b %d %-I:%M %p ET') }})
-          produced 0 new trials — likely a no-op (params didn't drift).
-          Headline below is the most-recent productive run.
+          ⚠ Today's tuning run ({{ ev.last_run_started_at | et('%b %d %-I:%M %p ET') }})
+          finished with no new variants — parameters were already settled.
+          Numbers below are from the most recent run that actually tested new variants.
         </div>
       {% endif %}
 
       <div class="grid grid-cols-2 gap-3 mb-4">
-        <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
-          <div class="text-[10px] uppercase tracking-wider text-slate-500">{{ headline_label }}</div>
+        <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2" title="Each variant is one set of parameters tested against historical data. More variants = wider search.">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500">{{ "Latest tuning" if headline_label == "Last Search" else "Most recent useful tuning" }}</div>
           <div class="text-lg font-semibold mt-0.5">
-            {% if headline_trials %}{{ headline_trials }} trials{% else %}—{% endif %}
+            {% if headline_trials %}{{ headline_trials }} variants tested{% else %}—{% endif %}
           </div>
           <div class="text-[11px] text-slate-500 mt-0.5">
             {% if headline_template %}
               {{ headline_template }} ·
-              {{ headline_started | et('%b %d %-I:%M %p ET') }}
+              {{ headline_started | et('%b %d · %-I:%M %p ET') }}
             {% else %}
-              no productive runs yet
+              no successful tunings yet
             {% endif %}
           </div>
         </div>
-        <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
-          <div class="text-[10px] uppercase tracking-wider text-slate-500">Best Fitness</div>
+        <div class="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2" title="Composite score combining excess return vs S&amp;P, downside-adjusted return, and worst drop. Higher is better.">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500">Top score</div>
           <div class="text-lg font-semibold mt-0.5 {% if headline_promoted %}text-emerald-300{% else %}text-slate-100{% endif %}">
             {% if headline_fitness is not none %}{{ "%.2f"|format(headline_fitness) }}{% else %}—{% endif %}
           </div>
           <div class="text-[11px] mt-0.5 {% if headline_promoted %}text-emerald-400{% else %}text-slate-500{% endif %}">
-            {% if headline_promoted %}auto-promoted{% else %}no promotion{% endif %}
+            {% if headline_promoted %}promoted to live{% else %}not promoted{% endif %}
           </div>
         </div>
       </div>
@@ -76,12 +76,12 @@
       <table class="w-full text-sm">
         <thead>
           <tr class="text-left text-[10px] uppercase tracking-wider text-slate-500 border-b border-slate-800">
-            <th class="py-2 pr-3 font-semibold">Template</th>
-            <th class="py-2 pr-3 font-semibold text-right">α vs SPY</th>
-            <th class="py-2 pr-3 font-semibold text-right">Sortino</th>
-            <th class="py-2 pr-3 font-semibold text-right">Max DD</th>
-            <th class="py-2 pr-3 font-semibold text-right">Folds</th>
-            <th class="py-2 font-semibold text-right">Fitness</th>
+            <th class="py-2 pr-3 font-semibold" title="The strategy template being tested.">Variant</th>
+            <th class="py-2 pr-3 font-semibold text-right" title="How much this variant beat (or trailed) buy-and-hold S&amp;P 500. 1.5x means it would have grown your money 1.5× as fast as SPY.">Beats S&amp;P by</th>
+            <th class="py-2 pr-3 font-semibold text-right" title="Risk-adjusted return that only penalizes down-volatility. Higher is better; above 1.0 is solid.">Risk-adj return</th>
+            <th class="py-2 pr-3 font-semibold text-right" title="Worst peak-to-trough drop during testing.">Worst drop</th>
+            <th class="py-2 pr-3 font-semibold text-right" title="Number of separate historical time periods used to test this variant. More = more reliable.">Test cycles</th>
+            <th class="py-2 font-semibold text-right" title="Composite score across all the metrics above. The bot's chosen north-star.">Score</th>
           </tr>
         </thead>
         <tbody>

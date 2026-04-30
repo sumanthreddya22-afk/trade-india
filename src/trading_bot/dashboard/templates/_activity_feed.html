@@ -1,0 +1,37 @@
+<section id="activity_feed" class="card p-6"
+         hx-get="/fragment/activity_feed"
+         hx-trigger="every 15s"
+         hx-swap="outerHTML">
+  <div class="flex items-baseline justify-between flex-wrap gap-2">
+    <div>
+      <div class="label" title="A live feed of what the bot is doing — scans, stop checks, emails sent, errors. Updates every 15 seconds.">Live Activity</div>
+      <h3 class="text-xl font-semibold mt-1">What the bot is doing right now</h3>
+      <p class="text-xs text-slate-500 mt-1">
+        Most recent actions first. Routine repeats (every-minute heartbeats) are filtered out so this stays readable.
+      </p>
+    </div>
+    <span class="text-xs text-slate-500">refreshes every 15s</span>
+  </div>
+  {% set feed = insights.activity_feed if insights else [] %}
+  {% if not feed %}
+    <div class="mt-4 text-sm text-slate-500 italic">No recent activity — daemon may be idle or the log file is missing.</div>
+  {% else %}
+    <div class="mt-4 max-h-96 overflow-y-auto scroll-thin">
+      <ul class="divide-y divide-slate-800/60 text-sm">
+        {% for line in feed %}
+          {% set color = "rose" if line.level == "error" else ("amber" if line.level == "warn" else "slate") %}
+          <li class="flex items-start gap-3 py-2">
+            <span class="text-[11px] tabular-nums text-slate-500 shrink-0 w-24">{{ line.when_label }}</span>
+            <span class="text-{{ color }}-300 shrink-0">
+              {% if line.level == "error" %}●{% elif line.level == "warn" %}▲{% else %}○{% endif %}
+            </span>
+            <div class="min-w-0 flex-1">
+              <div class="text-slate-200">{{ line.event }}</div>
+              {% if line.detail %}<div class="text-xs text-slate-500 mt-0.5 break-words">{{ line.detail }}</div>{% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+</section>

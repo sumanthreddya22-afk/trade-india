@@ -1,31 +1,31 @@
 <div id="macro_alloc" class="space-y-4"
      hx-get="/fragment/macro_alloc" hx-trigger="every 60s" hx-swap="outerHTML">
   <div class="card p-5">
-    <div class="label">Macro</div>
-    <h3 class="text-base font-semibold mt-1">FRED feed</h3>
+    <div class="label">Market Backdrop</div>
+    <h3 class="text-base font-semibold mt-1">Big-picture market readings</h3>
     {% if s.macro %}
     <div class="grid grid-cols-3 gap-2 mt-3 text-sm">
-      <div>
-        <div class="text-[10px] uppercase tracking-wider text-slate-500">VIX</div>
+      <div title="Volatility Index — measures expected stock-market swings. Above 25 = jittery markets, below 15 = calm.">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Fear gauge (VIX)</div>
         <div class="text-cyan-400 font-semibold">{% if s.macro.vix is not none %}{{ "%.2f"|format(s.macro.vix) }}{% else %}—{% endif %}</div>
       </div>
-      <div>
-        <div class="text-[10px] uppercase tracking-wider text-slate-500">10Y</div>
+      <div title="10-Year US Treasury Yield. Higher yields signal tighter financial conditions.">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">10-Year yield</div>
         <div class="text-cyan-400 font-semibold">{% if s.macro.yield_10y_pct is not none %}{{ "%.2f"|format(s.macro.yield_10y_pct) }}%{% else %}—{% endif %}</div>
       </div>
-      <div>
-        <div class="text-[10px] uppercase tracking-wider text-slate-500">Fed Funds</div>
+      <div title="Federal Funds Rate — the rate the Fed sets for overnight bank lending. Drives short-term borrowing costs.">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Fed rate</div>
         <div class="text-cyan-400 font-semibold">{% if s.macro.fed_funds_pct is not none %}{{ "%.2f"|format(s.macro.fed_funds_pct) }}%{% else %}—{% endif %}</div>
       </div>
     </div>
     {% else %}
-    <div class="text-sm text-slate-500 italic mt-2">Macro feed unavailable.</div>
+    <div class="text-sm text-slate-500 italic mt-2">Market data feed not available right now.</div>
     {% endif %}
   </div>
 
   <div class="card p-5">
-    <div class="label">Allocation</div>
-    <h3 class="text-base font-semibold mt-1">vs Regime Target</h3>
+    <div class="label">Capital Mix</div>
+    <h3 class="text-base font-semibold mt-1">Where money is parked vs plan</h3>
     {% if s.allocation_drift %}
     <div class="space-y-2 mt-3">
       {% for d in s.allocation_drift %}

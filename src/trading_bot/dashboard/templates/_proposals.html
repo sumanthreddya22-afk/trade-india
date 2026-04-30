@@ -4,12 +4,12 @@
          hx-trigger="every 300s"
          hx-swap="outerHTML">
   <div class="flex items-center justify-between mb-3">
-    <span class="label">Strategy Proposals</span>
-    <span class="text-[11px] text-slate-500">Architect → Reviewer · Saturday 06:00 ET</span>
+    <span class="label" title="New strategy ideas the bot drafts and self-reviews each Saturday morning. Accepted ideas can move into the tuning queue.">New Strategy Ideas</span>
+    <span class="text-[11px] text-slate-500">drafted &amp; reviewed · Saturdays at 6:00 AM ET</span>
   </div>
 
   {% if not lab.proposals %}
-    <div class="text-sm text-slate-500">No proposals yet. First Architect run is Saturday 06:00 ET.</div>
+    <div class="text-sm text-slate-500">No new ideas yet — first batch lands Saturday at 6:00 AM ET.</div>
   {% else %}
     <div class="space-y-2">
       {% for p in lab.proposals %}

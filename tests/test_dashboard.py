@@ -133,7 +133,8 @@ def test_dashboard_index_renders(tmp_path, monkeypatch):
 
         r = client.get("/")
         assert r.status_code == 200, r.text
-        assert "Today's Trading Command Center" in r.text
+        # Header was renamed during the plain-English rewrite (Apr 2026).
+        assert "Trading Bot — Today" in r.text
         assert "trending up" in r.text.lower()
         assert "$15,000.00" in r.text  # equity rendered
 

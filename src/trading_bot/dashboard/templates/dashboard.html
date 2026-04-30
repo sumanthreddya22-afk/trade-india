@@ -44,28 +44,31 @@
       </div>
     </div>
     <nav class="space-y-1" id="sidebar-nav">
-      <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-1 mb-1">Live</div>
-      <a href="#strategy_mode" data-section="strategy_mode" class="nav-item active"><span>◆</span> Strategy</a>
+      <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-1 mb-1">Right Now</div>
+      <a href="#strategy_mode" data-section="strategy_mode" class="nav-item active"><span>◆</span> What it's doing</a>
+      <a href="#regime" data-section="regime" class="nav-item"><span>🌡️</span> Market mood</a>
       <a href="#kpi" data-section="kpi" class="nav-item"><span>📊</span> Account</a>
-      <a href="#regime" data-section="regime" class="nav-item"><span>🌡️</span> Regime</a>
-      <a href="#risk" data-section="risk" class="nav-item"><span>🛡️</span> Risk</a>
-      <a href="#exposure" data-section="exposure" class="nav-item"><span>📈</span> Exposure</a>
-      <a href="#equity" data-section="equity" class="nav-item"><span>💹</span> Equity</a>
-      <a href="#last_scan" data-section="last_scan" class="nav-item"><span>🧠</span> Last Scan</a>
-      <a href="#decision_activity" data-section="decision_activity" class="nav-item"><span>📜</span> Audit Log</a>
-      <a href="#freshness" data-section="freshness" class="nav-item"><span>🕒</span> Data Health</a>
-      <a href="#opportunities" data-section="opportunities" class="nav-item"><span>🎯</span> Opportunities</a>
-      <a href="#orders" data-section="orders" class="nav-item"><span>📋</span> Orders</a>
-      <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-3 mb-1">Lab</div>
-      <a href="#lab_evolution" data-section="lab_evolution" class="nav-item"><span>⚗</span> Evolution</a>
-      <a href="#calibrator" data-section="calibrator" class="nav-item"><span>◎</span> Calibrator</a>
-      <a href="#proposals" data-section="proposals" class="nav-item"><span>✦</span> Proposals</a>
-      <a href="#llm_spend" data-section="llm_spend" class="nav-item"><span>💸</span> LLM Spend</a>
+      <a href="#risk" data-section="risk" class="nav-item"><span>🛡️</span> Safety limits</a>
+      <a href="#exposure" data-section="exposure" class="nav-item"><span>📈</span> Holdings</a>
+      <a href="#equity" data-section="equity" class="nav-item"><span>💹</span> Account history</a>
+      <a href="#orders" data-section="orders" class="nav-item"><span>📋</span> Live orders</a>
+      <a href="#activity_feed" data-section="activity_feed" class="nav-item"><span>📡</span> Live activity</a>
+      <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-3 mb-1">Recent Work</div>
+      <a href="#decision_activity" data-section="decision_activity" class="nav-item"><span>📜</span> Decision log</a>
+      <a href="#last_scan" data-section="last_scan" class="nav-item"><span>🧠</span> Last scan</a>
+      <a href="#opportunities" data-section="opportunities" class="nav-item"><span>🎯</span> Watchlist</a>
+      <a href="#stats" data-section="stats" class="nav-item"><span>📓</span> Track record</a>
+      <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-3 mb-1">Strategy</div>
+      <a href="#lab_evolution" data-section="lab_evolution" class="nav-item"><span>⚗</span> Tuning</a>
+      <a href="#calibrator" data-section="calibrator" class="nav-item"><span>◎</span> Backtest vs reality</a>
+      <a href="#proposals" data-section="proposals" class="nav-item"><span>✦</span> New ideas</a>
+      <a href="#llm_spend" data-section="llm_spend" class="nav-item"><span>💸</span> AI spend</a>
       <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-3 mb-1">System</div>
-      <a href="#role_health" data-section="role_health" class="nav-item"><span>◍</span> Role Health</a>
-      <a href="#stats" data-section="stats" class="nav-item"><span>📓</span> Journal</a>
-      <a href="#scheduled" data-section="scheduled" class="nav-item"><span>⏱️</span> Schedule</a>
-      <a href="/architecture" class="nav-item"><span>📚</span> Architecture</a>
+      <a href="#role_health" data-section="role_health" class="nav-item"><span>◍</span> Background jobs</a>
+      <a href="#freshness" data-section="freshness" class="nav-item"><span>🕒</span> Data health</a>
+      <a href="#email_firehose" data-section="email_firehose" class="nav-item"><span>📨</span> Inbox volume</a>
+      <a href="#process_registry" data-section="process_registry" class="nav-item"><span>⚙</span> Processes</a>
+      <a href="/architecture" class="nav-item"><span>📚</span> How it works</a>
     </nav>
 
     <div class="mt-auto">
@@ -78,8 +81,10 @@
 
     {% include "_header.html" %}
 
-    <!-- Strategy mode + halts banner: top-of-page so the operator sees mode at a glance -->
-    {% include "_halts.html" %}
+    {# Action Required banner — top of page. Renders nothing on a healthy day. #}
+    {% include "_action_required.html" %}
+
+    {# ─── Right Now ────────────────────────────────────────────────── #}
     <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       <div class="lg:col-span-1">{% include "_strategy_mode.html" %}</div>
       <div class="lg:col-span-2">{% include "_regime.html" %}</div>
@@ -87,56 +92,58 @@
 
     {% include "_kpi.html" %}
 
-    <!-- Risk + Macro/Allocation -->
-    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      {% include "_risk.html" %}
-      {% include "_macro_alloc.html" %}
-    </section>
+    {% include "_risk.html" %}
 
-    {% include "_last_scan.html" %}
-
-    <!-- PDF-parity additions: Decision audit log (W1) + Freshness audit (W6) -->
-    {% include "_decision_activity.html" %}
-    {% include "_freshness.html" %}
-
-    <!-- Exposure + Equity -->
+    {# Holdings now carries stop-loss column + click-to-expand drill-down. #}
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {% include "_exposure.html" %}
       {% include "_equity.html" %}
     </section>
 
-    {% include "_stats.html" %}
+    {% include "_orders.html" %}
 
-    <!-- Opportunities + Orders -->
+    {# Live Activity — what the bot is doing right now. #}
+    {% include "_activity_feed.html" %}
+
+    {# ─── Recent Work ──────────────────────────────────────────────── #}
+    <div class="pt-3 pb-1">
+      <h2 class="text-[11px] uppercase tracking-[0.2em] text-cyan-400 font-semibold">Recent Work</h2>
+      <p class="text-xs text-slate-500 mt-1">What the bot considered, scanned, and traded.</p>
+    </div>
+
+    {% include "_decision_activity.html" %}
+    {% include "_last_scan.html" %}
+
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {% include "_opportunities.html" %}
-      {% include "_orders.html" %}
+      {% include "_stats.html" %}
     </section>
 
-    <!-- Lab section header -->
+    {# ─── Strategy ────────────────────────────────────────────────── #}
     <div class="pt-3 pb-1">
-      <h2 class="text-[11px] uppercase tracking-[0.2em] text-cyan-400 font-semibold">Lab — Self-Evolving</h2>
-      <p class="text-xs text-slate-500 mt-1">Nightly param search, paper-vs-backtest drift, weekly Architect proposals.</p>
+      <h2 class="text-[11px] uppercase tracking-[0.2em] text-cyan-400 font-semibold">Strategy — How It's Improving Itself</h2>
+      <p class="text-xs text-slate-500 mt-1">Nightly auto-tuning, weekly new ideas, and a sanity check that backtest results still hold up in real trading.</p>
     </div>
 
     {% include "_lab_evolution.html" %}
-
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
       {% include "_calibrator.html" %}
       {% include "_llm_spend.html" %}
     </section>
-
     {% include "_proposals.html" %}
 
-    <!-- System section header -->
+    {# ─── System Health ───────────────────────────────────────────── #}
     <div class="pt-3 pb-1">
       <h2 class="text-[11px] uppercase tracking-[0.2em] text-cyan-400 font-semibold">System Health</h2>
-      <p class="text-xs text-slate-500 mt-1">Per-role 30-day success rate, schedule adherence, errors.</p>
+      <p class="text-xs text-slate-500 mt-1">Background jobs, data feeds, email volume, and which bot processes are running.</p>
     </div>
 
     {% include "_role_health.html" %}
-    {% include "_scheduled.html" %}
-    {% include "_errors.html" %}
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {% include "_freshness.html" %}
+      {% include "_email_firehose.html" %}
+      {% include "_process_registry.html" %}
+    </section>
 
     <footer class="text-xs text-slate-600 pt-4 pb-8 text-center">
       Trading Bot Dashboard · Local · 127.0.0.1 · Per-section auto-refresh
