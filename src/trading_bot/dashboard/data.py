@@ -497,25 +497,38 @@ def _build_universe_meta(opp_path: Path, watchlist_path: Path) -> tuple[int, str
 
 # Cron expressions are interpreted in America/New_York (ET). Keep in sync
 # with scheduler_jobs.py (daemon) and lab.py (lab process).
+# Source of truth: src/trading_bot/scheduler_jobs.py register_jobs().
+# Keep this list in lockstep with that function — see test_scheduled_jobs_truth.py
+# for the audit that pins them against each other.
 _KNOWN_SCHEDULED_JOBS: list[tuple[str, str, str]] = [
-    # ─ Daemon ─────────────────────────────────────────────────────────────
+    # ─ Daemon (always-on services) ────────────────────────────────────────
+    ("heartbeat", "Heartbeat (every 60s)", "* * * * *"),
+    ("alert_drain", "Alert drain (every 1 min)", "* * * * *"),
+    # ─ Daemon (market-hours scans) ────────────────────────────────────────
     ("massive_refresh", "Universe refresh (whole-market Polygon scan)", "30 6 * * 1-5"),
     ("premarket_rank", "Pre-market rank → opportunities.md", "30 7 * * 1-5"),
-    ("midday_rerank", "Midday rerank (catches morning breakouts)", "0 12 * * 1-5"),
-    ("stock_scanner", "Stock scanner (signals + orders)", "30 9-15 * * 1-5"),
-    ("crypto_scanner", "Crypto scanner (24/7)", "*/30 * * * *"),
+    ("news_warm_morning", "News sentiment warm (pre-open)", "55 8 * * 1-5"),
+    ("iv_capture", "Wheel IV capture (ATM 30d)", "45 9 * * 1-5"),
+    ("wheel_scan", "Wheel scan (open new CSPs / CCs)", "15 10 * * 1-5"),
+    ("wheel_manage", "Wheel manage (roll / take-profit)", "0,30 10-15 * * 1-5"),
+    ("stock_scanner", "Stock scanner (signals + orders)", "*/60 9-15 * * 1-5"),
+    ("crypto_scanner", "Crypto scanner (24/7, every 30 min)", "*/30 * * * *"),
     ("portfolio_monitor", "Portfolio monitor (hourly alerts)", "0 9-16 * * 1-5"),
-    ("order_steward_sweep", "Order steward sweep (verify stops)", "0 9-16 * * 1-5"),
+    ("order_steward_sweep", "Order steward sweep (verify stops, :20 + :50)", "20,50 * * * *"),
     ("vip_listener", "VIP listener (Truth Social / news)", "*/30 9-16 * * 1-5"),
-    ("news_warm_morning", "News sentiment warm (pre-open)", "45 8 * * 1-5"),
-    ("news_warm_midday", "News sentiment warm (mid + late session)", "45 11,14 * * 1-5"),
-    ("strategy_coach", "Strategy Coach (alpha-vs-SPY check)", "0 6 * * 1-5"),
-    ("hold_spy_coordinator", "Hold-SPY Coordinator (transition mgmt)", "55 15 * * 1-5"),
+    ("midday_rerank", "Midday rerank (catches morning breakouts)", "0 12 * * 1-5"),
     ("midday_snapshot", "Midday snapshot email", "0 12 * * 1-5"),
-    ("daily_digest", "EOD digest email", "0 18 * * 1-5"),
+    ("news_warm_midday", "News sentiment warm (midday)", "0 12 * * 1-5"),
+    ("hold_spy_coordinator", "Hold-SPY Coordinator (transition mgmt)", "55 15 * * 1-5"),
+    ("reconciler_close", "Reconciler (post-close, fills + exits)", "5 16 * * 1-5"),
+    ("daily_digest", "Daily digest email (16:30 ET)", "30 16 * * 1-5"),
+    ("strategy_coach", "Strategy Coach (alpha-vs-SPY check)", "0 6 * * 1-5"),
+    # ─ Daemon (overnight + nightly) ───────────────────────────────────────
+    ("wheel_universe_build", "Wheel universe rebuild (nightly Finnhub crawl)", "30 21 * * *"),
+    ("schedule_audit", "Schedule audit (verify cron firings)", "55 21 * * *"),
+    ("reconciler_pre_digest", "Reconciler (pre-digest sweep)", "55 21 * * *"),
     ("log_rotation", "Weekly log rotation", "0 3 * * 0"),
-    ("heartbeat", "Heartbeat (every 60s)", "* * * * *"),
-    # ─ Lab ────────────────────────────────────────────────────────────────
+    # ─ Lab (overnight self-evolution) ─────────────────────────────────────
     ("param_search", "Lab — nightly param search (optuna)", "0 2 * * *"),
     ("auto_promote", "Lab — auto-promote winning variant", "45 2 * * *"),
     ("calibrate", "Lab — calibrator (backtest vs paper drift)", "0 5 * * *"),

@@ -320,9 +320,20 @@ class RoleHealthRow:
 
 
 def role_health(session: Session) -> list[RoleHealthRow]:
-    """One row per role, last 30 days."""
+    """One row per role, last 30 days.
+
+    "Today" is computed against America/New_York midnight (the operator's
+    local day) — not UTC. A role that fires at 15:30 ET shows up under
+    today even though its UTC timestamp may already be the next calendar
+    day. The previous implementation used UTC midnight and silently
+    showed today=0 for any post-20:00 ET activity.
+    """
+    from zoneinfo import ZoneInfo
+    et = ZoneInfo("America/New_York")
     now = dt.datetime.now(dt.timezone.utc)
-    today_start = dt.datetime.combine(now.date(), dt.time.min, tzinfo=dt.timezone.utc)
+    now_et = now.astimezone(et)
+    today_start_et = dt.datetime.combine(now_et.date(), dt.time.min, tzinfo=et)
+    today_start_utc = today_start_et.astimezone(dt.timezone.utc)
     cutoff_30 = now - dt.timedelta(days=30)
 
     # Distinct role names that have any rows in 30d
@@ -339,10 +350,14 @@ def role_health(session: Session) -> list[RoleHealthRow]:
     out: list[RoleHealthRow] = []
     for name, runs in by_role.items():
         n_30 = len(runs)
-        n_today = sum(
-            1 for r in runs if r.started_at >= today_start.replace(tzinfo=None) or
-            (r.started_at.tzinfo and r.started_at >= today_start)
-        )
+        n_today = 0
+        for r in runs:
+            ts = r.started_at
+            # SQLite round-trips DateTime(timezone=True) as naive — assume UTC.
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=dt.timezone.utc)
+            if ts >= today_start_utc:
+                n_today += 1
         n_ok = sum(1 for r in runs if r.status == "ok")
         latest = runs[0]
         out.append(
