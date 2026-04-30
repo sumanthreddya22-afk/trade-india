@@ -6,9 +6,12 @@ from trading_bot.options.chain import (
 from trading_bot.config import WheelConfig
 
 
-def _c(strike, kind, delta, *, dte=35, bid=2.5, ask=2.60, oi=500, iv=0.30):
+def _c(strike, kind, delta, *, dte=35, bid=2.5, ask=2.55, oi=500, iv=0.30):
     """Bucket C: bid bumped 2.0 -> 2.5 so the default 35-DTE / strike-190
     contract clears the WheelConfig.min_annualized_yield (12%) gate.
+    Bucket E: ask 2.60 -> 2.55 so the spread (0.05) clears the new
+    AND-gate liquidity filter (was OR; the 0.10 absolute spread tripped
+    on float precision once relative was also enforced).
     Tests that need to fail liquidity / premium gates pass explicit bids.
     """
     today = dt.date(2026, 4, 28)
@@ -66,10 +69,14 @@ def test_passes_liquidity_spread_pct_path():
     assert passes_liquidity(c, cfg) is True
 
 
-def test_passes_liquidity_absolute_path():
-    cfg = WheelConfig(enabled=True)
-    c = _c(190, "P", -0.25, bid=0.50, ask=0.58, oi=200)  # 16% but $0.08 absolute
-    assert passes_liquidity(c, cfg) is True
+def test_passes_liquidity_blocks_absolute_only_pass(cfg=None):
+    """Bucket E: gate is now AND, not OR. A contract whose absolute
+    spread is small ($0.08) but whose relative spread is wide (16%) is
+    blocked. Pre-Bucket-E the OR gate let it pass on the absolute leg.
+    """
+    cfg = cfg or WheelConfig(enabled=True)
+    c = _c(190, "P", -0.25, bid=0.50, ask=0.58, oi=200)  # spread 0.08 / mid 0.54 = 14.8%
+    assert passes_liquidity(c, cfg) is False
 
 
 def test_passes_liquidity_fails_low_oi():

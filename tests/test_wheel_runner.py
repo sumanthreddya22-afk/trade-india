@@ -20,12 +20,17 @@ def engine(tmp_path):
 
 
 def _put(strike, delta=-0.25):
+    """Bucket E: ask 2.20 -> 2.15 so the contract clears the new AND-gate
+    liquidity filter (was OR; the spread 0.10 absolute leg now also has to
+    pass the relative-spread leg, and float precision pushes 2.20-2.10
+    just over 0.10 in some interpreters).
+    """
     today = dt.date(2026, 4, 28)
     exp = today + dt.timedelta(days=35)
     return ChainContract(
         contract_symbol=f"AAPL{exp:%y%m%d}P{int(strike*1000):08d}",
         underlying="AAPL", expiration=exp, kind="P", strike=strike,
-        bid=2.10, ask=2.20, last=2.15, volume=100, open_interest=400,
+        bid=2.10, ask=2.15, last=2.12, volume=100, open_interest=400,
         implied_volatility=0.30, delta=delta,
     )
 

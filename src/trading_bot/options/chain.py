@@ -28,15 +28,19 @@ def _dte(c: ChainContract, today: dt.date) -> int:
 
 
 def passes_liquidity(c: ChainContract, cfg: WheelConfig) -> bool:
+    """Bucket E: spread gate now requires BOTH absolute spread &lt;= 0.10 AND
+    relative spread &lt;= 5%. Pre-Bucket-E used OR, which let a $0.40 / $0.50
+    contract (spread=0.10, relative 22%) pass the gate purely on the
+    absolute leg. Liquid options should clear both — the AND is the
+    stricter, and intent-correct, gate.
+    """
     if c.open_interest < cfg.min_open_interest:
         return False
     mid = (c.bid + c.ask) / 2.0
     if mid <= 0:
         return False
     spread = c.ask - c.bid
-    if spread <= 0.10 or (spread / mid) <= 0.05:
-        return True
-    return False
+    return spread <= 0.10 and (spread / mid) <= 0.05
 
 
 def pick_csp_contract(

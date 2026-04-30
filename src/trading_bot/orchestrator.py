@@ -314,9 +314,20 @@ class TradeOrchestrator:
         # operator pauses are honored even on fallback. size_multiplier=1.0
         # is the safe default; the Pnl-driven throttle only applies when the
         # real builder is in play.
+        # Bucket E: log a warning on this path. Pre-Bucket-E it silently
+        # bypassed every state-driven gate (P&L breach, halt) by returning
+        # zeros, with no visibility. The log line means an operator running
+        # the orchestrator without a state builder sees the gap immediately.
+        import logging as _logging
         from trading_bot.state_pause import (
             HALTED_STRATEGIES_PATH,
             read_halted_strategies,
+        )
+        _logging.getLogger(__name__).warning(
+            "TradeOrchestrator: no state_builder wired; using zero P&L "
+            "fallback. Daily/weekly halt + throttle gates are inert. This "
+            "is expected in dry-run / tests, but a live deployment must "
+            "wire a PnlStateBuilder."
         )
         return RiskState(
             daily_pnl_pct=Decimal("0"),

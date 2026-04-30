@@ -11,6 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from trading_bot.cadence import CadenceConfig
+from trading_bot.scheduler_history import attach_listener
 
 
 def register_jobs(
@@ -20,13 +21,17 @@ def register_jobs(
     runners: Mapping[str, Callable[[], None]],
 ) -> None:
     et = "America/New_York"
+    attach_listener(scheduler)
 
-    # Continuous: heartbeat
+    # Continuous: heartbeat. Bucket E: misfire_grace_time + coalesce so a
+    # daemon stall doesn't accumulate dozens of queued heartbeat fires.
     scheduler.add_job(
         runners["heartbeat"],
         trigger=IntervalTrigger(seconds=cadence.heartbeat_seconds),
         id="heartbeat",
         replace_existing=True,
+        misfire_grace_time=120,
+        coalesce=True,
     )
 
     # Stock Scanner: every 60 min during market hours, weekdays
@@ -44,12 +49,16 @@ def register_jobs(
         coalesce=True,
     )
 
-    # Crypto Scanner: 24/7 at configured cadence
+    # Crypto Scanner: 24/7 at configured cadence. Bucket E: misfire_grace_time
+    # + coalesce so a daemon stall during a crypto event can't queue overlapping
+    # fires that race the same orchestrator state.
     scheduler.add_job(
         runners["crypto_scan"],
         trigger=IntervalTrigger(minutes=cadence.crypto_scanner_minutes),
         id="crypto_scanner",
         replace_existing=True,
+        misfire_grace_time=300,
+        coalesce=True,
     )
 
     # Portfolio Monitor: every N min during market hours
@@ -211,12 +220,16 @@ def register_jobs(
 
     # Alert drain: every 1 min. The throttling logic inside drain_alerts
     # checks whether enough time has passed since the last send.
+    # Bucket E: misfire + coalesce so a stall doesn't pile up minute-spaced
+    # drain attempts that all try to grab the alerts_pending queue at once.
     if "alert_drain" in runners:
         scheduler.add_job(
             runners["alert_drain"],
             trigger=IntervalTrigger(minutes=1),
             id="alert_drain",
             replace_existing=True,
+            misfire_grace_time=60,
+            coalesce=True,
         )
 
     # Reconciler: 16:05 ET (post-close) + 21:55 ET (pre-digest).

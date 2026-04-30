@@ -229,7 +229,11 @@ def run_wheel_scan(deps: WheelDeps) -> None:
                   detail_html=f"<p>{symbol}: {sector_reason}</p>",
                   dedup_key=f"sector_cap_{symbol}_{today}")
             continue
-        limit = Decimal(str(round(contract.bid, 2)))
+        # Bucket E: limit at MID, not bid. Selling at the bid rarely fills
+        # on liquid options because everyone else is also crossing the
+        # spread; mid is the marketable-but-fair price for an STO.
+        mid = (contract.bid + contract.ask) / 2.0
+        limit = Decimal(str(round(mid, 2)))
         try:
             order_id = deps.option_alpaca.sell_to_open(
                 contract_symbol=contract.contract_symbol, qty=1, limit_price=limit,
@@ -396,8 +400,9 @@ def _try_roll(
                                         limit_price=Decimal(str(round(current_mid, 2))))
     except Exception:
         return
-    # Open new
-    new_credit = Decimal(str(round(pick.bid, 2)))
+    # Open new — Bucket E: limit at mid, not bid (see open_csp/open_cc above)
+    new_mid = (pick.bid + pick.ask) / 2.0
+    new_credit = Decimal(str(round(new_mid, 2)))
     try:
         order_id = deps.option_alpaca.sell_to_open(
             contract_symbol=pick.contract_symbol, qty=1, limit_price=new_credit,

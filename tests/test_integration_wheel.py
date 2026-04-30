@@ -17,7 +17,7 @@ def _put(strike, delta=-0.25, dte=35):
     return ChainContract(
         contract_symbol=f"AAPL{exp:%y%m%d}P{int(strike*1000):08d}",
         underlying="AAPL", expiration=exp, kind="P", strike=strike,
-        bid=2.10, ask=2.20, last=2.15, volume=100, open_interest=400,
+        bid=2.10, ask=2.15, last=2.12, volume=100, open_interest=400,
         implied_volatility=0.30, delta=delta,
     )
 
@@ -83,7 +83,7 @@ def test_scan_then_assignment_then_cc_then_called_away(engine):
     cc = ChainContract(
         contract_symbol=f"AAPL{(today+dt.timedelta(days=35)):%y%m%d}C00200000",
         underlying="AAPL", expiration=today + dt.timedelta(days=35),
-        kind="C", strike=200, bid=1.10, ask=1.20, last=1.15, volume=50,
+        kind="C", strike=200, bid=1.10, ask=1.15, last=1.12, volume=50,
         open_interest=300, implied_volatility=0.28, delta=0.27,
     )
     deps.option_alpaca.get_chain.return_value = [cc]

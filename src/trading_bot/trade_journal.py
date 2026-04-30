@@ -103,20 +103,28 @@ class TradeJournal:
             return [self._to_record(r) for r in rows]
 
     def traded_today(self, *, as_of: datetime | None = None) -> set[str]:
-        """Return the set of symbols for which a BUY was recorded today (UTC date).
+        """Return the set of symbols for which a BUY was recorded today (ET date).
 
-        Used by the orchestrator as a last-resort idempotency guard: if a stop
-        fires and the scanner re-evaluates the same symbol later the same day, it
-        won't re-enter.  Pass ``as_of`` in tests to fix the reference date.
+        Bucket E: the day boundary is now anchored to America/New_York, not UTC.
+        Pre-Bucket-E this used UTC, which after 20:00 ET (00:00 UTC next day)
+        flipped to a new "day" while it was still the same trading day in the
+        operator's mental model. With the 24/7 crypto scanner that opened a
+        4-hour re-entry window every night.
+
+        Pass ``as_of`` in tests to fix the reference date (interpreted in ET).
         """
         from datetime import timezone as _tz
+        from zoneinfo import ZoneInfo
 
-        anchor = (as_of or datetime.now(_tz.utc)).date()
-        day_start = datetime(anchor.year, anchor.month, anchor.day,
-                             tzinfo=_tz.utc)
+        et = ZoneInfo("America/New_York")
+        anchor_dt = (as_of or datetime.now(_tz.utc)).astimezone(et)
+        anchor = anchor_dt.date()
+        day_start = datetime(anchor.year, anchor.month, anchor.day, tzinfo=et)
         day_end = datetime(anchor.year, anchor.month, anchor.day,
-                           23, 59, 59, tzinfo=_tz.utc)
-        records = self.between(day_start, day_end)
+                           23, 59, 59, tzinfo=et)
+        records = self.between(
+            day_start.astimezone(_tz.utc), day_end.astimezone(_tz.utc)
+        )
         return {r.symbol for r in records if r.side == "buy"}
 
     def between(self, start: datetime, end: datetime) -> list[TradeRecord]:

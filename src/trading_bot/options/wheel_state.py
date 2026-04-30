@@ -66,10 +66,21 @@ def open_csp(
     repo: WheelStateRepo, *, symbol: str, contract: str,
     strike: Decimal, expiration: dt.date, credit: Decimal,
 ) -> str:
-    if repo.get_active(symbol=symbol) is not None:
-        raise ValueError(f"active cycle exists for {symbol}")
+    """Bucket E: TOCTOU race fix. Pre-Bucket-E this opened TWO sessions —
+    one to check active cycles, another to insert — leaving a window where
+    a concurrent wheel_scan could pass the active-check, lose the race,
+    and create duplicate active cycles for the same symbol. The check and
+    insert now share a single Session so SQLite's serializable isolation
+    serializes them.
+    """
     cid = _new_cycle_id()
     with Session(repo.engine) as s:
+        existing = (s.query(WheelCycle)
+                    .filter(WheelCycle.symbol == symbol,
+                            WheelCycle.phase.in_(_ACTIVE_PHASES))
+                    .one_or_none())
+        if existing is not None:
+            raise ValueError(f"active cycle exists for {symbol}")
         s.add(WheelCycle(
             cycle_id=cid, symbol=symbol, phase=Phase.CSP_OPEN.value,
             opened_at=dt.datetime.now(dt.timezone.utc),

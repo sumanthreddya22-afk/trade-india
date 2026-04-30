@@ -32,6 +32,12 @@ JOB_EVENT_MAP: dict[str, str] = {
     "hold_spy_coordinator": "hold_spy_start",
     "strategy_coach": "strategy_coach_start",
     "log_rotation": "log_rotation_start",
+    # Bucket E: wheel jobs were missing from the audit map, so a missed
+    # wheel run was invisible to the 21:55 self-test.
+    "wheel_scan": "wheel_scan_start",
+    "wheel_manage": "wheel_manage_start",
+    "wheel_universe_build": "wheel_universe_build_start",
+    "iv_capture": "iv_capture_start",
 }
 
 
@@ -58,6 +64,10 @@ def expected_fires_for_date(*, audit_date: dt.date) -> dict[str, int]:
         "reconciler_pre_digest": 1,
         "schedule_audit": 1,
         "alert_drain": 24 * 60,                            # every 1 min
+        # Bucket E: wheel cadence is config-driven (cadence.wheel_*); we
+        # leave concrete counts out and rely on log presence rather than
+        # exact-count comparison. The map entries above ensure missing-fire
+        # detection still works.
         # log_rotation, strategy_coach, hold_spy_coordinator: cadence varies; leave out
     }
 
