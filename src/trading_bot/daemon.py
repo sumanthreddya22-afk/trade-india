@@ -148,7 +148,7 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
         intelligence_macro=intelligence_macro, regime_detector=regime_detector,
         eligible_for_today=_eligible_set, iv_rank_for=_iv_rank_for,
         spot_for=_spot_for, sentiment_for=_sentiment_for,
-        finnhub=finnhub, apewisdom=ape, alert_queue=queue_alert,
+        finnhub=finnhub, alert_queue=queue_alert,
     )
 
 
