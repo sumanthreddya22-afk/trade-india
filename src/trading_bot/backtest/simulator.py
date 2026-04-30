@@ -276,11 +276,17 @@ def _to_account_snapshot(p: _Portfolio) -> AccountSnapshot:
 
 
 def _to_alpaca_positions(p: _Portfolio) -> list[Position]:
+    """Convert internal _Position objects into the alpaca-client Position
+    shape that RiskManager.check expects. ``current_price`` is required;
+    the simulator doesn't track an intraday last-trade price so we use
+    ``entry_price`` (which makes ``unrealized_pl=0`` consistent — both are
+    valued at entry). Production paper trading uses Alpaca's live mark."""
     return [
         Position(
             symbol=pos.symbol, qty=pos.qty,
             asset_class=pos.asset_class,
             avg_entry_price=pos.entry_price,
+            current_price=pos.entry_price,
             market_value=pos.entry_price * pos.qty,
             unrealized_pl=Decimal("0"),
         )

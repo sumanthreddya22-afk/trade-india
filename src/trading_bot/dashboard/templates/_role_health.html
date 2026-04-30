@@ -11,31 +11,50 @@
   {% if not lab.role_health %}
     <div class="text-sm text-slate-500">No role runs in last 30 days.</div>
   {% else %}
+    <p class="text-[11px] text-slate-500 mb-3">
+      Tone reflects the LATEST run status — not the 30-day average — so a single
+      transient failure on a low-volume role doesn't paint the card red. Red
+      means the most recent run errored AND the rate is below 70%; amber means
+      either condition; green means latest run was ok and rate ≥ 95%.
+    </p>
     <div class="grid grid-cols-2 lg:grid-cols-3 gap-2">
       {% for r in lab.role_health %}
         {% set rate = r.success_rate_pct %}
-        {% if rate >= 95 %}
-          {% set tone_bg = "bg-emerald-950/40" %}
-          {% set tone_border = "border-emerald-800/50" %}
-          {% set tone_text = "text-emerald-300" %}
-        {% elif rate >= 70 %}
-          {% set tone_bg = "bg-amber-950/40" %}
-          {% set tone_border = "border-amber-800/50" %}
-          {% set tone_text = "text-amber-300" %}
-        {% else %}
+        {% set last_ok = r.last_status == "ok" %}
+        {% set low_sample = r.runs_30d < 10 %}
+        {# Tone matrix:
+             RED   — most recent run errored AND rate < 70  → ongoing failure
+             AMBER — most recent run errored OR  rate < 95
+                     OR (low sample with ANY past failure)  → flag for attention
+             GREEN — latest run ok AND rate >= 95           → healthy #}
+        {% if (not last_ok) and rate < 70 %}
           {% set tone_bg = "bg-rose-950/40" %}
           {% set tone_border = "border-rose-800/50" %}
           {% set tone_text = "text-rose-300" %}
+          {% set tone_label = "failing" %}
+        {% elif (not last_ok) or rate < 95 %}
+          {% set tone_bg = "bg-amber-950/40" %}
+          {% set tone_border = "border-amber-800/50" %}
+          {% set tone_text = "text-amber-300" %}
+          {% set tone_label = "watch" %}
+        {% else %}
+          {% set tone_bg = "bg-emerald-950/40" %}
+          {% set tone_border = "border-emerald-800/50" %}
+          {% set tone_text = "text-emerald-300" %}
+          {% set tone_label = "ok" %}
         {% endif %}
         <div class="rounded-lg border {{ tone_border }} {{ tone_bg }} px-3 py-2"
-             title="{% if r.last_error %}Last error: {{ r.last_error }}{% else %}Last run: {{ r.last_status }}{% endif %}">
+             title="{% if r.last_error %}Last error: {{ r.last_error }}{% else %}Last run: {{ r.last_status }} ({{ r.last_run_at | et('%b %d %-I:%M %p ET') }}){% endif %}">
           <div class="flex items-baseline justify-between gap-2">
             <span class="text-[12px] font-mono text-slate-300 truncate">{{ r.role_name }}</span>
             <span class="text-sm font-semibold font-mono {{ tone_text }}">{{ "%.0f"|format(rate) }}%</span>
           </div>
           <div class="text-[10px] text-slate-500 mt-1 flex justify-between">
             <span>{{ r.runs_today }} today</span>
-            <span>{{ r.runs_30d }} in 30d</span>
+            <span>
+              {% if low_sample %}<span class="text-slate-600" title="Low sample size — % can swing on a single failure">⚠ </span>{% endif %}
+              {{ r.runs_30d }} in 30d
+            </span>
           </div>
         </div>
       {% endfor %}
