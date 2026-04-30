@@ -184,6 +184,116 @@ def test_orchestrator_skips_on_risk_violation(watchlist, monkeypatch):
     alpaca.place_order_with_stop_loss.assert_not_called()
 
 
+def test_orchestrator_blocks_order_on_risk_debate_reject(watchlist, monkeypatch):
+    """When risk_debate_enabled and the LLM judge returns reject@high, the
+    order is NOT placed and a rejected_by_risk_debate decision is emitted."""
+    from sqlalchemy import create_engine
+    from trading_bot.risk_debate import RiskDebateVerdict
+    from trading_bot.state_db import Base
+
+    market = MagicMock()
+    market.get_daily_bars.return_value = _bars()
+
+    forced = Signal(
+        symbol="MSFT", action=SignalAction.BUY, qty=Decimal("2"),
+        entry_price=Decimal("139"), stop_loss_price=Decimal("133"), reason="forced",
+    )
+    alpaca = MagicMock()
+    alpaca.get_account.return_value = _account()
+    alpaca.get_positions.return_value = []
+    alpaca.place_order_with_stop_loss.return_value = OrderResult(
+        entry_order_id="e-1", stop_loss_order_id="s-1"
+    )
+    journal = MagicMock()
+    cfg = _config()
+
+    db_engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(db_engine)
+
+    # Force the trigger predicate to return True via consecutive_losing_days=2.
+    from trading_bot.risk_manager import RiskState
+    state = RiskState(
+        daily_pnl_pct=Decimal("0"), weekly_pnl_pct=Decimal("0"),
+        consecutive_losing_days=2, halted=False,
+    )
+
+    orch = TradeOrchestrator(
+        config=cfg, market_data=market, alpaca=alpaca, journal=journal,
+        regime="trending_up",
+        risk_debate_enabled=True, risk_debate_engine=db_engine,
+        state_builder=lambda: state,
+    )
+    monkeypatch.setattr(
+        orch._strategy, "evaluate",
+        lambda sym, ind, equity: forced if sym == "MSFT" else
+        Signal(sym, SignalAction.HOLD, Decimal("0"), Decimal("0"), Decimal("0"), "x"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.risk_debate.run_risk_debate",
+        lambda *a, **kw: RiskDebateVerdict(
+            recommendation="reject", confidence="high",
+            reason="Conservative reviewer flagged regime mismatch with prior lessons.",
+            aggressive_text="(stub)", conservative_text="(stub)", neutral_text="(stub)",
+        ),
+    )
+
+    result = orch.scan(watchlist=watchlist)
+    msft = [d for d in result.decisions if d.symbol == "MSFT"][0]
+    assert msft.action == "rejected_by_risk_debate"
+    alpaca.place_order_with_stop_loss.assert_not_called()
+
+
+def test_orchestrator_proceeds_when_risk_debate_inconclusive(watchlist, monkeypatch):
+    """If the debate returns None (LLM unavailable), the orchestrator must
+    fall back to the prior behaviour and place the order."""
+    from sqlalchemy import create_engine
+    from trading_bot.state_db import Base
+
+    market = MagicMock()
+    market.get_daily_bars.return_value = _bars()
+    forced = Signal(
+        symbol="MSFT", action=SignalAction.BUY, qty=Decimal("2"),
+        entry_price=Decimal("139"), stop_loss_price=Decimal("133"), reason="forced",
+    )
+    alpaca = MagicMock()
+    alpaca.get_account.return_value = _account()
+    alpaca.get_positions.return_value = []
+    alpaca.place_order_with_stop_loss.return_value = OrderResult(
+        entry_order_id="e-2", stop_loss_order_id="s-2"
+    )
+    journal = MagicMock()
+    cfg = _config()
+    db_engine = create_engine("sqlite:///:memory:", future=True)
+    Base.metadata.create_all(db_engine)
+
+    from trading_bot.risk_manager import RiskState
+    state = RiskState(
+        daily_pnl_pct=Decimal("0"), weekly_pnl_pct=Decimal("0"),
+        consecutive_losing_days=2, halted=False,
+    )
+
+    orch = TradeOrchestrator(
+        config=cfg, market_data=market, alpaca=alpaca, journal=journal,
+        regime="trending_up",
+        risk_debate_enabled=True, risk_debate_engine=db_engine,
+        state_builder=lambda: state,
+    )
+    monkeypatch.setattr(
+        orch._strategy, "evaluate",
+        lambda sym, ind, equity: forced if sym == "MSFT" else
+        Signal(sym, SignalAction.HOLD, Decimal("0"), Decimal("0"), Decimal("0"), "x"),
+    )
+    monkeypatch.setattr(
+        "trading_bot.risk_debate.run_risk_debate",
+        lambda *a, **kw: None,
+    )
+
+    result = orch.scan(watchlist=watchlist)
+    msft = [d for d in result.decisions if d.symbol == "MSFT"][0]
+    assert msft.action == "placed_order"
+    alpaca.place_order_with_stop_loss.assert_called_once()
+
+
 def test_orchestrator_skips_when_bars_too_short(watchlist):
     market = MagicMock()
     market.get_daily_bars.return_value = _bars().head(5)

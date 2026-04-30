@@ -12,12 +12,14 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from trading_bot.leaderboard import current_best
+from trading_bot.decision_lessons import recent_lessons_text
+from trading_bot.leaderboard import current_best, top_n
 from trading_bot.promotion import (
     PromotionCandidate,
     promote_atomically,
     should_promote,
 )
+from trading_bot.promotion_debate import run_promotion_debate
 from trading_bot.roles.runner import BaseRole
 from trading_bot.state_db import EvolutionRun, PromoterHalt, RoleRun
 
@@ -35,7 +37,7 @@ class PromoterRole(BaseRole):
     downstream_roles: list[str] = []
 
     def __init__(self, *, engine, active_path: str | Path = "data/paper_active.json",
-                 notify: bool = False):
+                 notify: bool = False, debate_enabled: bool = True):
         super().__init__(engine=engine)
         self.active_path = Path(active_path)
         # When True, emit a Strategy Promotion email + record a lab_promotions
@@ -43,6 +45,11 @@ class PromoterRole(BaseRole):
         # construct with notify=True; tests and dry-runs default to False so
         # they never write to production state.db or send real emails.
         self._notify = notify
+        # Bull/bear/judge debate gate (3 LLM calls per candidate that has
+        # already cleared the fitness + delta gates). Fail-open: missing
+        # creds / budget halt / SDK errors all skip the debate so promotion
+        # falls back to the prior behaviour.
+        self._debate_enabled = debate_enabled
 
     def _active_halt(self) -> dict | None:
         """Return halt info dict if any active halt window covers now, else None."""
@@ -97,6 +104,29 @@ class PromoterRole(BaseRole):
                 "current_fitness": info.get("current_fitness"),
             }
 
+        # Debate gate (additive; fails open). Run only after the existing
+        # fitness + delta gates have already cleared so cost is bounded.
+        debate_outcome: dict | None = None
+        if self._debate_enabled:
+            verdict = self._run_debate(candidate)
+            if verdict is not None:
+                debate_outcome = {
+                    "recommendation": verdict.recommendation,
+                    "confidence": verdict.confidence,
+                    "reason": verdict.reason,
+                }
+                if verdict.recommendation == "block" and verdict.confidence in (
+                    "high",
+                    "medium",
+                ):
+                    return {
+                        "promoted": False,
+                        "reason": "blocked_by_debate",
+                        "candidate_fitness": candidate.fitness,
+                        "current_fitness": info.get("current_fitness"),
+                        "debate": debate_outcome,
+                    }
+
         promote_atomically(self.active_path, candidate, notify=self._notify)
         with Session(self.engine) as session:
             session.add(
@@ -112,13 +142,41 @@ class PromoterRole(BaseRole):
                 )
             )
             session.commit()
-        return {
+        out = {
             "promoted": True,
             "from_fitness": info.get("current_fitness"),
             "to_fitness": candidate.fitness,
             "delta_pct": info.get("delta_pct"),
             "template": candidate.template,
         }
+        if debate_outcome is not None:
+            out["debate"] = debate_outcome
+        return out
+
+    def _run_debate(self, candidate: PromotionCandidate):
+        """Build leaderboard + lessons context, then run the 3-call debate."""
+        with Session(self.engine) as session:
+            top = top_n(session, n=5)
+        leaderboard_lines = [
+            f"  {r.template_name:24s} fitness={r.fitness_score:.3f} "
+            f"alpha={r.alpha_vs_spy_x:.2f}x sortino={r.sortino:.2f} "
+            f"dd={r.max_dd_pct:.1f}%"
+            for r in top
+        ]
+        leaderboard_context = "\n".join(leaderboard_lines)
+        try:
+            lessons_block = recent_lessons_text(
+                self.engine, strategy=candidate.template, n_focused=4, n_cross=4
+            )
+        except Exception:
+            lessons_block = ""
+        return run_promotion_debate(
+            self.engine,
+            candidate,
+            leaderboard_context=leaderboard_context,
+            lessons_block=lessons_block,
+            role_name=self.name,
+        )
 
     def _kpi_value(self, lookback_days: int) -> tuple[str, float, str]:
         cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=lookback_days)

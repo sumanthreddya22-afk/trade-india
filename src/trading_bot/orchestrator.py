@@ -223,6 +223,8 @@ class TradeOrchestrator:
         policy_version: str = "",
         restricted_list_path: Path | str | None = None,
         approved_venue_url: str | None = None,
+        risk_debate_enabled: bool = False,
+        risk_debate_engine=None,
     ) -> None:
         self._cfg = config
         self._market = market_data
@@ -241,6 +243,13 @@ class TradeOrchestrator:
             Path(restricted_list_path) if restricted_list_path else None
         )
         self._approved_venue_url = approved_venue_url
+        # Optional 3-way LLM risk debate (aggressive/conservative/neutral +
+        # judge). OFF by default — debating every order would be cost-
+        # prohibitive. When enabled, fires only on borderline operational
+        # context (losing streak / size throttle / high per-trade VaR) and
+        # fails open if the LLM is unavailable.
+        self._risk_debate_enabled = risk_debate_enabled
+        self._risk_debate_engine = risk_debate_engine
 
     def _load_restricted_list(self) -> set[str]:
         if self._restricted_list_path is None:
@@ -336,6 +345,56 @@ class TradeOrchestrator:
             halted=False,
             halted_strategies=read_halted_strategies(HALTED_STRATEGIES_PATH),
         )
+
+    def _maybe_run_risk_debate(self, *, order, sig, state, account) -> str | None:
+        """Run the 3-way risk debate when the operational context is
+        borderline. Returns a block-reason string if the judge says reject
+        with high|medium confidence; None otherwise (including all
+        fail-open paths)."""
+        from trading_bot.risk_debate import run_risk_debate, should_debate
+        from trading_bot.decision_lessons import recent_lessons_text
+
+        try:
+            trade_var: float | None = None
+            if account is not None and account.equity and account.equity > 0:
+                risk_dollars = (sig.entry_price - sig.stop_loss_price) * sig.qty
+                trade_var = float(risk_dollars / account.equity)
+            if not should_debate(
+                consecutive_losing_days=state.consecutive_losing_days,
+                size_multiplier=getattr(state, "size_multiplier", None),
+                trade_var=trade_var,
+            ):
+                return None
+            try:
+                lessons_block = recent_lessons_text(
+                    self._risk_debate_engine,
+                    symbol=order.symbol,
+                    strategy=self._strategy_name(),
+                    n_focused=4, n_cross=3,
+                )
+            except Exception:
+                lessons_block = ""
+            verdict = run_risk_debate(
+                self._risk_debate_engine,
+                symbol=order.symbol,
+                action="buy",
+                qty=sig.qty,
+                entry_price=sig.entry_price,
+                stop_loss_price=sig.stop_loss_price,
+                strategy=self._strategy_name(),
+                regime=self._regime,
+                consecutive_losing_days=state.consecutive_losing_days,
+                size_multiplier=getattr(state, "size_multiplier", None),
+                trade_var=trade_var,
+                lessons_block=lessons_block,
+            )
+        except Exception:
+            return None  # any error in the debate path → fail-open
+        if verdict is None:
+            return None
+        if verdict.recommendation == "reject" and verdict.confidence in ("high", "medium"):
+            return f"risk_debate({verdict.confidence}): {verdict.reason}"
+        return None
 
     def _news_intel_gate(self, symbol: str, asset_class: str) -> str | None:
         """Per-trade news/intel gates. Returns skip reason or None.
@@ -642,6 +701,23 @@ class TradeOrchestrator:
                     asset_class=ac, decisions=decisions,
                 )
                 continue
+
+            # Optional adversarial risk review. Fail-open: if LLM is
+            # unavailable or the verdict is None, the trade proceeds as
+            # before. Block only on high|medium-confidence reject.
+            if self._risk_debate_enabled and self._risk_debate_engine is not None:
+                debate_block_reason = self._maybe_run_risk_debate(
+                    order=order, sig=sig, state=state, account=account,
+                )
+                if debate_block_reason is not None:
+                    self._emit(
+                        Decision(
+                            symbol=symbol, action="rejected_by_risk_debate",
+                            reason=debate_block_reason,
+                        ),
+                        asset_class=ac, decisions=decisions,
+                    )
+                    continue
 
             try:
                 result = self._alpaca.place_order_with_stop_loss(order)

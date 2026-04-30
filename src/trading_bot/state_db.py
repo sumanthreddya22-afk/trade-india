@@ -284,6 +284,28 @@ class Decisions(Base):
     stop_loss_order_id = Column(String(64), nullable=False, default="")
 
 
+class DecisionLesson(Base):
+    """Post-mortem note for a decision whose trade has closed.
+
+    Written by the ``decision_reflector`` role: for each closed trade, joins
+    its ``entry_order_id`` back to a ``decisions`` row and records a 2-4
+    sentence lesson plus optional categorical tags. Read by the architect
+    and other learning roles via ``trading_bot.decision_lessons``.
+    """
+    __tablename__ = "decision_lessons"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    decision_id = Column(String(64), nullable=False, unique=True, index=True)
+    entry_order_id = Column(String(64), nullable=False, index=True)
+    symbol = Column(String(32), nullable=False, index=True)
+    strategy = Column(String(64), nullable=False, index=True)
+    regime = Column(String(32), nullable=False, default="")
+    pnl_pct = Column(Float, nullable=False)
+    hold_hours = Column(Float, nullable=False)
+    lesson = Column(Text, nullable=False)
+    tags_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+
 def get_engine(db_path: str | Path = "data/state.db"):
     engine = create_engine(f"sqlite:///{db_path}", future=True)
 

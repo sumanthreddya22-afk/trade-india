@@ -8,10 +8,15 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from trading_bot.anthropic_client import AnthropicCredsMissingError, AnthropicResponse
+from trading_bot.anthropic_client import (
+    AnthropicCredsMissingError,
+    AnthropicResponse,
+    StructuredResponse,
+)
 from trading_bot.roles.strategy_architect import (
     StrategyArchitectRole,
     _parse_proposals,
+    _validate_proposals,
 )
 from trading_bot.state_db import Base, TemplateProposal
 
@@ -74,17 +79,18 @@ def test_skipped_when_no_creds(engine, monkeypatch):
 def test_writes_proposals_on_success(engine, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "FAKE-test")
 
-    fake_response = AnthropicResponse(
-        text=json.dumps([
-            {
-                "name": "mean_reversion_v2",
-                "rationale": "Exploits oversold bounces in sideways regimes.",
-                "expected_regime": "sideways",
-                "code": "def evaluate(s, ind, eq): pass",
-                "tests": "def test_smoke(): assert True",
-                "params_to_search": {"rsi_lower": [25, 35, "float"]},
-            }
-        ]),
+    proposal = {
+        "name": "mean_reversion_v2",
+        "rationale": "Exploits oversold bounces in sideways regimes.",
+        "expected_regime": "sideways",
+        "code": "def evaluate(s, ind, eq): pass",
+        "tests": "def test_smoke(): assert True",
+        "params_to_search": {"rsi_lower": [25, 35, "float"]},
+    }
+    fake_response = StructuredResponse(
+        data={"proposals": [proposal]},
+        text="",
+        used_structured=True,
         input_tokens=500,
         output_tokens=2000,
         request_id="req-123",
@@ -94,7 +100,7 @@ def test_writes_proposals_on_success(engine, monkeypatch):
     role = StrategyArchitectRole(engine=engine)
     with patch("trading_bot.roles.strategy_architect.AnthropicClient") as mock_cls:
         instance = MagicMock()
-        instance.complete.return_value = fake_response
+        instance.complete_structured.return_value = fake_response
         mock_cls.return_value = instance
         result = role.safe_run(ctx={})
 
@@ -104,3 +110,55 @@ def test_writes_proposals_on_success(engine, monkeypatch):
         rows = s.query(TemplateProposal).all()
     assert len(rows) == 1
     assert rows[0].review_status == "pending"
+
+
+def test_falls_back_to_text_parsing_when_tool_use_skipped(engine, monkeypatch):
+    """If Claude emits free text instead of using the forced tool, the
+    architect should still recover via _parse_proposals on resp.text."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "FAKE-test")
+
+    fallback_text = json.dumps([
+        {
+            "name": "mean_reversion_v3",
+            "rationale": "fallback path",
+            "expected_regime": "sideways",
+            "code": "def evaluate(s, ind, eq): pass",
+            "tests": "def test_smoke(): assert True",
+            "params_to_search": {},
+        }
+    ])
+    fake_response = StructuredResponse(
+        data=None,
+        text=fallback_text,
+        used_structured=False,
+        input_tokens=500,
+        output_tokens=2000,
+        request_id="req-456",
+        model="claude-opus-4-7",
+    )
+
+    role = StrategyArchitectRole(engine=engine)
+    with patch("trading_bot.roles.strategy_architect.AnthropicClient") as mock_cls:
+        instance = MagicMock()
+        instance.complete_structured.return_value = fake_response
+        mock_cls.return_value = instance
+        result = role.safe_run(ctx={})
+
+    assert result.outputs["n_proposals"] == 1
+    assert result.outputs["names"] == ["mean_reversion_v3"]
+
+
+def test_validate_proposals_filters_missing_required_keys():
+    items = [
+        {"name": "ok", "rationale": "r", "code": "c", "tests": "t"},
+        {"name": "missing_code", "rationale": "r", "tests": "t"},
+        "not a dict",
+        {"name": "missing_rationale", "code": "c", "tests": "t"},
+    ]
+    out = _validate_proposals(items)
+    assert [p["name"] for p in out] == ["ok"]
+
+
+def test_validate_proposals_handles_non_list():
+    assert _validate_proposals({"not": "a list"}) == []  # type: ignore[arg-type]
+    assert _validate_proposals(None) == []  # type: ignore[arg-type]

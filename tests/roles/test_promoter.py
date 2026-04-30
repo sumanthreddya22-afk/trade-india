@@ -146,3 +146,91 @@ def test_promoter_ignores_expired_halt(engine, active_path):
         s.commit()
     result = role.safe_run(ctx={})
     assert result.outputs["promoted"] is True
+
+
+def test_promoter_blocked_by_debate(engine, active_path):
+    """When the bull/bear debate judge returns a 'block' verdict with
+    medium+ confidence, promotion is rejected even though both fitness
+    and delta gates passed."""
+    from trading_bot.promotion_debate import DebateVerdict
+    from unittest.mock import patch
+
+    role = PromoterRole(engine=engine, active_path=active_path)
+    with Session(engine) as s:
+        _add_leaderboard_row(s, fitness=1.5, alpha=1.7, sortino=1.3, dd=15.0)
+
+    block_verdict = DebateVerdict(
+        recommendation="block", confidence="high",
+        reason="Bear identified clear overfitting: max_dd shape mismatches lessons",
+        bull_text="(stub)", bear_text="(stub)",
+    )
+    with patch(
+        "trading_bot.roles.promoter.run_promotion_debate",
+        return_value=block_verdict,
+    ):
+        result = role.safe_run(ctx={})
+    assert result.outputs["promoted"] is False
+    assert result.outputs["reason"] == "blocked_by_debate"
+    assert result.outputs["debate"]["recommendation"] == "block"
+    # Active config NOT touched
+    written = json.loads(active_path.read_text())
+    assert written["params"]["rsi_lower"] == 55.0
+
+
+def test_promoter_proceeds_when_debate_inconclusive(engine, active_path):
+    """If the debate returns None (LLM unavailable / SDK error / no creds),
+    PromoterRole must fall back to the prior behaviour and promote."""
+    from unittest.mock import patch
+
+    role = PromoterRole(engine=engine, active_path=active_path)
+    with Session(engine) as s:
+        _add_leaderboard_row(s, fitness=1.5, alpha=1.7, sortino=1.3, dd=15.0)
+    with patch("trading_bot.roles.promoter.run_promotion_debate", return_value=None):
+        result = role.safe_run(ctx={})
+    assert result.outputs["promoted"] is True
+    assert "debate" not in result.outputs
+
+
+def test_promoter_proceeds_when_debate_promotes(engine, active_path):
+    """A 'promote' verdict at any confidence level allows promotion and
+    the verdict is attached to outputs for the audit trail."""
+    from trading_bot.promotion_debate import DebateVerdict
+    from unittest.mock import patch
+
+    role = PromoterRole(engine=engine, active_path=active_path)
+    with Session(engine) as s:
+        _add_leaderboard_row(s, fitness=1.5, alpha=1.7, sortino=1.3, dd=15.0)
+    promote_verdict = DebateVerdict(
+        recommendation="promote", confidence="medium",
+        reason="Bear concerns are speculative; fold metrics are consistent.",
+        bull_text="(stub)", bear_text="(stub)",
+    )
+    with patch(
+        "trading_bot.roles.promoter.run_promotion_debate",
+        return_value=promote_verdict,
+    ):
+        result = role.safe_run(ctx={})
+    assert result.outputs["promoted"] is True
+    assert result.outputs["debate"]["recommendation"] == "promote"
+
+
+def test_promoter_block_at_low_confidence_does_not_block(engine, active_path):
+    """A 'block' verdict at LOW confidence should not stop promotion —
+    we only honour the bear case when the judge is confident."""
+    from trading_bot.promotion_debate import DebateVerdict
+    from unittest.mock import patch
+
+    role = PromoterRole(engine=engine, active_path=active_path)
+    with Session(engine) as s:
+        _add_leaderboard_row(s, fitness=1.5, alpha=1.7, sortino=1.3, dd=15.0)
+    low_conf_block = DebateVerdict(
+        recommendation="block", confidence="low",
+        reason="Some uncertainty about the regime fit.",
+        bull_text="(stub)", bear_text="(stub)",
+    )
+    with patch(
+        "trading_bot.roles.promoter.run_promotion_debate",
+        return_value=low_conf_block,
+    ):
+        result = role.safe_run(ctx={})
+    assert result.outputs["promoted"] is True

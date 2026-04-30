@@ -45,6 +45,24 @@ class AnthropicResponse:
     model: str
 
 
+@dataclass
+class StructuredResponse:
+    """Result of a forced tool-use call.
+
+    ``data`` is the parsed tool-input dict when Claude honoured the tool
+    schema; ``None`` when it returned free text instead (rare under
+    ``tool_choice``-forced use, but possible — caller should fall back to
+    parsing ``text``).
+    """
+    data: dict | None
+    text: str
+    used_structured: bool
+    input_tokens: int
+    output_tokens: int
+    request_id: str | None
+    model: str
+
+
 def default_architect_model() -> str:
     return os.environ.get("ANTHROPIC_ARCHITECT_MODEL", "claude-opus-4-7")
 
@@ -138,4 +156,92 @@ class AnthropicClient:
                     raise
                 time.sleep(2 ** attempt)
         # Unreachable due to raise above, but keeps mypy happy
+        raise last_exc  # type: ignore[misc]
+
+    def complete_structured(
+        self,
+        *,
+        system: str,
+        messages: list[dict],
+        tool_name: str,
+        tool_description: str,
+        tool_schema: dict,
+        max_tokens: int = 4096,
+    ) -> StructuredResponse:
+        """Force Claude to emit a structured payload via a single tool call.
+
+        On success, ``data`` is the validated tool input dict and
+        ``used_structured`` is True. If Claude emits a text block instead
+        (rare under ``tool_choice``-forced use), ``data`` is None,
+        ``used_structured`` is False, and the caller should parse ``text``.
+        Network/retry/cost-tracking semantics match :meth:`complete`.
+        """
+        with Session(self.engine) as session:
+            if is_halted(session):
+                raise BudgetExceededError(
+                    "Anthropic monthly cap exceeded — LLM call refused"
+                )
+
+        client = self._get_client()
+        last_exc = None
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                resp = client.messages.create(
+                    model=self.model,
+                    system=system,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    tools=[
+                        {
+                            "name": tool_name,
+                            "description": tool_description,
+                            "input_schema": tool_schema,
+                        }
+                    ],
+                    tool_choice={"type": "tool", "name": tool_name},
+                )
+                data: dict | None = None
+                text_parts: list[str] = []
+                for block in resp.content:
+                    btype = getattr(block, "type", None)
+                    if btype == "tool_use" and getattr(block, "name", None) == tool_name:
+                        raw_input = getattr(block, "input", None)
+                        if isinstance(raw_input, dict):
+                            data = raw_input
+                    elif hasattr(block, "text"):
+                        text_parts.append(block.text)
+                text = "".join(text_parts)
+                in_tokens = resp.usage.input_tokens
+                out_tokens = resp.usage.output_tokens
+                request_id = getattr(resp, "id", None)
+                with Session(self.engine) as session:
+                    record_call(
+                        session,
+                        role_name=self.role_name,
+                        model=self.model,
+                        input_tokens=in_tokens,
+                        output_tokens=out_tokens,
+                        request_id=request_id,
+                    )
+                return StructuredResponse(
+                    data=data,
+                    text=text,
+                    used_structured=data is not None,
+                    input_tokens=in_tokens,
+                    output_tokens=out_tokens,
+                    request_id=request_id,
+                    model=self.model,
+                )
+            except Exception as e:
+                last_exc = e
+                msg = str(e).lower()
+                retryable = (
+                    "rate" in msg
+                    or "timeout" in msg
+                    or "connection" in msg
+                    or "5" in str(getattr(e, "status_code", ""))
+                )
+                if not retryable or attempt == self.MAX_RETRIES:
+                    raise
+                time.sleep(2 ** attempt)
         raise last_exc  # type: ignore[misc]

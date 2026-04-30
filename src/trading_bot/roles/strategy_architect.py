@@ -11,7 +11,9 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+from typing import Literal
 
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from trading_bot.anthropic_client import (
@@ -20,9 +22,28 @@ from trading_bot.anthropic_client import (
     BudgetExceededError,
     default_architect_model,
 )
+from trading_bot.decision_lessons import recent_lessons_text
 from trading_bot.leaderboard import top_n
 from trading_bot.roles.runner import BaseRole
 from trading_bot.state_db import RoleRun, TemplateProposal
+
+
+class _ProposedStrategy(BaseModel):
+    name: str = Field(description="snake_case identifier, suffixed _v<n>.")
+    rationale: str = Field(description="1-2 sentences: regime/inefficiency exploited.")
+    expected_regime: Literal[
+        "trending_up", "sideways", "volatile_bear", "mean_reverting"
+    ] = "sideways"
+    code: str = Field(description="Full Python module text implementing evaluate().")
+    tests: str = Field(description="Full pytest module text.")
+    params_to_search: dict = Field(default_factory=dict)
+
+
+class _ProposalBatch(BaseModel):
+    proposals: list[_ProposedStrategy] = Field(min_length=1, max_length=3)
+
+
+_PROPOSAL_TOOL_SCHEMA = _ProposalBatch.model_json_schema()
 
 
 SYSTEM_PROMPT = """You are the Strategy Architect of an autonomous trading system. \
@@ -90,18 +111,35 @@ class StrategyArchitectRole(BaseRole):
             }
             for r in top
         ]
+        # Hindsight from recently closed trades — written by
+        # decision_reflector. Helps the architect avoid re-proposing
+        # patterns that just lost money.
+        try:
+            lessons_block = recent_lessons_text(
+                self.engine, n_focused=0, n_cross=8
+            )
+        except Exception:
+            lessons_block = ""
+
         user_msg = json.dumps(
             {
                 "leaderboard_top10": leaderboard_summary,
                 "active_template_hint": "momentum (existing). Propose templates for other regimes.",
+                "recent_lessons": lessons_block or None,
             },
             indent=2,
         )
 
         try:
-            resp = client.complete(
+            resp = client.complete_structured(
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_msg}],
+                tool_name="propose_strategies",
+                tool_description=(
+                    "Submit 1-3 candidate trading strategy templates conforming "
+                    "to MomentumStrategy's evaluate(symbol, ind, equity) signature."
+                ),
+                tool_schema=_PROPOSAL_TOOL_SCHEMA,
                 max_tokens=8000,
             )
         except BudgetExceededError as e:
@@ -109,7 +147,10 @@ class StrategyArchitectRole(BaseRole):
         except AnthropicCredsMissingError:
             return {"skipped": True, "reason": "no_anthropic_creds"}
 
-        proposals = _parse_proposals(resp.text)
+        if resp.used_structured and resp.data:
+            proposals = _validate_proposals(resp.data.get("proposals", []))
+        else:
+            proposals = _parse_proposals(resp.text)
         names: list[str] = []
         with Session(self.engine) as session:
             for p in proposals:
@@ -153,6 +194,22 @@ class StrategyArchitectRole(BaseRole):
             float(proposals) / max(count, 1),
             f"{proposals} proposals / {count} runs in last {lookback_days}d",
         )
+
+
+def _validate_proposals(items: list) -> list[dict]:
+    """Filter a tool-input proposal list down to entries that have the four
+    required keys downstream code reads. Mirrors the trailing check in
+    :func:`_parse_proposals` so structured + fallback paths return the same
+    shape."""
+    out: list[dict] = []
+    if not isinstance(items, list):
+        return out
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if all(k in item for k in ("name", "code", "tests", "rationale")):
+            out.append(item)
+    return out
 
 
 def _parse_proposals(text: str) -> list[dict]:
