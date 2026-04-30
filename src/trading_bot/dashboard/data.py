@@ -166,6 +166,40 @@ class LastScanBlock:
 
 
 @dataclass(frozen=True)
+class DecisionActivityBlock:
+    """W1 — aggregated decisions from the new ``decisions`` table.
+
+    Counts every decision (placed, rejected, skipped, escalated) across the
+    last ``window_hours`` so the dashboard surfaces what was *considered*,
+    not just what got an order. Powers the Decision Activity card.
+    """
+
+    window_hours: int
+    total: int
+    action_counts: list[tuple[str, int]]  # sorted desc
+    top_rejection_reasons: list[tuple[str, int]]
+    last_decision_at: datetime | None
+
+
+@dataclass(frozen=True)
+class FreshnessRow:
+    cache: str
+    last_seen: str
+    age_hours: float
+    budget_hours: float
+    severity: str  # "ok" | "stale" | "missing"
+    note: str
+
+
+@dataclass(frozen=True)
+class FreshnessBlock:
+    """W6 — same audit the daily digest + midday snapshot use."""
+
+    rows: list[FreshnessRow]
+    worst: str  # "ok" | "stale" | "missing"
+
+
+@dataclass(frozen=True)
 class DashboardSnapshot:
     generated_at: datetime
     regime: str
@@ -197,6 +231,9 @@ class DashboardSnapshot:
     wheel_pnl_30d: Decimal = Decimal("0")
     wheel_win_rate: float = 0.0
     wheel_collateral_pct: float = 0.0
+    # PDF-parity: W1 audit log + W6 freshness audit.
+    decision_activity: DecisionActivityBlock | None = None
+    freshness: FreshnessBlock | None = None
 
 
 # ---------- helpers ----------
@@ -835,6 +872,10 @@ def build_snapshot(
         state_db_path, kpi.equity, errors,
     )
 
+    # PDF-parity: W1 audit log + W6 freshness audit cards.
+    decision_activity = _build_decision_activity(state_db_path, errors)
+    freshness = _build_freshness(errors)
+
     # Automation status: simple heuristic — DOWN if equity unreachable, WARN if errors, OK otherwise
     if kpi.equity == 0 and "alpaca account/positions" in " ".join(errors):
         automation_status, automation_note = "DOWN", "Alpaca unreachable"
@@ -872,4 +913,84 @@ def build_snapshot(
         wheel_pnl_30d=wheel_pnl_30d,
         wheel_win_rate=wheel_win_rate,
         wheel_collateral_pct=wheel_collateral_pct,
+        decision_activity=decision_activity,
+        freshness=freshness,
     )
+
+
+def _build_decision_activity(
+    state_db_path: str, errors: list[str], *, window_hours: int = 24,
+) -> DecisionActivityBlock | None:
+    """Aggregate decisions over the last ``window_hours`` from the W1 table."""
+    import sqlite3
+    from collections import Counter
+    from datetime import timedelta
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=window_hours)
+    try:
+        with sqlite3.connect(state_db_path) as conn:
+            rows = list(conn.execute(
+                "SELECT action, reason, timestamp_utc FROM decisions "
+                "WHERE timestamp_utc >= ? "
+                "ORDER BY timestamp_utc",
+                (cutoff.isoformat(),),
+            ))
+    except Exception as e:
+        errors.append(f"decision_activity: {e}")
+        return None
+
+    if not rows:
+        return DecisionActivityBlock(
+            window_hours=window_hours, total=0,
+            action_counts=[], top_rejection_reasons=[],
+            last_decision_at=None,
+        )
+
+    action_counter: Counter[str] = Counter(r[0] for r in rows)
+    rejection_counter: Counter[str] = Counter(
+        r[1] for r in rows
+        if r[0] not in ("placed_order",) and r[1]
+    )
+
+    last_ts = None
+    if rows:
+        last_str = rows[-1][2]
+        try:
+            last_ts = datetime.fromisoformat(str(last_str).replace("Z", "+00:00"))
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=timezone.utc)
+        except Exception:
+            last_ts = None
+
+    return DecisionActivityBlock(
+        window_hours=window_hours,
+        total=len(rows),
+        action_counts=action_counter.most_common(),
+        top_rejection_reasons=rejection_counter.most_common(5),
+        last_decision_at=last_ts,
+    )
+
+
+def _build_freshness(errors: list[str]) -> FreshnessBlock | None:
+    """Run the same freshness audit the daily digest + midday snapshot use."""
+    try:
+        from trading_bot.freshness_audit import audit_freshness
+        findings = audit_freshness()
+    except Exception as e:
+        errors.append(f"freshness: {e}")
+        return None
+    rows = [
+        FreshnessRow(
+            cache=f.cache, last_seen=f.last_seen, age_hours=f.age_hours,
+            budget_hours=f.budget_hours, severity=f.severity, note=f.note,
+        )
+        for f in findings
+    ]
+    worst = "ok"
+    for r in rows:
+        if r.severity == "missing":
+            worst = "missing"
+            break
+        if r.severity == "stale":
+            worst = "stale"
+    return FreshnessBlock(rows=rows, worst=worst)

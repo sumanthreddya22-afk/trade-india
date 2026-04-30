@@ -51,7 +51,9 @@
       <a href="#risk" data-section="risk" class="nav-item"><span>🛡️</span> Risk</a>
       <a href="#exposure" data-section="exposure" class="nav-item"><span>📈</span> Exposure</a>
       <a href="#equity" data-section="equity" class="nav-item"><span>💹</span> Equity</a>
-      <a href="#last_scan" data-section="last_scan" class="nav-item"><span>🧠</span> Decisions</a>
+      <a href="#last_scan" data-section="last_scan" class="nav-item"><span>🧠</span> Last Scan</a>
+      <a href="#decision_activity" data-section="decision_activity" class="nav-item"><span>📜</span> Audit Log</a>
+      <a href="#freshness" data-section="freshness" class="nav-item"><span>🕒</span> Data Health</a>
       <a href="#opportunities" data-section="opportunities" class="nav-item"><span>🎯</span> Opportunities</a>
       <a href="#orders" data-section="orders" class="nav-item"><span>📋</span> Orders</a>
       <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-3 mb-1">Lab</div>
@@ -92,6 +94,10 @@
     </section>
 
     {% include "_last_scan.html" %}
+
+    <!-- PDF-parity additions: Decision audit log (W1) + Freshness audit (W6) -->
+    {% include "_decision_activity.html" %}
+    {% include "_freshness.html" %}
 
     <!-- Exposure + Equity -->
     <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">

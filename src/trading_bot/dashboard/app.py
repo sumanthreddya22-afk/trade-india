@@ -66,6 +66,9 @@ FRAGMENTS: dict[str, str] = {
     "proposals": "_proposals.html",
     # Phase 5
     "wheel": "_wheel.html",
+    # PDF-parity additions (W1, W6)
+    "decision_activity": "_decision_activity.html",
+    "freshness": "_freshness.html",
 }
 
 
