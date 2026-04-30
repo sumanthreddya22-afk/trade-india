@@ -255,6 +255,35 @@ class SectorCache(Base):
     cached_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class Decisions(Base):
+    """Append-only audit log of every Decision the bot makes.
+
+    Mirrors the PDF strict JSON contract. JSON columns hold the five PDF
+    sub-objects (risk_after, compliance, data_quality, execution_constraints,
+    alerts, audit). Top-level columns are the ones that show up in dashboards.
+    """
+    __tablename__ = "decisions"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    decision_id = Column(String(64), nullable=False, unique=True)
+    timestamp_utc = Column(DateTime(timezone=True), nullable=False, index=True)
+    symbol = Column(String(32), nullable=False, index=True)
+    action = Column(String(48), nullable=False, index=True)
+    reason = Column(Text, nullable=False, default="")
+    strategy = Column(String(64), nullable=False, default="", index=True)
+    regime = Column(String(32), nullable=False, default="")
+    asset_class = Column(String(16), nullable=False, default="")
+    confidence = Column(Float, nullable=True)
+    expected_edge_bps = Column(Float, nullable=True)
+    risk_after_json = Column(Text, nullable=False, default="{}")
+    compliance_json = Column(Text, nullable=False, default="{}")
+    data_quality_json = Column(Text, nullable=False, default="{}")
+    execution_constraints_json = Column(Text, nullable=False, default="{}")
+    alerts_json = Column(Text, nullable=False, default="[]")
+    audit_json = Column(Text, nullable=False, default="{}")
+    entry_order_id = Column(String(64), nullable=False, default="")
+    stop_loss_order_id = Column(String(64), nullable=False, default="")
+
+
 def get_engine(db_path: str | Path = "data/state.db"):
     engine = create_engine(f"sqlite:///{db_path}", future=True)
 

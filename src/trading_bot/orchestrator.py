@@ -1,8 +1,9 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from trading_bot.alpaca_client import (
     AlpacaClient,
@@ -23,6 +24,59 @@ from trading_bot.strategy import MomentumStrategy, SignalAction, strategy_for_re
 from trading_bot.trade_journal import TradeJournal, TradeRecord
 
 
+# ---------------------------------------------------------------------------
+# Decision schema (W1.1 — PDF-prescribed strict JSON contract).
+# Every field has a default so legacy two-arg call sites (Decision(symbol, action))
+# continue to work unchanged. "Unknown" is represented as None / empty.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RiskAfter:
+    trade_var: Decimal | None = None
+    portfolio_var_after: Decimal | None = None
+    expected_shortfall_after: Decimal | None = None
+    gross_after: Decimal | None = None
+    net_after: Decimal | None = None
+    drawdown_state: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class ComplianceFlags:
+    approved_instrument: bool | None = None
+    approved_venue: bool | None = None
+    restricted_list_clear: bool | None = None
+    mnpi_clear: bool | None = None
+    market_abuse_clear: bool | None = None
+
+
+@dataclass(frozen=True)
+class DataQualityFlags:
+    fresh: bool | None = None
+    complete: bool | None = None
+    aligned: bool | None = None
+    provenance_ok: bool | None = None
+
+
+@dataclass(frozen=True)
+class ExecutionConstraints:
+    price_collar_ok: bool | None = None
+    size_collar_ok: bool | None = None
+    max_participation: Decimal | None = None
+
+
+@dataclass(frozen=True)
+class AuditObject:
+    policy_version: str = ""
+    strategy_version: str = ""
+    model_versions: dict[str, str] = field(default_factory=dict)
+    prompt_versions: dict[str, str] = field(default_factory=dict)
+    data_snapshot_ids: tuple[str, ...] = ()
+    regime: str = ""
+    risk_state_id: str = ""
+    timestamp_utc: str = ""
+
+
 @dataclass(frozen=True)
 class Decision:
     symbol: str
@@ -30,6 +84,59 @@ class Decision:
     reason: str = ""
     entry_order_id: str = ""
     stop_loss_order_id: str = ""
+    confidence: float | None = None
+    expected_edge_bps: float | None = None
+    risk_after: RiskAfter = field(default_factory=RiskAfter)
+    compliance: ComplianceFlags = field(default_factory=ComplianceFlags)
+    data_quality: DataQualityFlags = field(default_factory=DataQualityFlags)
+    execution_constraints: ExecutionConstraints = field(default_factory=ExecutionConstraints)
+    alerts: tuple[str, ...] = ()
+    audit: AuditObject = field(default_factory=AuditObject)
+
+
+def _serialize_value(v: Any) -> Any:
+    if isinstance(v, Decimal):
+        return str(v)
+    return v
+
+
+def _serialize_dataclass(obj: Any) -> dict[str, Any]:
+    return {
+        f.name: _serialize_value(getattr(obj, f.name))
+        for f in obj.__dataclass_fields__.values()
+    }
+
+
+def decision_to_dict(d: Decision) -> dict[str, Any]:
+    """Render a Decision as the PDF's strict JSON output contract.
+
+    Decimal → string (lossless), tuples → lists, sub-objects → nested dicts.
+    Result is safe to pass to ``json.dumps`` with no custom encoder.
+    """
+    return {
+        "symbol": d.symbol,
+        "action": d.action,
+        "reason": d.reason,
+        "entry_order_id": d.entry_order_id,
+        "stop_loss_order_id": d.stop_loss_order_id,
+        "confidence": d.confidence,
+        "expected_edge_bps": d.expected_edge_bps,
+        "risk_after": _serialize_dataclass(d.risk_after),
+        "compliance": _serialize_dataclass(d.compliance),
+        "data_quality": _serialize_dataclass(d.data_quality),
+        "execution_constraints": _serialize_dataclass(d.execution_constraints),
+        "alerts": list(d.alerts),
+        "audit": {
+            "policy_version": d.audit.policy_version,
+            "strategy_version": d.audit.strategy_version,
+            "model_versions": dict(d.audit.model_versions),
+            "prompt_versions": dict(d.audit.prompt_versions),
+            "data_snapshot_ids": list(d.audit.data_snapshot_ids),
+            "regime": d.audit.regime,
+            "risk_state_id": d.audit.risk_state_id,
+            "timestamp_utc": d.audit.timestamp_utc,
+        },
+    }
 
 
 @dataclass(frozen=True)
@@ -74,6 +181,8 @@ class TradeOrchestrator:
         strategy: MomentumStrategy | None = None,
         risk_manager: RiskManager | None = None,
         state_builder=None,  # callable returning RiskState; if None, uses safe defaults
+        decision_store=None,  # DecisionStore | None — when set, every Decision is persisted
+        policy_version: str = "",
     ) -> None:
         self._cfg = config
         self._market = market_data
@@ -84,6 +193,53 @@ class TradeOrchestrator:
         self._strategy = strategy or strategy_for_regime(regime)
         self._risk = risk_manager or RiskManager(config)
         self._state_builder = state_builder
+        self._decision_store = decision_store
+        self._policy_version = policy_version
+
+    # ---- W1.4 decision emission helpers ------------------------------------
+
+    def _strategy_name(self) -> str:
+        if self._strategy is None:
+            return "none"
+        return type(self._strategy).__name__.replace("Strategy", "").lower() or "strategy"
+
+    def _attach_audit(self, decision: "Decision") -> "Decision":
+        """If the decision lacks audit metadata, attach a fresh audit object
+        derived from orchestrator state (regime, strategy, policy_version)."""
+        from trading_bot.audit import build_audit
+        if decision.audit.timestamp_utc:
+            return decision  # caller already attached an audit
+        a = build_audit(
+            strategy=self._strategy_name(),
+            regime=self._regime,
+            policy_version=self._policy_version,
+        )
+        # dataclasses.replace preserves frozen-ness
+        from dataclasses import replace
+        return replace(decision, audit=a)
+
+    def _emit(self, decision: "Decision", *, asset_class: str, decisions: list) -> None:
+        """Append a decision to the in-memory list AND persist it to the
+        DecisionStore when one is configured. Audit metadata is filled in
+        from orchestrator state if the caller didn't provide it."""
+        d = self._attach_audit(decision)
+        decisions.append(d)
+        if self._decision_store is None:
+            return
+        try:
+            self._decision_store.append(
+                d,
+                strategy=self._strategy_name(),
+                regime=self._regime,
+                asset_class=asset_class,
+            )
+        except Exception:
+            # Decision persistence failures must never block trading. The in-
+            # memory ScanResult is still returned, the daemon's runs/ JSON
+            # logs still capture the event, and the supervisor email path is
+            # unaffected. A persistence outage is observability noise, not a
+            # trading blocker.
+            pass
 
     def _build_state(self) -> RiskState:
         if self._state_builder is not None:
@@ -166,10 +322,14 @@ class TradeOrchestrator:
             # the Plan-5b backtest disabled mean_reversion). Skip entries;
             # existing positions still managed by their bracket orders.
             for entry in watchlist:
-                decisions.append(Decision(
-                    symbol=entry.symbol, action="hold",
-                    reason=f"no strategy enabled for regime {self._regime}",
-                ))
+                self._emit(
+                    Decision(
+                        symbol=entry.symbol, action="hold",
+                        reason=f"no strategy enabled for regime {self._regime}",
+                    ),
+                    asset_class=entry.asset_class,
+                    decisions=decisions,
+                )
             return ScanResult(decisions=decisions, timestamp=datetime.now(timezone.utc))
 
         # Defence-in-depth: build the set of symbols already entered today once
@@ -178,41 +338,60 @@ class TradeOrchestrator:
 
         for entry in watchlist:
             symbol = entry.symbol
+            ac = entry.asset_class
             if has_open_position(symbol, positions):
-                decisions.append(Decision(symbol=symbol, action="skipped_existing_position"))
+                self._emit(
+                    Decision(symbol=symbol, action="skipped_existing_position"),
+                    asset_class=ac, decisions=decisions,
+                )
                 continue
             # Also skip if there's already a pending open order for this symbol
             if symbol in open_order_symbols or symbol.replace("/", "") in open_order_symbols:
-                decisions.append(Decision(symbol=symbol, action="skipped_pending_order"))
+                self._emit(
+                    Decision(symbol=symbol, action="skipped_pending_order"),
+                    asset_class=ac, decisions=decisions,
+                )
                 continue
             # Last-resort idempotency: skip if this symbol was already bought today,
             # even if the position was subsequently stopped out.  Prevents the
             # "daemon restart catches up a missed fire → re-enters after stop" pattern
             # (root cause of the 2026-04-27 AMD/CLS/AMDL duplicate orders).
             if symbol in traded_today or symbol.replace("/", "") in traded_today:
-                decisions.append(Decision(
-                    symbol=symbol, action="skipped_already_traded_today",
-                    reason="journal records a buy for this symbol today",
-                ))
+                self._emit(
+                    Decision(
+                        symbol=symbol, action="skipped_already_traded_today",
+                        reason="journal records a buy for this symbol today",
+                    ),
+                    asset_class=ac, decisions=decisions,
+                )
                 continue
 
             try:
                 bars = self._market.get_daily_bars(symbol, lookback_days=60)
             except AlpacaClientError as e:
-                decisions.append(Decision(symbol=symbol, action="api_error", reason=str(e)))
+                self._emit(
+                    Decision(symbol=symbol, action="api_error", reason=str(e)),
+                    asset_class=ac, decisions=decisions,
+                )
                 continue
 
             if len(bars) < MIN_BARS_FOR_INDICATORS:
-                decisions.append(
-                    Decision(symbol=symbol, action="skipped_insufficient_data",
-                             reason=f"{len(bars)} bars < {MIN_BARS_FOR_INDICATORS}")
+                self._emit(
+                    Decision(
+                        symbol=symbol, action="skipped_insufficient_data",
+                        reason=f"{len(bars)} bars < {MIN_BARS_FOR_INDICATORS}",
+                    ),
+                    asset_class=ac, decisions=decisions,
                 )
                 continue
 
             ind = compute_indicators(bars)
             sig = self._strategy.evaluate(symbol, ind, equity=account.equity)
             if sig.action != SignalAction.BUY:
-                decisions.append(Decision(symbol=symbol, action="hold", reason=sig.reason))
+                self._emit(
+                    Decision(symbol=symbol, action="hold", reason=sig.reason),
+                    asset_class=ac, decisions=decisions,
+                )
                 continue
 
             # News-sentiment gate (Plan 6c). When sentiment_floor is set,
@@ -226,10 +405,13 @@ class TradeOrchestrator:
                     max_age_days=self._cfg.strategy.sentiment_max_age_days,
                 )
                 if not passes_filter(score, floor=sf):
-                    decisions.append(Decision(
-                        symbol=symbol, action="skipped_sentiment",
-                        reason=f"news score {score:.2f} < floor {sf:.2f}",
-                    ))
+                    self._emit(
+                        Decision(
+                            symbol=symbol, action="skipped_sentiment",
+                            reason=f"news score {score:.2f} < floor {sf:.2f}",
+                        ),
+                        asset_class=ac, decisions=decisions,
+                    )
                     continue
 
             # ---- News/intel filter gates (each independently config-flagged)
@@ -238,10 +420,13 @@ class TradeOrchestrator:
             try:
                 skip_reason = self._news_intel_gate(symbol, entry.asset_class)
                 if skip_reason is not None:
-                    decisions.append(Decision(
-                        symbol=symbol, action="skipped_intel",
-                        reason=skip_reason,
-                    ))
+                    self._emit(
+                        Decision(
+                            symbol=symbol, action="skipped_intel",
+                            reason=skip_reason,
+                        ),
+                        asset_class=ac, decisions=decisions,
+                    )
                     continue
             except Exception:
                 pass  # any unexpected error: don't block trading
@@ -260,14 +445,22 @@ class TradeOrchestrator:
                 self._risk.check(order, account=account, positions=positions,
                                  state=state, regime=self._regime)
             except RiskRuleViolation as e:
-                decisions.append(Decision(symbol=symbol, action="rejected_by_risk",
-                                          reason=f"{e.rule}: {e.detail}"))
+                self._emit(
+                    Decision(
+                        symbol=symbol, action="rejected_by_risk",
+                        reason=f"{e.rule}: {e.detail}",
+                    ),
+                    asset_class=ac, decisions=decisions,
+                )
                 continue
 
             try:
                 result = self._alpaca.place_order_with_stop_loss(order)
             except AlpacaClientError as e:
-                decisions.append(Decision(symbol=symbol, action="api_error", reason=str(e)))
+                self._emit(
+                    Decision(symbol=symbol, action="api_error", reason=str(e)),
+                    asset_class=ac, decisions=decisions,
+                )
                 continue
 
             self._journal.append(TradeRecord(
@@ -283,10 +476,13 @@ class TradeOrchestrator:
                 stop_loss_order_id=result.stop_loss_order_id,
                 notes=sig.reason,
             ))
-            decisions.append(Decision(
-                symbol=symbol, action="placed_order", reason=sig.reason,
-                entry_order_id=result.entry_order_id,
-                stop_loss_order_id=result.stop_loss_order_id,
-            ))
+            self._emit(
+                Decision(
+                    symbol=symbol, action="placed_order", reason=sig.reason,
+                    entry_order_id=result.entry_order_id,
+                    stop_loss_order_id=result.stop_loss_order_id,
+                ),
+                asset_class=ac, decisions=decisions,
+            )
 
         return ScanResult(decisions=decisions, timestamp=datetime.now(timezone.utc))

@@ -69,6 +69,10 @@ class DigestContext:
     wheel_collateral_pct: float = 0.0
     wheel_win_rate: float = 0.0
 
+    # W1.5 Decision activity — populated from DecisionStore on the day of the digest.
+    decision_action_counts: dict[str, int] = field(default_factory=dict)
+    decision_top_rejection_reasons: list[tuple[str, int]] = field(default_factory=list)
+
 
 def build_digest_email(ctx: DigestContext) -> Email:
     if ctx.starting_equity == 0:
@@ -311,6 +315,43 @@ def build_daily_digest_email(ctx: DigestContext) -> Email:
         sections.append(section(
             title="Today's Trades", glyph="\U0001f9e0",
             body=f'<p style="color:{_TEXT_SECONDARY}">No trades today.</p>',
+        ))
+
+    # 6b. Decision activity (W1.5) — what the bot considered, not just what it traded.
+    if ctx.decision_action_counts:
+        total = sum(ctx.decision_action_counts.values())
+        action_rows = [
+            [action, str(count)]
+            for action, count in sorted(
+                ctx.decision_action_counts.items(),
+                key=lambda kv: (-kv[1], kv[0]),
+            )
+        ]
+        body_html = (
+            f'<p style="color:{_TEXT_SECONDARY};font-size:12px">'
+            f'{total} decision(s) today.</p>'
+            + data_table(
+                headers=["Action", "Count"],
+                rows=action_rows,
+                right_align_cols=[1],
+            )
+        )
+        if ctx.decision_top_rejection_reasons:
+            reason_rows = [
+                [reason, str(count)]
+                for reason, count in ctx.decision_top_rejection_reasons
+            ]
+            body_html += (
+                '<p style="margin-top:14px;font-weight:600">Top rejection reasons</p>'
+                + data_table(
+                    headers=["Reason", "Count"],
+                    rows=reason_rows,
+                    right_align_cols=[1],
+                )
+            )
+        sections.append(section(
+            title="Decision Activity", glyph="\U0001f5fa️",
+            body=body_html,
         ))
 
     # 7. Closed trades (last 7d)
