@@ -1,0 +1,29 @@
+{% from "macros.html.j2" import table, callout %}
+<section>
+  <div class="chapter-strip"><span class="label">Chapter 1</span><span class="name">Project overview</span></div>
+  <h1>The Trading Bot at a glance</h1>
+
+  {% for line in overview.synopsis %}
+    <p>{{ line }}</p>
+  {% endfor %}
+
+  <h2>Headline numbers</h2>
+  {% set _rows = [] %}
+  {% for s in overview.stats %}{% set _ = _rows.append([s.label, s.value]) %}{% endfor %}
+  {{ table(["Metric", "Value"], _rows, ["28%", "72%"]) }}
+
+  <h2>CLI surface — 33 subcommands grouped by purpose</h2>
+  {% set _cli = [] %}
+  {% for g in overview.cli_groups %}
+    {% set cmds %}{% for c in g.commands %}<code>bot {{ c }}</code>{% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
+    {% set _ = _cli.append([g.group, cmds]) %}
+  {% endfor %}
+  {{ table(["Group", "Subcommands"], _cli, ["18%", "82%"], compact=true) }}
+
+  <h2>Source-tree map</h2>
+  <pre class="tree">{{ overview.tree }}</pre>
+
+  {{ callout("info", "Why three workflows in one process?",
+     "Each workflow has its own data cadence (1500-stock universe vs 24/7 crypto vs 50-symbol option chains), but they share the same orchestrator, DecisionStore, RiskManager, and Alpaca paper account. The shared envelope is what enforces gross/net caps and per-strategy halts across all three at once.") }}
+</section>
+<div class="page-break"></div>

@@ -1,0 +1,55 @@
+{# ---------- macros: tables, diagrams, callouts ---------- #}
+
+{% macro table(headers, rows, widths, title='', caption='', compact=false) %}
+{# A long table (>10 rows) is allowed to flow across pages so we don't lose the
+   bottom of the page. Short tables stay together via the .keep wrapper. #}
+{% set _long = rows|length > 10 %}
+<div class="{{ 'allow-split' if _long else 'keep' }}">
+  {% if title %}<div class="table-title">{{ title }}</div>{% endif %}
+  <table class="doc{% if compact %} compact{% endif %}">
+    <colgroup>
+      {% for w in widths %}<col style="width: {{ w }};">{% endfor %}
+    </colgroup>
+    <thead>
+      <tr>
+        {% for h in headers %}<th>{{ h }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+        <tr>
+          {% for cell in row %}<td>{{ cell|safe }}</td>{% endfor %}
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if caption %}<div class="table-caption">{{ caption }}</div>{% endif %}
+</div>
+{% endmacro %}
+
+{% macro diagram(id, source, caption='') %}
+<figure class="diagram keep">
+  <pre class="mermaid" id="dia-{{ id }}">
+{{- source -}}
+  </pre>
+  <figcaption><span class="figid">Figure {{ id }}</span>{{ caption }}</figcaption>
+</figure>
+{% endmacro %}
+
+{% macro callout(class_, lead, body) %}
+<div class="callout {{ class_ }} keep">
+  {% if lead %}<span class="lead">{{ lead }}</span>{% endif %}
+  {{ body|safe }}
+</div>
+{% endmacro %}
+
+{% macro pill(text, kind='') %}<span class="pill {{ kind }}">{{ text|safe }}</span>{% endmacro %}
+
+{% macro kv(items) %}
+<dl class="kv keep">
+  {% for k, v in items %}
+    <dt>{{ k }}</dt>
+    <dd>{{ v|safe }}</dd>
+  {% endfor %}
+</dl>
+{% endmacro %}

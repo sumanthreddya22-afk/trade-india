@@ -1,0 +1,172 @@
+{% from "macros.html.j2" import table, diagram, callout, pill, kv %}
+
+{# ---------- Summary ---------- #}
+<section>
+  <div class="chapter-strip"><span class="label">Chapters 3 – 6</span><span class="name">The four workflows</span></div>
+  <h1>Workflow comparison</h1>
+  <p>Three of the four workflows are live in the scheduler today. W4 (news-driven LLM trader) is library-only and gated behind an explicit wiring step.</p>
+  {{ table(workflows.summary_table.headers, workflows.summary_table.rows, workflows.summary_table.widths) }}
+</section>
+<div class="page-break"></div>
+
+{# ---------- Per-workflow chapters ---------- #}
+{% set chapter_n = {"W1": 3, "W2": 4, "W3": 5, "W4": 6} %}
+{% set fig_id = {"W1": "D2", "W2": "D3", "W3": "D4", "W4": "D5"} %}
+
+{% for wf in workflows["items"] %}
+<section>
+  <div class="chapter-strip">
+    <span class="label">Chapter {{ chapter_n[wf.id] }}</span>
+    <span class="name">Workflow {{ wf.id }} — {{ wf.name }}</span>
+    {{ pill(wf.tag, wf.tag_class) }}
+  </div>
+
+  <h1>{{ wf.id }} · {{ wf.name }}</h1>
+
+  <p>{{ wf.summary }}</p>
+
+  {{ kv([
+       ("CLI trigger",     wf.trigger_cli|replace(".", "·")),
+       ("Schedule",        wf.scheduler_jobs|join(' · ')),
+       ("Asset class",     workflows.summary_table.rows[loop.index0][4]),
+       ("LLM in path?",    wf.where_llm)
+     ]) }}
+
+  <h2>End-to-end sequence</h2>
+  <ol>
+    {% for step in wf.sequence %}<li>{{ step|safe }}</li>{% endfor %}
+  </ol>
+
+  <h2>Data sources consumed</h2>
+  <ul>
+    {% for src in wf.data_sources %}<li>{{ src|safe }}</li>{% endfor %}
+  </ul>
+
+  <h2>Strategies / signal sources</h2>
+  <ul>
+    {% for s in wf.strategies %}<li><code>{{ s }}</code></li>{% endfor %}
+  </ul>
+
+  <h2>Outputs</h2>
+  <ul>
+    {% for out in wf.outputs %}<li>{{ out|safe }}</li>{% endfor %}
+  </ul>
+
+  {# Workflow-specific diagram #}
+  {% if wf.id == "W1" %}
+    {{ diagram("D2",
+"flowchart TB
+  classDef pre  fill:#E0F2FE,stroke:#0369A1,color:#0F172A;
+  classDef str  fill:#FEF3C7,stroke:#B45309,color:#0F172A;
+  classDef gate fill:#FEE2E2,stroke:#991B1B,color:#0F172A;
+  classDef ok   fill:#DCFCE7,stroke:#166534,color:#0F172A;
+  classDef per  fill:#F1F5F9,stroke:#334155,color:#0F172A;
+
+  P1[\"<b>Pre-market</b> &nbsp; · &nbsp; 06:30 ET massive_refresh &nbsp; → &nbsp; 07:30 ET premarket_rank writes opportunities.md\"]:::pre
+  P2[\"<b>Scan loop</b> &nbsp; · &nbsp; cron */N min, 09:00–15:00 ET, Mon–Fri\"]:::pre
+  S1[\"<b>Universe + screener</b> &nbsp; · &nbsp; load_active_universe top-25 stocks &nbsp; → &nbsp; Stage-1 1d/5d/vol vs SPY\"]:::str
+  S2[\"<b>Stage-2 lanes</b> &nbsp; · &nbsp; MomentumLane · MeanReversionLane · BreakoutLane &nbsp; (regime via FRED VIX)\"]:::str
+  G1[\"<b>Gate 1 fail-closed</b> &nbsp; · &nbsp; restricted-list · idempotency · data-quality (freshness + completeness)\"]:::gate
+  G2[\"<b>Gate 2 fail-open</b> &nbsp; · &nbsp; news-sentiment floor · earnings · insider cluster · macro shock\"]:::gate
+  G3[\"<b>Gate 3 fail-closed</b> &nbsp; · &nbsp; RiskManager.check (per-trade · concentration · gross/net · halts · VaR)\"]:::gate
+  X1[\"<b>Execution</b> &nbsp; · &nbsp; AlpacaClient.place_order_with_stop_loss (bracket)\"]:::ok
+  X2[(\"<b>Persist</b> &nbsp; · &nbsp; DecisionStore.append + TradeJournal.append\")]:::per
+  X3[\"<b>Reporting</b> &nbsp; · &nbsp; 16:05 + 21:55 Reconciler &nbsp; → &nbsp; 16:30 daily_digest email\"]:::ok
+
+  P1 --> P2 --> S1 --> S2 --> G1 --> G2 --> G3 --> X1 --> X2 --> X3
+",
+"D2 — Workflow W1 stocks momentum: pre-market universe build → scan loop with Stage-1/2 ranking → 3-tier gate stack → bracket order → DecisionStore → reconcile + digest.") }}
+
+  {% elif wf.id == "W2" %}
+    {{ diagram("D3",
+"flowchart TB
+  classDef pre  fill:#E0F2FE,stroke:#0369A1,color:#0F172A;
+  classDef gate fill:#FEE2E2,stroke:#991B1B,color:#0F172A;
+  classDef ok   fill:#DCFCE7,stroke:#166534,color:#0F172A;
+  classDef per  fill:#F1F5F9,stroke:#334155,color:#0F172A;
+
+  A[\"<b>Cron</b> &nbsp; · &nbsp; crypto_scanner IntervalTrigger every 30 min · 24/7\"]:::pre
+  B[\"<b>Universe</b> &nbsp; · &nbsp; discover_crypto_universe — USD-quoted · no stablecoins · not in crypto_blocklist.yaml\"]:::pre
+  G0[\"<b>Gate 1</b> &nbsp; · &nbsp; data-quality (max_bar_age_hours_crypto) &nbsp; · &nbsp; bypass news-sentiment floor (Polygon news is equity-only)\"]:::gate
+  G1[\"<b>Gate 2 — crypto-specific intel</b> &nbsp; · &nbsp; Fear and Greed (outside 20–80) · ApeWisdom spike (≥ 2× 24h) · CoinGecko (votes under 50 percent) · GDELT macro shock\"]:::gate
+  G2[\"<b>Gate 3</b> &nbsp; · &nbsp; RiskManager.check (crypto asset-class caps · gross/net · halts · VaR)\"]:::gate
+  X1[\"<b>Execution</b> &nbsp; · &nbsp; AlpacaClient crypto market order\"]:::ok
+  X2[(\"<b>Persist</b> &nbsp; · &nbsp; DecisionStore.append (silent unless action taken)\")]:::per
+
+  A --> B --> G0 --> G1 --> G2 --> X1 --> X2
+",
+"D3 — Workflow W2 crypto 24/7: continuous loop with crypto-specific gates (Fear and Greed, Reddit spike, CoinGecko) instead of the equity sentiment floor.") }}
+
+  {% elif wf.id == "W3" %}
+    {{ diagram("D4",
+"flowchart TB
+  classDef stStart fill:#F1F5F9,stroke:#334155,color:#0F172A,stroke-width:2px;
+  classDef stPut fill:#E0F2FE,stroke:#0369A1,color:#0F172A;
+  classDef stCC fill:#FEF3C7,stroke:#B45309,color:#0F172A;
+  classDef stClosed fill:#DCFCE7,stroke:#166534,color:#0F172A;
+  classDef stStock fill:#FCE7F3,stroke:#9D174D,color:#0F172A;
+
+  Idle((Idle)):::stStart
+
+  subgraph PUT[\"Put leg — sell cash-secured put\"]
+    direction TB
+    CSP[CSP armed]:::stPut --> SP([Sold Put]):::stPut
+    SP --> ROLL_P[roll if delta breach]:::stPut --> SP
+  end
+
+  subgraph CALL[\"Call leg — sell covered call after assignment\"]
+    direction TB
+    ASS[Assigned · holding stock]:::stStock --> CCa[CC armed]:::stCC --> SC([Sold Call]):::stCC
+    SC --> ROLL_C[roll if delta breach]:::stCC --> SC
+  end
+
+  TPC[Take-profit closed]:::stClosed
+  FC[Force-closed at dte]:::stClosed
+  CA[Called away at strike]:::stClosed
+
+  Idle -->|wheel-scan 10:15 ET / preflight pass| CSP
+  SP -->|take-profit hit| TPC
+  SP -->|dte force-close| FC
+  SP -->|assigned at strike| ASS
+  SC -->|take-profit hit| TPC
+  SC -->|called away at strike| CA
+  TPC --> Idle
+  FC --> Idle
+  CA --> Idle
+",
+"D4 — Workflow W3 wheel state machine: cash-secured put → assignment → covered call premium-selling, with rolls, take-profit, and force-close branches.") }}
+
+  {% elif wf.id == "W4" %}
+    {{ diagram("D5",
+"sequenceDiagram
+  autonumber
+  participant Caller as Caller (when wired)
+  participant EE as event_extractor.py
+  participant NC as news_controller.py
+  participant AC as AnthropicClient
+  participant DS as DecisionStore
+
+  Caller->>EE: NewsItem cluster
+  EE-->>Caller: StructuredEvent<br/>(type · direction · novelty · primary_filing)
+  Caller->>NC: NewsControllerInput<br/>(market state · position · event)
+  NC->>NC: build NEWS_CONTROLLER_SYSTEM_PROMPT<br/>(version v1)
+  NC->>AC: complete(model='claude-opus-4-7', system, user)
+  AC-->>NC: strict JSON action
+  alt parse error
+    NC-->>Caller: Decision(action='no_trade', reason='fail_closed')
+  else valid action
+    NC-->>Caller: Decision(action, sizing, stop, time_stop, reason)
+  end
+  Caller->>DS: append(decision)
+",
+"D5 — Workflow W4 news-driven LLM trader: regex extracts event, controller builds prompt, Claude Opus 4.7 returns strict JSON, fail-closed on parse error.") }}
+
+  {% endif %}
+
+  {% if wf.id == "W4" %}
+    {{ callout("warn", "Status: library-only",
+       "<code>news_trader/news_controller.py:propose_news_trade</code> is callable but is not registered in <code>scheduler_jobs.py</code> and has no Click subcommand. Wiring requires (a) a cron entry that builds <code>NewsControllerInput</code> from the live news cluster and (b) a path through <code>TradeOrchestrator</code> to enforce risk gates on the returned <code>Decision</code>.") }}
+  {% endif %}
+</section>
+<div class="page-break"></div>
+{% endfor %}

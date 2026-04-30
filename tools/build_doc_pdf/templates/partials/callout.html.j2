@@ -1,0 +1,7 @@
+{# Callout block.
+   ctx: { class, lead, body }
+#}
+<div class="callout {{ class }} keep">
+  {% if lead %}<span class="lead">{{ lead }}</span>{% endif %}
+  {{ body|safe }}
+</div>

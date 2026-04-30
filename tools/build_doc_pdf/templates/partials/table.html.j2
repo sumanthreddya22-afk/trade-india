@@ -1,0 +1,24 @@
+{# Generic safe-wrap table.
+   ctx: { headers: [...], rows: [[...]], widths: ["12%",...], title?, caption?, compact?, wide? }
+#}
+<div class="keep">
+{% if title %}<div class="table-title">{{ title }}</div>{% endif %}
+<table class="doc{% if compact %} compact{% endif %}">
+  <colgroup>
+    {% for w in widths %}<col style="width: {{ w }};">{% endfor %}
+  </colgroup>
+  <thead>
+    <tr>
+      {% for h in headers %}<th>{{ h }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+      <tr>
+        {% for cell in row %}<td>{{ cell|safe }}</td>{% endfor %}
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% if caption %}<div class="table-caption">{{ caption }}</div>{% endif %}
+</div>

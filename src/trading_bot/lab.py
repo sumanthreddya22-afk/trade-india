@@ -22,6 +22,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from trading_bot.log_structured import StructuredLogger
+from trading_bot.scheduler_history import attach_listener as _attach_history_listener
 
 CONFIG_PATH = Path(os.environ.get("TRADING_BOT_CONFIG", "data/paper_active.json"))
 RUNS_DIR = Path(os.environ.get("TRADING_BOT_RUNS", "runs"))
@@ -93,6 +94,7 @@ def _build_runners(log: StructuredLogger):
 
 
 def _register_lab_jobs(scheduler: BackgroundScheduler, runners: dict) -> None:
+    _attach_history_listener(scheduler)
     scheduler.add_job(
         runners["param_search"],
         trigger=CronTrigger(hour=2, minute=0, timezone="America/New_York"),

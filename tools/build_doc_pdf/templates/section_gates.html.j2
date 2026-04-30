@@ -1,0 +1,27 @@
+{% from "macros.html.j2" import table, callout, pill %}
+<section>
+  <div class="chapter-strip"><span class="label">Chapter 10</span><span class="name">Risk gates — the 22-stage pre-trade stack</span></div>
+  <h1>What every order has to clear before it reaches the broker</h1>
+
+  <p>{{ gates.intro }}</p>
+
+  <div style="margin:.4rem 0 .6rem;">
+    {{ pill("fail-closed", "bad") }}<span style="font-size:9pt;color:var(--c-muted);"> — gate blocks on error (compliance, data quality, risk math).</span><br/>
+    {{ pill("fail-open", "info") }}<span style="font-size:9pt;color:var(--c-muted);"> — gate passes on error (free intel feeds; logged warning).</span>
+  </div>
+
+  {% set _rows = [] %}
+  {% for g in gates.stack %}
+    {% set fail_pill %}<span class="pill {{ 'bad' if g.fail == 'closed' else 'info' }} mono">fail-{{ g.fail }}</span>{% endset %}
+    {% set _ = _rows.append([g.id, g.name, fail_pill, "<code>" ~ g.file ~ "</code>", g.what]) %}
+  {% endfor %}
+  {{ table(gates.table_view.headers, _rows, gates.table_view.widths, compact=true,
+           caption="Execution order is top-to-bottom. Each row is a guarded check inside TradeOrchestrator.scan or the wheel runner.") }}
+
+  <h2>VaR engine — historical, additive, deliberately conservative</h2>
+  <p>{{ gates.var.intro }}</p>
+  {{ table(["Function", "File", "Behaviour"], gates.var.rows, ["28%", "16%", "56%"]) }}
+
+  {{ callout("good", "Layered halts",
+     "Three independent kill switches act at different scopes: <strong>per-strategy halt</strong> (other lanes keep trading), <strong>daily/weekly P&amp;L circuit breaker</strong> (whole portfolio), and <strong>LLM cost halt</strong> (refuses any Anthropic call when monthly spend hits 100%). The last one protects the lab from runaway loops.") }}
+</section>

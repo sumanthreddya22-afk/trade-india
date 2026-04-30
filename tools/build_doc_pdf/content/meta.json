@@ -1,0 +1,11 @@
+{
+  "title": "Autonomous AI Trading Bot",
+  "subtitle": "Project overview, three production workflows, intelligence sources, lab, strategies & algorithms",
+  "version": "v2.0 — 2026-04-29",
+  "author": "Trading Bot — internal documentation",
+  "date_iso": "2026-04-29",
+  "tagline": "Multi-lane equity, 24/7 crypto, and an options-wheel premium-seller — gated by data quality, compliance, VaR, and an LLM lab pinned to claude-opus-4-7.",
+  "model_pin": "claude-opus-4-7",
+  "repo": "/Users/bharathkandala/Trading",
+  "venue": "Alpaca paper (https://paper-api.alpaca.markets)"
+}

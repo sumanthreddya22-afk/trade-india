@@ -1,0 +1,39 @@
+{
+  "intro": "Every prospective order traverses a layered gate stack before it can reach Alpaca. Compliance and data-quality gates fail closed; intel and risk gates degrade gracefully. The whole stack is summarised below in execution order.",
+  "stack": [
+    {"id": "1", "name": "Restricted-list (W2b)",  "fail": "closed", "file": "compliance.py:check_restricted",        "what": "Reject if symbol is on strategy/restricted_list.yaml."},
+    {"id": "2", "name": "Approved venue",         "fail": "closed", "file": "compliance.py:check_approved_venue",    "what": "Only Alpaca paper URL is accepted."},
+    {"id": "3", "name": "Idempotency",            "fail": "closed", "file": "orchestrator.py — existing position / pending order / already-traded-today", "what": "Block re-entry the same trading day; block when there is an open order or open position."},
+    {"id": "4", "name": "Data-quality (W2a)",     "fail": "closed", "file": "data_quality.py:check_bar_freshness, check_completeness", "what": "Bar age within thresholds (RTH 48 h, overnight 96 h, crypto 2–6 h, intraday 0.25–1 h); required OHLC columns present; NaN ratio ≤ 5%."},
+    {"id": "5", "name": "News-sentiment floor",   "fail": "open",   "file": "news_sentiment.py:passes_filter",       "what": "Equities only — daily aggregate sentiment must clear the floor; crypto bypasses (Polygon news is equity-focused)."},
+    {"id": "6", "name": "Stock earnings",         "fail": "open",   "file": "intel_gates.py:stock_earnings_gate",    "what": "Block if earnings within lookahead_days = 5 (Finnhub)."},
+    {"id": "7", "name": "Stock insider cluster",  "fail": "open",   "file": "intel_gates.py:stock_insider_cluster_gate", "what": "Block at ≥ 5 insider sells in trailing 90 days (Finnhub)."},
+    {"id": "8", "name": "Macro shock",            "fail": "open",   "file": "intel_gates.py:macro_shock_gate",       "what": "Aggregated GDELT sentiment ≤ −3.0 blocks all entries."},
+    {"id": "9", "name": "Crypto F&G",             "fail": "open",   "file": "intel_gates.py:crypto_fear_greed_gate", "what": "Crypto only — block outside [floor 20, ceiling 80]."},
+    {"id": "10","name": "Crypto Reddit spike",    "fail": "open",   "file": "intel_gates.py:crypto_reddit_spike_gate","what": "Crypto only — block if mentions ≥ 2× 24h-prior."},
+    {"id": "11","name": "Crypto CoinGecko",       "fail": "open",   "file": "intel_gates.py:crypto_coingecko_gate",  "what": "Crypto only — block if sentiment_votes_up_percentage < 50."},
+    {"id": "12","name": "Per-trade risk %",       "fail": "closed", "file": "risk_manager.py:_check_per_trade_risk", "what": "Notional × stop-distance ≤ per_trade_risk_pct × equity."},
+    {"id": "13","name": "Max position %",         "fail": "closed", "file": "risk_manager.py:_check_max_position",   "what": "Notional ≤ max_position_pct × equity."},
+    {"id": "14","name": "Concentration",          "fail": "closed", "file": "risk_manager.py:_check_concentration",  "what": "Per-symbol notional ≤ max_symbol_concentration_pct."},
+    {"id": "15","name": "Asset-class regime cap", "fail": "closed", "file": "risk_manager.py:_check_asset_class_caps","what": "Stocks/crypto/options caps conditioned on the live regime."},
+    {"id": "16","name": "Gross / net exposure",   "fail": "closed", "file": "risk_manager.py:_check_gross_net",      "what": "Gross ≤ 200 % of equity; |net| ≤ 100 % of equity."},
+    {"id": "17","name": "Daily / weekly P&L",     "fail": "closed", "file": "risk_manager.py:_check_daily_weekly_limits", "what": "Trip when daily_pnl_pct ≤ −daily_loss_limit_pct or weekly equivalent."},
+    {"id": "18","name": "Per-strategy halt",      "fail": "closed", "file": "risk_manager.py — RiskState.halted_strategies", "what": "Skip orders whose strategy_name is in the halted set; other lanes continue."},
+    {"id": "19","name": "VaR after-trade",        "fail": "closed", "file": "var_engine.py:var_after_trade",         "what": "Historical VaR α=0.05, additive (no correlation credit) — must remain within configured cap."},
+    {"id": "20","name": "Options collateral",     "fail": "closed", "file": "risk_manager.py:option_collateral_ok",  "what": "Wheel-only — caps aggregate options collateral and per-symbol concentration."},
+    {"id": "21","name": "Sector cap",             "fail": "closed", "file": "wheel_runner.py:_sector_cap_check",     "what": "Wheel-only — equity + pending option collateral ≤ sector_cap_pct (default 25 %)."},
+    {"id": "22","name": "LLM cost halt",          "fail": "closed", "file": "cost_tracker.py:is_halted",             "what": "AnthropicClient refuses to call the model when monthly spend ≥ 100 %."}
+  ],
+  "table_view": {
+    "headers": ["#", "Gate", "Fail mode", "File", "What it checks"],
+    "widths":  ["4%", "21%", "10%", "27%", "38%"]
+  },
+  "var": {
+    "intro": "VaR is the conservative tail used in pre-trade and post-trade risk reporting. The implementation is deliberately additive — no correlation credit — so the limit always overestimates risk rather than understates it.",
+    "rows": [
+      ["historical_var(returns, alpha=0.05)",        "var_engine.py:17", "Magnitude of the bottom-α empirical quantile loss; 95 % default."],
+      ["expected_shortfall(returns, alpha=0.025)",   "var_engine.py:41", "Mean of the worst α tail (CVaR). Reported alongside VaR."],
+      ["var_after_trade(positions, candidate)",      "var_engine.py:62", "Adds the candidate's marginal VaR to the portfolio total — no correlation netting."]
+    ]
+  }
+}

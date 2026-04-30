@@ -1,0 +1,9 @@
+{# A Mermaid figure.
+   ctx: { id, source, caption }
+#}
+<figure class="diagram keep">
+  <div class="mermaid" id="dia-{{ id }}">
+{{ source }}
+  </div>
+  <figcaption><span class="figid">Figure {{ id }}</span>{{ caption }}</figcaption>
+</figure>

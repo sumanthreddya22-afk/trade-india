@@ -1,0 +1,24 @@
+{% from "macros.html.j2" import table, callout %}
+<section class="page-wide">
+  <div class="chapter-strip"><span class="label">Chapter 8</span><span class="name">Strategies &amp; algorithms</span></div>
+  <h1>From RSI to a 7-action LLM controller</h1>
+
+  <p>{{ strategies.intro }}</p>
+
+  {% set _rows = [] %}
+  {% for r in strategies.strategy_table.rows %}
+    {% set _ = _rows.append([r[0], "<code>" ~ r[1] ~ "</code>", r[2], r[3], r[4], r[5], r[6]]) %}
+  {% endfor %}
+  {{ table(strategies.strategy_table.headers, _rows, strategies.strategy_table.widths, compact=true,
+           caption="Indicators, entry/exit rules, and sizing per strategy primitive.") }}
+</section>
+
+<section>
+  <h2>Regime router</h2>
+  <p>{{ strategies.regime_router.intro }}</p>
+  {{ table(["Live regime", "Strategies that fire"], strategies.regime_router.rows, ["28%", "72%"]) }}
+
+  {% for c in strategies.callouts %}
+    {{ callout(c.class, c.lead, c.body) }}
+  {% endfor %}
+</section>

@@ -1,0 +1,71 @@
+{
+  "intro": "Five strategy primitives drive the three live workflows. Equity entries are deterministic indicator-based; the wheel is a state-machine premium-seller; the news trader is the only LLM-mediated path.",
+  "strategy_table": {
+    "headers": ["Strategy", "File", "Type", "Indicators / Signal", "Entry rule", "Exit rule", "Sizing"],
+    "widths":  ["12%", "14%", "11%", "20%", "16%", "16%", "11%"],
+    "rows": [
+      ["MomentumStrategy",
+       "src/trading_bot/strategy.py:24",
+       "Trend-follow, long",
+       "RSI(14), MACD line vs signal, EMA(20), 5-day return",
+       "RSI ∈ [55, 70] AND MACD > signal AND close > EMA20 AND 5d > 0",
+       "Stop = max(EMA20, entry × (1 − 5%)); TP = 2× R; max-hold 60 d (backtest)",
+       "Fixed-fractional Kelly: min(equity·0.5%/per-share-risk, equity·4.5%/entry); ROUND_DOWN to integer shares"],
+      ["MeanReversionStrategy",
+       "src/trading_bot/strategy.py:108",
+       "Mean-reversion, long",
+       "RSI(14), EMA(20), 5-day return",
+       "RSI ∈ [25, 35] AND close ≤ EMA20·1.01 AND 5d ≥ −5%",
+       "Stop = entry × (1 − 4%); same TP / max-hold",
+       "Same as Momentum (currently disabled in router — PF 0.66 in sideways regime)"],
+      ["MomentumLane (Stage-2)",
+       "src/trading_bot/strategy_lanes.py:41",
+       "Multi-lane scorer",
+       "RSI, MACD spread, relative-5d",
+       "RSI ∈ [55,70], MACD > signal, close > EMA20, 5d > 0",
+       "Sets entry/stop/TP via shared sizing",
+       "Conviction 0.4–0.9 from RSI position + MACD spread + relative-5d"],
+      ["MeanReversionLane (Stage-2)",
+       "src/trading_bot/strategy_lanes.py:89",
+       "Multi-lane scorer",
+       "RSI, Bollinger Bands(20, 2σ)",
+       "RSI < 30 AND last < lower Bollinger band",
+       "Same shared sizing path",
+       "Conviction grows with (lower − last)/lower × 5, capped 0.85"],
+      ["BreakoutLane (Stage-2)",
+       "src/trading_bot/strategy_lanes.py:127",
+       "Breakout",
+       "20-day high, volume vs 20-day average",
+       "close > prior 20-day high AND last_volume ≥ 1.5× 20d avg",
+       "Same shared sizing path",
+       "Conviction = 0.5 + min((vol_ratio − 1.5) × 0.2, 0.4)"],
+      ["WheelLane (Options)",
+       "src/trading_bot/options/wheel_lane.py + wheel_runner.py",
+       "Premium-selling state machine",
+       "Regime, VIX, sentiment, IV rank, earnings calendar, WSB spike",
+       "Phase ∈ {None, assigned} AND all preflight gates pass; pick contract by delta + DTE band",
+       "Take-profit at (1 − take_profit_pct) × credit; force-close at dte ≤ dte_force_close; roll if |delta| ≥ breach",
+       "Capped by allocation.options_max_pct + per-symbol concentration cap + sector cap (default 25 %)"],
+      ["NewsTrader (W4)",
+       "src/trading_bot/news_trader/news_controller.py",
+       "LLM event-trader",
+       "Event class (regex), direction, novelty, primary-filing flag",
+       "LLM picks ENTER / SCALE_IN / REDUCE / EXIT / HEDGE / ESCALATE; else NO_TRADE",
+       "LLM-issued time-stop; required, fail-closed if missing",
+       "Capital cap default 5 % of equity (capital_cap_pct)"]
+    ]
+  },
+  "regime_router": {
+    "intro": "strategy_for_regime (strategy.py:168) decides which strategy fires given the live regime. MeanReversion is currently disabled across all regimes — PF 0.66 in sideways was losing.",
+    "rows": [
+      ["trending_up", "MomentumStrategy + MomentumLane + BreakoutLane"],
+      ["sideways",    "MomentumLane + BreakoutLane (MeanReversion disabled)"],
+      ["trending_down", "Long-only halt — no equity entries"],
+      ["risk_off",    "Block all entries (gate stack rejects)"]
+    ]
+  },
+  "callouts": [
+    {"class": "info", "lead": "Stage-1 score", "body": "screener.py:60 → 1d_return × 1.4 + relative_5d + min(vol_ratio, 3) × 2 — benchmark-relative against SPY 5-day move."},
+    {"class": "good", "lead": "Wheel state machine", "body": "Idle → CSP-armed → Sold-Put → Assigned → CC-armed → Sold-Call → Called-Away → Idle. Rolls are self-loops on Sold-Put or Sold-Call when delta breaches and rolls_used < cap."}
+  ]
+}

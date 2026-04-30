@@ -1,0 +1,90 @@
+{
+  "intro": "The Lab (src/trading_bot/lab.py) is a long-running launchd daemon that reproduces and stress-tests strategies on historical data. Its goal is to push only statistically meaningful changes into the live config — and to refuse promotions that look good in-sample but fail honest out-of-sample tests.",
+  "components": [
+    {
+      "name": "Purged walk-forward",
+      "file": "src/trading_bot/walkforward.py",
+      "function": "default_folds, walk_forward_backtest",
+      "details": [
+        "Default 6 folds — 12-month train + 3-month test, walking by test_months=3.",
+        "Embargo gap defaults to 5 calendar days in walk_forward_backtest (walkforward.py:197) — enough to break leakage from RSI(14)/MACD(26)/EMA(20) lookbacks.",
+        "FoldDefinition supports configurable embargo per call; production sets 5d explicitly."
+      ]
+    },
+    {
+      "name": "Probability of Backtest Overfitting (PBO)",
+      "file": "src/trading_bot/validation/pbo.py",
+      "function": "probability_of_backtest_overfitting",
+      "details": [
+        "Implements Bailey & López de Prado 2014 CSCV (Combinatorially Symmetric Cross-Validation).",
+        "n_partitions = 10 → C(10, 5) = 252 IS/OOS combinations.",
+        "For each combination, picks the IS-Sharpe argmax and tests whether its OOS rank > N/2.",
+        "Returns the fraction of combinations where the IS-best is below median OOS — promotion gate: PBO > 0.5 BLOCKS."
+      ]
+    },
+    {
+      "name": "Deflated Sharpe Ratio (DSR)",
+      "file": "src/trading_bot/validation/dsr.py",
+      "function": "deflated_sharpe_ratio",
+      "details": [
+        "Implements Bailey & López de Prado 2014 — penalises Sharpe by the number of trials and the higher moments of returns.",
+        "sharpe_max_estimate = (1 − γ)·Φ⁻¹(1 − 1/N) + γ·Φ⁻¹(1 − 1/(N·e)) with γ ≈ 0.5772 (Euler-Mascheroni).",
+        "z = (SR_obs − SR_max) · √(n−1) / √(1 − skew·SR + (kurt−1)/4 · SR²) → return Φ(z).",
+        "Pure-Python normal CDF / inv-CDF — no scipy dependency. Promotion gate: DSR > 0.95."
+      ]
+    },
+    {
+      "name": "Optuna TPE evolution",
+      "file": "src/trading_bot/evolution.py + roles/param_optimizer.py",
+      "function": "optimize_strategy",
+      "details": [
+        "optuna.create_study(direction='maximize', sampler=TPESampler()) — n_trials=100, 4-hour SLA budget per run.",
+        "Search space (param_space.py): rsi_lower (50–60), rsi_upper (65–75), ema_period (15–30 int), stop_pct (3.0–7.0), sentiment_floor (−1.0–0.0).",
+        "Each trial calls BacktestEngineerRole over a 31-month window with n_folds=6.",
+        "Fitness = compute_fitness(alpha_vs_spy_x, sortino, max_dd_pct) — combines all three into one scalar."
+      ]
+    },
+    {
+      "name": "Calibration drift",
+      "file": "src/trading_bot/calibration.py",
+      "function": "compute_drift_score",
+      "details": [
+        "Spearman rank correlation (Pearson on ranks) between predicted edge and realised P&L.",
+        "Severity bands: > 0.5 ok · 0.3–0.5 warning · < 0.3 high → halt Promoter for 7 days.",
+        "Below 10 samples → 'insufficient_data', no halt."
+      ]
+    },
+    {
+      "name": "Architect / Reviewer pipeline",
+      "file": "src/trading_bot/roles/strategy_architect.py + roles/code_reviewer.py",
+      "function": "Saturday cron 06:00 ET",
+      "details": [
+        "StrategyArchitectRole asks claude-opus-4-7 for 1–3 strategy templates as strict JSON (name, rationale, expected_regime, code, tests, params_to_search).",
+        "Hard constraints: no os/sys/subprocess/requests/eval/exec/open/__import__; must implement evaluate(symbol, ind, equity)→Signal and from_params classmethod.",
+        "AST-validated by ast_validator.py; CodeReviewer LLM second pass; only then does Optuna search over params_to_search."
+      ]
+    }
+  ],
+  "promotion_gates": {
+    "intro": "Auto-promote (cron 02:45 ET) takes a candidate from lab_promotions and applies these gates in order. Any failure rejects.",
+    "rows": [
+      ["Walk-forward folds passed", "≥ 4 of 6 with positive Sharpe and max-DD better than incumbent"],
+      ["PBO",                       "≤ 0.5 — strictly less than 50% probability of being a lucky overfit"],
+      ["Deflated Sharpe",           "≥ 0.95 — significant after deflation by trial count and higher moments"],
+      ["Calibration drift",         "Spearman ≥ 0.3 over a 50-trade window when prior data exists"],
+      ["Risk regression",           "max-DD ≤ incumbent_max_dd × 1.10 (no worse than 10% looser drawdown)"],
+      ["AST validator",             "code under proposal cannot import os/sys/subprocess/requests/eval/exec/open/__import__"],
+      ["Code review",               "claude-opus-4-7 reviewer must return APPROVED in strict JSON"]
+    ]
+  },
+  "lab_jobs_table": {
+    "headers": ["Job", "Cron (ET)", "What it does"],
+    "widths":  ["20%", "16%", "64%"],
+    "rows": [
+      ["param_search",     "02:00 daily", "Optuna TPE search over each enabled strategy's params space"],
+      ["auto_promote",     "02:45 daily", "Apply the promotion gates above; on success update strategy_active.json"],
+      ["calibrate",        "05:00 daily", "Compute Spearman drift on the trailing 50 trades; halt promoter if < 0.3"],
+      ["saturday_evolve",  "06:00 Sat",   "Architect → Reviewer → Optuna → walk-forward → promotion candidate"]
+    ]
+  }
+}

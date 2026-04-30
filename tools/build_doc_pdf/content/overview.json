@@ -1,0 +1,26 @@
+{
+  "synopsis": [
+    "An autonomous, paper-trading bot that runs three independent strategies — multi-lane US equity, 24/7 spot crypto, and an options-wheel — under a single orchestrator, decision store, and risk envelope.",
+    "Every order passes a layered gate stack (data quality, compliance, intel, risk caps, VaR, daily/weekly P&L circuit-breakers) before reaching the broker.",
+    "A nightly research lab runs purged walk-forward backtests, gates promotions on PBO and Deflated Sharpe, and uses a Claude Opus 4.7 architect/reviewer pipeline to draft new strategy templates.",
+    "Operational tooling — diagnose, daily digest, midday snapshot, dashboard, alert drain — keeps the human in the loop without coupling decisions to the human's response time."
+  ],
+  "stats": [
+    {"label": "Python modules",      "value": "132 .py files in src/trading_bot/ (incl. backtest, dashboard, news_trader, options, roles, validation)"},
+    {"label": "CLI subcommands",     "value": "33 Click subcommands registered under bot (status, scan, full-run, wheel-scan, lab, …)"},
+    {"label": "Trading workflows",   "value": "3 live (W1 stocks, W2 crypto, W3 options-wheel) + 1 library-only (W4 news-driven LLM)"},
+    {"label": "Intel sources",       "value": "10+ free / paid feeds (Alpaca News, Polygon, FRED, GDELT, SEC EDGAR, Finnhub, ApeWisdom, CoinGecko, alt.me, Truth Social)"},
+    {"label": "LLM model",           "value": "claude-opus-4-7 — pinned in anthropic_client.py and news_trader/news_controller.py"},
+    {"label": "Persistence",         "value": "SQLite (state.db) — append-only DecisionStore + Alembic-managed schema; closed_trades.db, backtest_bars.db, news_sentiment.db caches"},
+    {"label": "Scheduler",           "value": "APScheduler with ~25 cron / interval jobs across stocks, crypto, wheel, lab, monitoring, reporting"},
+    {"label": "Hosting",             "value": "macOS launchd plists in ops/launchd/ — daemon, lab, dashboard, supervisor"}
+  ],
+  "tree": "Trading/\n├── README.md\n├── pyproject.toml                      # entry: bot = trading_bot.cli:main\n├── src/trading_bot/                    # 132 .py modules\n│   ├── cli.py, orchestrator.py, daemon.py, supervisor.py\n│   ├── strategy.py, strategy_lanes.py, screener.py, regime.py\n│   ├── intelligence.py, intel_gates.py, intelligence_finnhub.py,\n│   │   intelligence_apewisdom.py, news_sentiment.py, vip_tweets.py\n│   ├── massive_client.py (Polygon)     # universe + bars + news + sentiment + short interest\n│   ├── alpaca_client.py                # equities + crypto + options brackets\n│   ├── risk_manager.py, var_engine.py, compliance.py, data_quality.py\n│   ├── decisions_store.py, state_db.py, pnl_state.py, cost_tracker.py\n│   ├── walkforward.py, evolution.py, calibration.py, lab.py\n│   ├── validation/      (pbo.py, dsr.py, … promotion gates)\n│   ├── backtest/        (simulator.py, metrics.py, massive_bar_loader.py)\n│   ├── news_trader/     (event_extractor.py, news_controller.py)\n│   ├── options/         (wheel_runner.py, wheel_lane.py, chain.py, wheel_state.py)\n│   ├── roles/           (strategy_architect, code_reviewer, calibrator, sentiment_analyst, param_optimizer)\n│   ├── dashboard/       (FastAPI app + templates)\n│   ├── reports.py, email_*.py, session_summary.py, journal_alpha.py\n│   ├── scheduler_jobs.py, cadence.py\n│   └── …\n├── strategy/                            # config, watchlists, restricted lists\n├── docs/                                # this PDF + architecture.pdf + plans/specs\n├── tools/build_doc_pdf/                 # this builder\n├── tests/                               # pytest suite (100+ files)\n├── migrations/versions/                 # Alembic\n├── ops/launchd/                         # macOS daemons (daemon, lab, dashboard, supervisor)\n├── runs/YYYY-MM-DD/                     # JSONL execution logs\n└── data/                                # SQLite DBs + heartbeat.json\n",
+  "cli_groups": [
+    {"group": "Live trading",    "commands": ["full-run", "intel-scan", "crypto-scan", "wheel-scan", "wheel-manage", "wheel-close", "iv-capture", "wheel-universe-build"]},
+    {"group": "Reporting",       "commands": ["status", "daily-report", "daily-digest", "midday-snapshot", "eod-report", "rich-report", "wheel-status", "alert-drain"]},
+    {"group": "Research",        "commands": ["screen-universe", "backtest", "rank", "lab", "lab-backfill", "evolve"]},
+    {"group": "Operations",      "commands": ["dry-run", "reconcile", "verify-stops", "vip-scan", "news-warm", "massive-refresh", "portfolio-watch", "schedule-audit"]},
+    {"group": "Long-running",    "commands": ["dashboard", "daemon", "supervisor"]}
+  ]
+}

@@ -1,0 +1,54 @@
+{% from "macros.html.j2" import diagram, callout %}
+<section>
+  <div class="chapter-strip"><span class="label">Chapter 2</span><span class="name">System architecture</span></div>
+  <h1>End-to-end data &amp; control flow</h1>
+
+  <p>The bot is structured as a small set of long-lived processes (the trading <code>daemon</code>, the <code>lab</code>, the <code>dashboard</code>, and a <code>supervisor</code>) sharing a SQLite state database, an append-only DecisionStore, and a single Alpaca paper account. Every workflow flows through the same orchestrator and risk envelope.</p>
+
+  {{ diagram("D1",
+"flowchart TB
+  classDef src fill:#DBEAFE,stroke:#1E3A8A,color:#0F172A;
+  classDef ing fill:#E0F2FE,stroke:#0369A1,color:#0F172A;
+  classDef str fill:#FEF3C7,stroke:#B45309,color:#0F172A;
+  classDef gat fill:#FEE2E2,stroke:#991B1B,color:#0F172A;
+  classDef exe fill:#DCFCE7,stroke:#166534,color:#0F172A;
+  classDef per fill:#F1F5F9,stroke:#334155,color:#0F172A;
+  classDef rep fill:#EDE9FE,stroke:#5B21B6,color:#0F172A;
+  classDef llm fill:#FCE7F3,stroke:#9D174D,color:#0F172A;
+
+  SRC[\"<b>Data sources</b> &nbsp; · &nbsp; Equity: Alpaca · Polygon · Finnhub · SEC EDGAR &nbsp; · &nbsp; Macro: FRED · GDELT &nbsp; · &nbsp; Crypto: ApeWisdom · CoinGecko · alt.me &nbsp; · &nbsp; VIP: Truth Social\"]:::src
+  LLM[\"<b>Anthropic API</b><br/>claude-opus-4-7\"]:::llm
+
+  ING[\"<b>Ingestion + caches</b> &nbsp; · &nbsp; intelligence.py · intel_gates.py · massive_client.py · regime · news_sentiment.db\"]:::ing
+  STR[\"<b>Strategies</b> &nbsp; · &nbsp; Momentum · MeanRev · Breakout · Wheel · NewsTrader\"]:::str
+  ORC[\"<b>TradeOrchestrator.scan</b>\"]:::ing
+  GATES[\"<b>Gate stack</b><br/>1 Compliance · Data quality &nbsp; → &nbsp; 2 Intel filters · News sentiment &nbsp; → &nbsp; 3 RiskManager · Gross/Net · Halts · VaR\"]:::gat
+  EXE[\"<b>AlpacaClient</b> &nbsp; · &nbsp; equities · crypto · options\"]:::exe
+  STORE[(\"DecisionStore — append-only · state.db\")]:::per
+  REP[\"<b>Reporting</b> &nbsp; · &nbsp; Daily digest · Midday snapshot · FastAPI dashboard · bot diagnose\"]:::rep
+
+  SRC --> ING
+  ING --> STR
+  STR --> ORC
+  ORC --> GATES
+  GATES --> EXE
+  EXE --> STORE
+  STORE --> REP
+  LLM -.-> STR
+  LLM -.-> ING
+",
+"D1 — System architecture: 10 data sources feed the ingestion layer; 5 strategy primitives feed the orchestrator; orchestrator runs a three-tier gate stack before Alpaca execution; every decision is appended to the DecisionStore which feeds reporting.") }}
+
+  <h2>Process layout</h2>
+  <p>Four launchd plists in <code>ops/launchd/</code> bring up the system:</p>
+  <ul>
+    <li><strong>daemon</strong> — the live scheduler (APScheduler) that runs every cron job in §12.</li>
+    <li><strong>lab</strong> — independent scheduler for the research loop (§9).</li>
+    <li><strong>dashboard</strong> — FastAPI UI that reads <code>state.db</code> read-only.</li>
+    <li><strong>supervisor</strong> — restarts any of the above on watchdog failure (<code>watchdog_account.py</code>, <code>watchdog_stall.py</code>).</li>
+  </ul>
+
+  {{ callout("info", "Why one orchestrator for three workflows?",
+     "All three live workflows share <code>RiskManager</code> and <code>DecisionStore</code>, which means a per-strategy halt or a global gross/net cap applies across them in one place. <code>TradeOrchestrator.scan</code> reads the asset class from the candidate and picks the right gate path, but the envelope is shared.") }}
+</section>
+<div class="page-break"></div>

@@ -1,0 +1,62 @@
+{% from "macros.html.j2" import table, diagram, callout %}
+<section class="page-wide">
+  <div class="chapter-strip"><span class="label">Chapter 12</span><span class="name">Scheduler &amp; daily timeline</span></div>
+  <h1>Every cron job that keeps the bot alive</h1>
+
+  <p>{{ scheduler.intro }}</p>
+
+  {{ diagram("D8",
+"gantt
+    dateFormat HH:mm
+    title Daily timeline (America/New_York)
+    axisFormat %H:%M
+
+    section Pre-market
+    massive_refresh         :a1, 06:30, 10m
+    premarket_rank          :a2, 07:30, 10m
+    news_warm_morning       :a3, 08:55, 10m
+    iv_capture (W3)         :a4, 09:45, 10m
+    strategy_coach          :a5, 06:00, 10m
+
+    section Open / mid
+    stock_scanner (W1)      :b1, 09:30, 6h
+    crypto_scanner (W2)     :b2, 09:30, 6h
+    portfolio_monitor       :b3, 09:30, 6h30m
+    wheel_scan (W3 entry)   :b4, 10:15, 10m
+    wheel_manage (W3)       :b5, 10:00, 5h30m
+    midday_rerank           :b6, 12:00, 10m
+    midday_snapshot email   :b7, 12:00, 10m
+    news_warm_midday        :b8, 12:00, 10m
+
+    section Close
+    hold_spy_coordinator    :c1, 15:55, 5m
+
+    section Post / overnight
+    reconciler_close        :d1, 16:05, 10m
+    daily_digest email      :d2, 16:30, 10m
+    wheel_universe_build    :d3, 21:30, 30m
+    reconciler_pre_digest   :d4, 21:55, 10m
+    schedule_audit          :d5, 21:55, 10m
+    param_search (lab)      :d6, 02:00, 60m
+    auto_promote (lab)      :d7, 02:45, 30m
+    calibrate (lab)         :d8, 05:00, 30m
+",
+"D8 — Daily timeline of scheduled jobs in America/New_York. Pre-market builds the universe and warms caches; open/mid runs scanners and the wheel manage loop; post wraps the day with reconciliation, digest, and the overnight lab cluster.") }}
+
+  <h2>Full job list</h2>
+  {{ table(scheduler.table.headers, scheduler.table.rows, scheduler.table.widths, compact=true,
+           caption="All jobs registered by scheduler_jobs.register_jobs (live daemon) and the lab's own scheduler.") }}
+</section>
+
+<section>
+  <h2>Time-of-day buckets</h2>
+  {% set _rows = [] %}
+  {% for b in scheduler.buckets %}
+    {% set jobs %}{% for j in b.jobs %}<code>{{ j }}</code>{% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
+    {% set _ = _rows.append([b.label, b.range, jobs]) %}
+  {% endfor %}
+  {{ table(["Bucket", "Range", "Jobs"], _rows, ["18%", "20%", "62%"]) }}
+
+  {{ callout("info", "What if a job is missed?",
+     "<code>schedule_audit</code> runs at 21:55 ET 24/7 and emits an alert if any expected job hasn't fired in its window. <code>order_steward_sweep</code> runs at <code>:20</code> and <code>:50</code> every hour and repairs any bracket missing its stop.") }}
+</section>

@@ -1,0 +1,44 @@
+{
+  "intro": "scheduler_jobs.register_jobs (scheduler_jobs.py) wires APScheduler over America/New_York and registers ~25 jobs across stocks, crypto, options, monitoring, and reporting. The Lab daemon registers its own scheduler (param_search 02:00 ET, auto_promote 02:45 ET, calibrate 05:00 ET, saturday_evolve Sat 06:00 ET).",
+  "table": {
+    "headers": ["Job", "Trigger", "Time / cadence (ET)", "Purpose"],
+    "widths":  ["22%", "20%", "20%", "38%"],
+    "rows": [
+      ["heartbeat",              "interval", "60 s, 24/7",                       "Watchdog ping; writes data/heartbeat.json"],
+      ["stock_scanner",          "cron",     "*/N 09:00–15:00 Mon–Fri",          "bot intel-scan — W1 entries"],
+      ["crypto_scanner",         "interval", "30 min, 24/7",                     "bot crypto-scan — W2 entries"],
+      ["portfolio_monitor",      "cron",     "09:00–16:00 Mon–Fri",              "Position monitor; alert detection"],
+      ["order_steward_sweep",    "cron",     ":20, :50 24/7",                    "verify_stops — repair missing/stale stops"],
+      ["vip_listener",           "cron",     "09:00–16:00 Mon–Fri",              "Truth Social VIP RSS scan"],
+      ["news_warm_morning",      "cron",     "08:55 Mon–Fri",                    "Warm Polygon news cache before open"],
+      ["news_warm_midday",       "cron",     "12:00 Mon–Fri",                    "Mid-session news refresh"],
+      ["massive_refresh",        "cron",     "06:30 Mon–Fri",                    "Polygon grouped daily bars + universe"],
+      ["premarket_rank",         "cron",     "07:30 Mon–Fri",                    "Stage-1 score; writes strategy/opportunities.md"],
+      ["midday_rerank",          "cron",     "12:00 Mon–Fri",                    "Re-score using running daily bars"],
+      ["midday_snapshot",        "cron",     "12:00 Mon–Fri",                    "Email midday digest"],
+      ["daily_digest",           "cron",     "16:30 Mon–Fri",                    "Email EOD digest"],
+      ["log_rotation",           "cron",     "Sun 03:00",                        "Compress and rotate runs/ logs"],
+      ["strategy_coach",         "cron",     "06:00 Mon–Fri",                    "30-day alpha-vs-SPY check; flip to fallback flag if losing"],
+      ["hold_spy_coordinator",   "cron",     "15:55 Mon–Fri",                    "5-day exit/reverse on coach flag flip"],
+      ["schedule_audit",         "cron",     "21:55 24/7",                       "Self-test that every job is registered and recently fired"],
+      ["alert_drain",            "interval", "1 min, 24/7",                      "Email throttling; flush AlertEvents queue"],
+      ["reconciler_close",       "cron",     "16:05 Mon–Fri",                    "Reconcile newly closed trades vs Alpaca"],
+      ["reconciler_pre_digest",  "cron",     "21:55 24/7",                       "Final reconciliation before EOD report"],
+      ["wheel_universe_build",   "cron",     "21:30 24/7",                       "Nightly Alpaca optionable + Finnhub filter"],
+      ["iv_capture",             "cron",     "09:45 Mon–Fri",                    "Mass-fetch chains; write option_iv_history"],
+      ["wheel_scan",             "cron",     "10:15 Mon–Fri",                    "Single daily wheel entry pass"],
+      ["wheel_manage",           "cron",     "*/30 10:00–15:00 Mon–Fri",         "Take-profit / dte / roll for active cycles"],
+      ["param_search (lab)",     "cron",     "02:00 daily",                      "Optuna TPE per strategy"],
+      ["auto_promote (lab)",     "cron",     "02:45 daily",                      "Apply walk-forward / PBO / DSR / risk gates"],
+      ["calibrate (lab)",        "cron",     "05:00 daily",                      "Spearman drift score over trailing 50 trades"],
+      ["saturday_evolve (lab)",  "cron",     "Sat 06:00",                        "Architect → Reviewer → Optuna → walk-forward"]
+    ]
+  },
+  "buckets": [
+    {"label": "Pre-market",   "range": "06:30 → 09:25 ET", "jobs": ["massive_refresh", "premarket_rank", "news_warm_morning", "iv_capture", "strategy_coach"]},
+    {"label": "Open",         "range": "09:30 → 10:00 ET", "jobs": ["stock_scanner", "crypto_scanner", "portfolio_monitor"]},
+    {"label": "Mid-day",      "range": "10:00 → 15:30 ET", "jobs": ["wheel_scan (10:15)", "wheel_manage (*/30)", "midday_rerank (12:00)", "midday_snapshot (12:00)", "news_warm_midday"]},
+    {"label": "Close",        "range": "15:30 → 16:00 ET", "jobs": ["hold_spy_coordinator (15:55)", "stock_scanner final", "crypto_scanner"]},
+    {"label": "Post / overnight","range": "16:00 → 06:30 ET", "jobs": ["reconciler_close (16:05)", "daily_digest (16:30)", "wheel_universe_build (21:30)", "reconciler_pre_digest (21:55)", "schedule_audit (21:55)", "param_search (02:00)", "auto_promote (02:45)", "calibrate (05:00)", "saturday_evolve (Sat 06:00)"]}
+  ]
+}

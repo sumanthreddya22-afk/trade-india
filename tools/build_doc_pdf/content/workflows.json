@@ -1,0 +1,127 @@
+{
+  "summary_table": {
+    "headers": ["#", "Workflow", "CLI trigger", "Cadence", "Asset class", "LLM in path?", "Output"],
+    "widths":  ["4%", "16%", "18%", "18%", "11%", "11%", "22%"],
+    "rows": [
+      ["W1", "Stocks momentum / multi-lane equity", "bot intel-scan, bot full-run, bot rich-report", "*/N min, 09:00–15:00 ET, Mon–Fri", "US equities", "Lab only — entries are deterministic", "Alpaca bracket orders + DecisionStore + email digest"],
+      ["W2", "Crypto 24/7", "bot crypto-scan", "Every 30 min, 24/7 (IntervalTrigger)", "Spot crypto (USD-quoted)", "Lab only", "Alpaca crypto orders + DecisionStore"],
+      ["W3", "Options-Wheel (CSP→assigned→CC)", "bot wheel-scan, bot wheel-manage, bot wheel-universe-build, bot iv-capture", "Daily 10:15 ET; manage every 30 min 10:00–15:00 ET; build 21:30 ET; IV 09:45 ET", "Equity options", "No — fully deterministic state machine", "sell_to_open / buy_to_close + WheelCycle state + alerts"],
+      ["W4", "News-driven LLM trader (library only)", "Library callable propose_news_trade(); not in scheduler", "Manual / future cron", "Equities (event-driven)", "Yes — claude-opus-4-7 in news_controller.py", "Decision JSON → DecisionStore (when wired)"]
+    ]
+  },
+  "items": [
+    {
+      "id": "W1",
+      "name": "Stocks momentum / multi-lane equity",
+      "tag": "Live",
+      "tag_class": "good",
+      "summary": "The flagship US-equity workflow. Pre-market builds the universe and ranks 1500+ tickers; through the day, scanners run multi-lane signal generation, intel gates, and risk checks before submitting bracket orders to Alpaca paper.",
+      "trigger_cli": "bot intel-scan • bot full-run • bot rich-report",
+      "scheduler_jobs": ["stock_scanner (CronTrigger every N min, 09:00–15:00 ET)", "premarket_rank (07:30 ET)", "massive_refresh (06:30 ET)", "midday_rerank (12:00 ET)"],
+      "data_sources": ["Polygon grouped daily bars (massive_client.py)", "Alpaca news (intelligence.py)", "FRED VIX (regime detection)", "GDELT macro shock", "Finnhub earnings + insider", "SEC EDGAR Form 4 (insider RSS)", "Truth Social VIP RSS (alert-only)"],
+      "strategies": ["MomentumStrategy", "MeanReversionStrategy (currently disabled in router)", "MomentumLane", "MeanReversionLane", "BreakoutLane"],
+      "where_llm": "Not in entry path — entries are deterministic indicators. LLM enters only at the lab/evolution layer (StrategyArchitect, CodeReviewer, Calibrator) on Saturdays via roles/strategy_architect.py.",
+      "outputs": ["Alpaca bracket orders (entry + stop-loss)", "DecisionStore.append for every reject/place", "TradeJournal entries", "Daily digest email at 16:30 ET"],
+      "sequence": [
+        "06:30 ET — massive_refresh refreshes Polygon grouped bars and the active universe.",
+        "07:30 ET — premarket_rank re-scores candidates and writes strategy/opportunities.md.",
+        "Every N min, 09:00–15:00 ET — stock_scanner job calls bot intel-scan.",
+        "_load_active_universe pulls top-25 stocks from the ranked watchlist.",
+        "Stage-1 screener (screener.build_stage1_shortlist) computes 1d / 5d / volume score relative to SPY.",
+        "Stage-2 lanes (Momentum / MeanReversion / Breakout) emit RankedCandidate with conviction.",
+        "Live regime detection via FRED VIX (regime.detect_regime).",
+        "TradeOrchestrator.scan iterates per symbol:",
+        "  W2b restricted-list (compliance.check_restricted) → skip if restricted",
+        "  Idempotency check (existing position / pending order / already-traded-today)",
+        "  Bar fetch + MIN_BARS_FOR_INDICATORS",
+        "  W2a data-quality (check_bar_freshness, check_completeness)",
+        "  MomentumStrategy.evaluate emits Signal with stop_loss + take_profit",
+        "  News-sentiment floor (news_sentiment.passes_filter)",
+        "  _news_intel_gate runs stock_earnings_gate, stock_insider_cluster_gate, macro_shock_gate",
+        "  RiskManager.check enforces per-trade-risk %, max-position %, concentration, asset-class regime cap, gross/net cap, daily/weekly halt, per-strategy halt",
+        "AlpacaClient.place_order_with_stop_loss submits a bracket order.",
+        "TradeJournal.append + RiskAfter populated.",
+        "DecisionStore.append persists the audit, compliance, data-quality, alerts, execution-constraints JSON columns.",
+        "16:05 + 21:55 ET — Reconciler reconciles fills against Alpaca account.",
+        "16:30 ET — daily_digest email summarises trades, P&L, and rejections."
+      ]
+    },
+    {
+      "id": "W2",
+      "name": "Crypto 24/7",
+      "tag": "Live",
+      "tag_class": "good",
+      "summary": "A continuous crypto loop that mirrors the equity orchestrator path but with crypto-specific universe discovery, data-quality thresholds, and crypto-only intel gates.",
+      "trigger_cli": "bot crypto-scan",
+      "scheduler_jobs": ["crypto_scanner (IntervalTrigger every 30 min — no day-of-week filter)"],
+      "data_sources": ["Alpaca crypto bars (alpaca_client.py)", "alternative.me Crypto Fear & Greed (intel_gates.py)", "ApeWisdom r/CryptoCurrency (intelligence_apewisdom.py)", "CoinGecko sentiment_votes_up_percentage (intel_gates.py)", "GDELT macro shock (cross-asset)"],
+      "strategies": ["MomentumStrategy under crypto regime mapping (strategy_for_regime)"],
+      "where_llm": "Not in entry path. Same lab/evolution layer as equities. There is also a crypto_scanner role file (roles/crypto_scanner.py).",
+      "outputs": ["Alpaca crypto market orders", "DecisionStore.append", "Silent unless action taken (no email per scan)"],
+      "sequence": [
+        "Every 30 min — crypto_scanner job calls bot crypto-scan (24/7).",
+        "_load_active_universe(crypto_only=True) pulls auto-discovered crypto symbols from discover_crypto_universe.",
+        "Universe filtered to USD-quoted, non-stablecoin, not in strategy/crypto_blocklist.yaml.",
+        "TradeOrchestrator.scan with crypto-specific data-quality thresholds (max_bar_age_hours_crypto).",
+        "Bypasses news-sentiment floor (Polygon news is equity-focused).",
+        "Crypto-specific intel gates run:",
+        "  crypto_fear_greed_gate — blocks outside [floor=20, ceiling=80]",
+        "  crypto_reddit_spike_gate — blocks if mentions ≥ 2× 24h-prior",
+        "  crypto_coingecko_gate — blocks if sentiment_votes_up_percentage < 50",
+        "  macro_shock_gate — applies cross-asset",
+        "RiskManager.check with crypto asset-class caps.",
+        "AlpacaClient submits crypto market order.",
+        "DecisionStore.append; alerts only on action."
+      ]
+    },
+    {
+      "id": "W3",
+      "name": "Options-Wheel (CSP → assigned → CC)",
+      "tag": "Live",
+      "tag_class": "good",
+      "summary": "A premium-selling wheel that sells cash-secured puts on quality names, holds the stock when assigned, then sells covered calls at strike ≥ cost basis. State-machine driven, no LLM.",
+      "trigger_cli": "bot wheel-scan • bot wheel-manage • bot wheel-close • bot iv-capture • bot wheel-universe-build • bot wheel-status",
+      "scheduler_jobs": ["wheel_universe_build (21:30 ET nightly)", "iv_capture (09:45 ET weekdays)", "wheel_scan (10:15 ET weekdays — single daily entry)", "wheel_manage (every 30 min 10:00–15:00 ET weekdays)"],
+      "data_sources": ["Alpaca option chains + IV (chain.py via OptionAlpacaClient)", "Finnhub earnings calendar + market cap + listing age", "ApeWisdom WSB spike (wheel preflight)", "Polygon news sentiment (preflight floor)", "option_iv_history table (IV rank)"],
+      "strategies": ["WheelLane: Phase.NONE → CSP_OPEN → ASSIGNED → CC_OPEN → CLOSED"],
+      "where_llm": "None — fully deterministic. LLM only via shared lab/evolution layer.",
+      "outputs": ["sell_to_open / buy_to_close option orders", "OptionFill rows in state.db", "WheelCycle state rows", "AlertEvents (wheel_csp_opened, wheel_cc_opened, wheel_take_profit, wheel_dte_close, wheel_roll, wheel_allocation_cap)"],
+      "sequence": [
+        "21:30 ET nightly — wheel_universe_builder walks Alpaca optionable equities, applies allowlist + Finnhub mcap/listing-age filters, writes wheel_universe_cache.",
+        "09:45 ET weekdays — iv_capture mass-fetches option chains, writes option_iv_history rows.",
+        "10:15 ET weekdays — wheel_scan runs once for the day.",
+        "Per symbol gather: regime, VIX, sentiment_score, IV rank, ApeWisdom WSB spike, Finnhub earnings, current WheelCycle row.",
+        "WheelLane.passes_preflight: wheel enabled; cycle phase ∈ {None, assigned}; regime ∈ {trending_up, sideways}; VIX in [floor, ceiling]; sentiment ≥ floor; IV rank ≥ 30; no WSB spike; no earnings within dte_max+2 days.",
+        "Stage-3 contract pick: pick_csp_contract or pick_cc_contract by delta band (typ. 0.20–0.30) and DTE band.",
+        "Risk gates: option_collateral_ok (allocation cap + per-symbol concentration); _sector_cap_check (default 25%).",
+        "OptionAlpacaClient.sell_to_open at limit-bid; cycle state recorded via wheel_state.open_csp / open_cc.",
+        "Every 30 min 10:00–15:00 ET — wheel_manage iterates active cycles:",
+        "  Take-profit at mid ≤ (1 − take_profit_pct) × credit",
+        "  Force-close at dte ≤ dte_force_close",
+        "  Roll if |delta| ≥ delta_breach AND rolls_used < max_rolls_per_cycle"
+      ]
+    },
+    {
+      "id": "W4",
+      "name": "News-driven LLM trader",
+      "tag": "Library only",
+      "tag_class": "warn",
+      "summary": "A discretionary news-event trader powered by Claude Opus 4.7. Detects events with regex, packages context for the LLM, and parses a strict JSON action — currently library-only, not yet wired into the scheduler or CLI.",
+      "trigger_cli": "Library callable: propose_news_trade(NewsControllerInput, llm_call_fn, model='claude-opus-4-7')",
+      "scheduler_jobs": ["None — not registered in scheduler_jobs.py"],
+      "data_sources": ["Same intel feed as W1 (Alpaca News, Polygon news, SEC EDGAR Form 4 RSS, GDELT)", "Event clusters classified by lexicon (merger, earnings, guidance, litigation, leadership_change, dividend, product_launch)"],
+      "strategies": ["Allowed action set: NO_TRADE, ENTER, SCALE_IN, REDUCE, EXIT, HEDGE, ESCALATE", "Capital cap (default 5 %) and required time-stop"],
+      "where_llm": "Yes — pinned to claude-opus-4-7 at news_trader/news_controller.py:38.",
+      "outputs": ["Decision dataclass (action, sizing, stop, time_stop, reason) → DecisionStore (when wired)"],
+      "sequence": [
+        "Caller assembles a NewsControllerInput (symbol, market state, position, recent news cluster, primary-filing flag, novelty score).",
+        "event_extractor.extract_event runs pure-regex classification — no LLM call yet.",
+        "news_controller.propose_news_trade builds the system prompt (NEWS_CONTROLLER_PROMPT_VERSION = 'v1').",
+        "AnthropicClient.complete is called with model='claude-opus-4-7'.",
+        "Strict JSON output is parsed; on parse error → fail-closed Decision(action='no_trade').",
+        "_ACTION_MAP translates LLM action to orchestrator action string (enter, scale_in, reduce, exit, hedge, no_trade, escalate_to_human).",
+        "Returned Decision flows through RiskManager.check (when wired) before any order is placed."
+      ]
+    }
+  ]
+}

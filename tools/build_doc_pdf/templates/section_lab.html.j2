@@ -1,0 +1,51 @@
+{% from "macros.html.j2" import table, diagram, callout %}
+<section>
+  <div class="chapter-strip"><span class="label">Chapter 9</span><span class="name">The Lab — research &amp; auto-promotion</span></div>
+  <h1>Walk-forward, PBO, Deflated Sharpe, and an LLM architect</h1>
+
+  <p>{{ lab.intro }}</p>
+
+  {{ diagram("D6",
+"flowchart TB
+  classDef inp  fill:#E0F2FE,stroke:#0369A1,color:#0F172A;
+  classDef opt  fill:#FEF3C7,stroke:#B45309,color:#0F172A;
+  classDef gate fill:#FEE2E2,stroke:#991B1B,color:#0F172A;
+  classDef llm  fill:#FCE7F3,stroke:#9D174D,color:#0F172A;
+  classDef out  fill:#DCFCE7,stroke:#166534,color:#0F172A;
+
+  A[\"<b>Saturday LLM loop</b> &nbsp; · &nbsp; StrategyArchitectRole (claude-opus-4-7) &nbsp; → &nbsp; CodeReviewerRole (claude-opus-4-7) &nbsp; → &nbsp; ast_validator.py\"]:::llm
+  B[\"<b>Search space</b> &nbsp; · &nbsp; param_space.py — RSI · MACD · EMA · stop_pct · sentiment_floor\"]:::inp
+  C[\"<b>Optuna TPE</b> &nbsp; · &nbsp; n_trials=100 · 4-hour SLA · fitness = α-vs-SPY × Sortino × max-DD\"]:::opt
+  D[\"<b>Backtest</b> &nbsp; · &nbsp; BacktestEngineerRole over 31-month window\"]:::opt
+  E[\"<b>Walk-forward</b> &nbsp; · &nbsp; 6 folds · 12-mo train / 3-mo test · 5-day embargo (RSI/MACD lookback)\"]:::gate
+  F[\"<b>PBO gate</b> &nbsp; · &nbsp; validation/pbo.py · CSCV n_partitions=10 · BLOCKS if PBO > 0.5\"]:::gate
+  G[\"<b>DSR gate</b> &nbsp; · &nbsp; validation/dsr.py · Bailey-LdP 2014 · BLOCKS if DSR < 0.95\"]:::gate
+  H[\"<b>Calibration</b> &nbsp; · &nbsp; calibration.py · Spearman over 50 trades · halt promoter if < 0.3\"]:::gate
+  K[(\"<b>Promotion</b> &nbsp; · &nbsp; lab_promotions.append &nbsp; → &nbsp; strategy_active.json\")]:::out
+
+  A --> B --> C --> D --> E --> F --> G --> H --> K
+",
+"D6 — Lab pipeline: Saturday architect/reviewer drafts strategies; weekday Optuna TPE searches params; walk-forward + PBO + DSR + calibration gate any promotion.") }}
+
+  <h2>Components</h2>
+  {% for comp in lab.components %}
+    <h3>{{ comp.name }}</h3>
+    <p style="font-size:9.5pt;color:var(--c-muted); margin-top:-.2rem;">
+      <code>{{ comp.file }}</code> &nbsp; · &nbsp; entry: <code>{{ comp.function }}</code>
+    </p>
+    <ul>
+      {% for line in comp.details %}<li>{{ line|safe }}</li>{% endfor %}
+    </ul>
+  {% endfor %}
+
+  <h2>Promotion gates (in order)</h2>
+  <p>{{ lab.promotion_gates.intro }}</p>
+  {{ table(["Gate", "Threshold"], lab.promotion_gates.rows, ["32%", "68%"]) }}
+
+  <h2>Lab scheduler jobs</h2>
+  {{ table(lab.lab_jobs_table.headers, lab.lab_jobs_table.rows, lab.lab_jobs_table.widths) }}
+
+  {{ callout("info", "Why two LLM passes?",
+     "The Architect proposes new strategy code; the Reviewer is a separate Opus 4.7 call that grades the proposal against a checklist (no banned imports, evaluate signature, params_to_search ranges). Two independent calls reduce the risk of a single-shot hallucination passing the AST validator.") }}
+</section>
+<div class="page-break"></div>

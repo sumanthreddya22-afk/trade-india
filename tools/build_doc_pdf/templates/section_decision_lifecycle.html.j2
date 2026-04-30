@@ -1,0 +1,72 @@
+{% from "macros.html.j2" import diagram, callout, table %}
+<section>
+  <div class="chapter-strip"><span class="label">Chapter 11</span><span class="name">Decision lifecycle</span></div>
+  <h1>From signal to digest — a single decision's path</h1>
+
+  <p>The DecisionStore (<code>decisions_store.py</code> + <code>state_db.Decisions</code>) is append-only and the canonical record of every accept and reject. <code>bot diagnose SYMBOL</code> reads from it; the daily digest summarises it; reconciliation reconciles fills against it.</p>
+
+  {{ diagram("D7",
+"sequenceDiagram
+  autonumber
+  participant ST as Strategy / Lane
+  participant OR as TradeOrchestrator
+  participant RM as RiskManager
+  participant AC as AlpacaClient
+  participant DS as DecisionStore
+  participant RC as Reconciler
+  participant DG as Daily digest
+
+  ST->>OR: Signal(side · entry · stop · TP · conviction)
+  OR->>OR: build AuditObject<br/>(policy_version · strategy_version · regime)
+  OR->>OR: ComplianceFlags + DataQualityFlags
+  OR->>RM: check(order_request, RiskState)
+  alt rule violated
+    RM-->>OR: RiskRuleViolation(rule)
+    OR->>DS: append(action='reject', reason=rule, audit, …)
+  else allowed
+    RM-->>OR: ok
+    OR->>AC: place_order_with_stop_loss
+    AC-->>OR: entry_id + stop_id
+    OR->>DS: append(action='place', entry_order_id, stop_loss_order_id, audit, …)
+  end
+  loop 16:05 + 21:55 ET
+    RC->>DS: read recent decisions
+    RC->>AC: list_orders / positions
+    RC->>DS: append(action='reconcile', notes)
+  end
+  DG->>DS: between(start_of_day, end_of_day)
+  DG-->>DG: action_counts + top_rejection_reasons
+  DG->>DG: send EOD email
+",
+"D7 — Decision lifecycle: every reject and every place is appended to the DecisionStore with full audit + compliance + data-quality JSON; reconciler and digest both read from the same store.") }}
+
+  <h2>DecisionStore schema (state_db.Decisions)</h2>
+  {{ table(
+    ["Column", "Type", "What it stores"],
+    [
+      ["decision_id",            "string",   "<code>d_&lt;UTC&gt;_&lt;hex&gt;</code>"],
+      ["timestamp_utc",          "datetime", "Decision time, UTC"],
+      ["symbol",                 "string",   "Ticker / crypto pair / option underlying"],
+      ["action",                 "string",   "<code>place</code> · <code>reject</code> · <code>reconcile</code> · <code>scale_in</code> · <code>exit</code>"],
+      ["reason",                 "string",   "Human-readable reason (rule name on reject)"],
+      ["strategy",               "string",   "<code>momentum</code> · <code>mean_reversion</code> · <code>breakout</code> · <code>wheel</code> · <code>news_trader</code>"],
+      ["regime",                 "string",   "Live regime at decision time"],
+      ["asset_class",            "string",   "<code>stocks</code> · <code>crypto</code> · <code>options</code>"],
+      ["confidence",             "float",    "Lane conviction (0.0 – 1.0)"],
+      ["expected_edge_bps",      "float",    "Strategy-estimated edge in basis points"],
+      ["risk_after_json",        "json",     "VaR, gross, net, per-strategy halts after this trade"],
+      ["compliance_json",        "json",     "Restricted-list hits, approved-venue check"],
+      ["data_quality_json",      "json",     "Bar freshness, completeness, snapshot_id"],
+      ["execution_constraints_json", "json", "Limits, time-stop, max slippage"],
+      ["alerts_json",            "json",     "AlertEvents emitted for this decision"],
+      ["audit_json",             "json",     "policy_version, strategy_version, regime, full inputs"],
+      ["entry_order_id",         "string",   "Alpaca order ID (entry) on place"],
+      ["stop_loss_order_id",     "string",   "Alpaca order ID (stop) on place"]
+    ],
+    ["18%", "10%", "72%"],
+    compact=true) }}
+
+  {{ callout("info", "Append-only by design",
+     "<code>decisions_store.py</code> exposes only <code>append</code>, <code>recent</code>, <code>between</code>, <code>action_counts</code>, and <code>top_rejection_reasons</code>. There is no update or delete API — once a decision is recorded, it stays. This is what makes the diagnose tool, the digest, and the lab calibration loop trustworthy retrospectives.") }}
+</section>
+<div class="page-break"></div>

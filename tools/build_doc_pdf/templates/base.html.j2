@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ meta.title }}</title>
+  <link rel="stylesheet" href="{{ asset_root_url }}/print.css">
+  <script src="{{ asset_root_url }}/vendor/mermaid.min.js"></script>
+  <script>
+    window.__mermaidDone = false;
+    window.__mermaidErrors = [];
+    document.addEventListener("DOMContentLoaded", async () => {
+      try {
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: "base",
+          fontFamily: "Inter, system-ui, sans-serif",
+          fontSize: 18,
+          themeVariables: {
+            fontFamily: "Inter, system-ui, sans-serif",
+            fontSize:        "18px",
+            primaryColor:    "#E0F2FE",
+            primaryTextColor:"#0F172A",
+            primaryBorderColor: "#0369A1",
+            lineColor:       "#475569",
+            secondaryColor:  "#FEF3C7",
+            tertiaryColor:   "#F1F5F9",
+            noteBkgColor:    "#FEF9C3",
+            noteTextColor:   "#1F2937",
+            mainBkg:         "#FFFFFF"
+          },
+          flowchart:    { useMaxWidth: true, htmlLabels: true, curve: "basis", padding: 14, nodeSpacing: 36, rankSpacing: 50 },
+          sequence:     { useMaxWidth: true, wrap: true, mirrorActors: false, boxMargin: 10, messageFontSize: 14, actorFontSize: 14, noteFontSize: 13 },
+          stateDiagram: { useMaxWidth: true, padding: 14 },
+          gantt:        { useMaxWidth: true, fontSize: 12, sectionFontSize: 13, leftPadding: 130, barHeight: 18 }
+        });
+        await mermaid.run({ querySelector: ".mermaid" });
+      } catch (err) {
+        window.__mermaidErrors.push(String(err));
+      } finally {
+        window.__mermaidDone = true;
+      }
+    });
+  </script>
+</head>
+<body>
+  {% include "cover.html.j2" %}
+  {% include "toc.html.j2" %}
+  {% include "section_overview.html.j2" %}
+  {% include "section_architecture.html.j2" %}
+  {% include "section_workflows.html.j2" %}
+  {% include "section_intel.html.j2" %}
+  {% include "section_strategies.html.j2" %}
+  {% include "section_lab.html.j2" %}
+  {% include "section_gates.html.j2" %}
+  {% include "section_decision_lifecycle.html.j2" %}
+  {% include "section_scheduler.html.j2" %}
+</body>
+</html>
