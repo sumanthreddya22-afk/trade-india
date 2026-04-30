@@ -184,6 +184,36 @@ class DecisionActivityBlock:
 
 
 @dataclass(frozen=True)
+class LessonRow:
+    """One Decision Lessons row, formatted for the dashboard.
+
+    Lessons are 2-4 sentence post-mortems written by the
+    ``decision_reflector`` role for closed trades. Each row carries the
+    decision context (symbol/strategy/regime), the realised outcome, and
+    the prose lesson.
+    """
+
+    symbol: str
+    strategy: str
+    regime: str
+    pnl_pct: float
+    hold_hours: float
+    lesson: str
+    tags: list[str]
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class LessonsBlock:
+    """Adversarial-review reflection product. Surfaces what the bot has
+    *learned* from recent closed trades — not just what it did."""
+
+    rows: list[LessonRow]  # most-recent-first, capped at limit
+    total: int
+    last_lesson_at: datetime | None
+
+
+@dataclass(frozen=True)
 class FreshnessRow:
     cache: str
     last_seen: str
@@ -240,6 +270,8 @@ class DashboardSnapshot:
     # PDF-parity: W1 audit log + W6 freshness audit.
     decision_activity: DecisionActivityBlock | None = None
     freshness: FreshnessBlock | None = None
+    # Adversarial-review reflection product (decision_reflector lessons).
+    lessons: LessonsBlock | None = None
 
 
 # ---------- helpers ----------
@@ -984,6 +1016,9 @@ def build_snapshot(
     decision_activity = _build_decision_activity(state_db_path, errors)
     freshness = _build_freshness(errors)
 
+    # Decision Lessons — recent adversarial-review post-mortems.
+    lessons = _build_decision_lessons(state_db_path, errors)
+
     # Automation status: simple heuristic — DOWN if equity unreachable, WARN if errors, OK otherwise
     if kpi.equity == 0 and "alpaca account/positions" in " ".join(errors):
         automation_status, automation_note = "DOWN", "Alpaca unreachable"
@@ -1024,6 +1059,7 @@ def build_snapshot(
         wheel_collateral_pct=wheel_collateral_pct,
         decision_activity=decision_activity,
         freshness=freshness,
+        lessons=lessons,
     )
 
 
@@ -1077,6 +1113,72 @@ def _build_decision_activity(
         action_counts=action_counter.most_common(),
         top_rejection_reasons=rejection_counter.most_common(5),
         last_decision_at=last_ts,
+    )
+
+
+def _build_decision_lessons(
+    state_db_path: str, errors: list[str], *, limit: int = 8,
+) -> LessonsBlock | None:
+    """Read the most-recent post-mortems from the ``decision_lessons`` table.
+
+    Direct SQLite read (no ORM) to match the existing dashboard pattern
+    (see :func:`_build_decision_activity`). Degrades gracefully on missing
+    table — lessons are populated by the reflector role and may be empty
+    on a fresh install."""
+    import json
+    import sqlite3
+
+    try:
+        with sqlite3.connect(state_db_path) as conn:
+            try:
+                rows = list(conn.execute(
+                    "SELECT symbol, strategy, regime, pnl_pct, hold_hours, "
+                    "lesson, tags_json, created_at FROM decision_lessons "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ))
+            except sqlite3.OperationalError:
+                # Table doesn't exist yet (pre-migration / fresh install).
+                return LessonsBlock(rows=[], total=0, last_lesson_at=None)
+            try:
+                total = (conn.execute(
+                    "SELECT COUNT(*) FROM decision_lessons"
+                ).fetchone() or [0])[0]
+            except sqlite3.OperationalError:
+                total = 0
+    except Exception as e:
+        errors.append(f"decision_lessons: {e}")
+        return None
+
+    if not rows:
+        return LessonsBlock(rows=[], total=int(total or 0), last_lesson_at=None)
+
+    formatted: list[LessonRow] = []
+    for symbol, strategy, regime, pnl_pct, hold_hours, lesson, tags_json, created_at in rows:
+        try:
+            tags = list(json.loads(tags_json or "[]"))
+        except (json.JSONDecodeError, TypeError):
+            tags = []
+        try:
+            ts = datetime.fromisoformat(str(created_at).replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+        except Exception:
+            ts = datetime.now(timezone.utc)
+        formatted.append(LessonRow(
+            symbol=symbol or "",
+            strategy=strategy or "",
+            regime=regime or "",
+            pnl_pct=float(pnl_pct or 0.0),
+            hold_hours=float(hold_hours or 0.0),
+            lesson=str(lesson or ""),
+            tags=[str(t) for t in tags],
+            created_at=ts,
+        ))
+    return LessonsBlock(
+        rows=formatted,
+        total=int(total or len(formatted)),
+        last_lesson_at=formatted[0].created_at if formatted else None,
     )
 
 

@@ -59,6 +59,7 @@ FRAGMENTS: dict[str, str] = {
     "activity_feed": "_activity_feed.html",   # NEW: live log tail
     # Recent activity
     "decision_activity": "_decision_activity.html",
+    "lessons": "_lessons.html",
     "last_scan": "_last_scan.html",
     "opportunities": "_opportunities.html",
     "stats": "_stats.html",

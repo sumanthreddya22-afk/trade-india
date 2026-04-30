@@ -119,6 +119,25 @@ class PromoterRole(BaseRole):
                     "high",
                     "medium",
                 ):
+                    # Persist a non-promoting EvolutionRun row so the dashboard
+                    # and audit log can show the gate decision.
+                    info_blocked = dict(info)
+                    info_blocked["debate"] = debate_outcome
+                    info_blocked["reason"] = "blocked_by_debate"
+                    with Session(self.engine) as session:
+                        session.add(
+                            EvolutionRun(
+                                started_at=dt.datetime.now(dt.timezone.utc),
+                                finished_at=dt.datetime.now(dt.timezone.utc),
+                                template_name=candidate.template,
+                                n_trials=0,
+                                best_fitness=candidate.fitness,
+                                best_params_hash=None,
+                                auto_promoted=0,
+                                promotion_gate_pass=json.dumps(info_blocked),
+                            )
+                        )
+                        session.commit()
                     return {
                         "promoted": False,
                         "reason": "blocked_by_debate",
@@ -128,6 +147,9 @@ class PromoterRole(BaseRole):
                     }
 
         promote_atomically(self.active_path, candidate, notify=self._notify)
+        info_promoted = dict(info)
+        if debate_outcome is not None:
+            info_promoted["debate"] = debate_outcome
         with Session(self.engine) as session:
             session.add(
                 EvolutionRun(
@@ -138,7 +160,7 @@ class PromoterRole(BaseRole):
                     best_fitness=candidate.fitness,
                     best_params_hash=None,
                     auto_promoted=1,
-                    promotion_gate_pass=json.dumps(info),
+                    promotion_gate_pass=json.dumps(info_promoted),
                 )
             )
             session.commit()

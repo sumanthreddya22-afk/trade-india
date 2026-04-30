@@ -9,6 +9,35 @@
   </div>
 
   {% set ev = lab.lab_evolution %}
+  {% if ev and ev.last_debate %}
+    {% set d = ev.last_debate %}
+    {% if d.recommendation == "block" %}
+      {% set d_border = "border-fuchsia-700/40" %}
+      {% set d_bg = "bg-fuchsia-900/15" %}
+      {% set d_text = "text-fuchsia-200" %}
+      {% set d_label = "BLOCKED by adversarial review" %}
+    {% else %}
+      {% set d_border = "border-emerald-700/40" %}
+      {% set d_bg = "bg-emerald-900/15" %}
+      {% set d_text = "text-emerald-200" %}
+      {% set d_label = "PROMOTED past adversarial review" %}
+    {% endif %}
+    <div class="mb-3 px-3 py-2 rounded-lg border {{ d_border }} {{ d_bg }} text-[12px] {{ d_text }}"
+         title="Bull/bear/judge review. Block fires only when judge confidence is high or medium.">
+      <div class="flex items-baseline justify-between gap-2 flex-wrap">
+        <span class="font-semibold tracking-wide">⚖ {{ d_label }}</span>
+        <span class="text-[10px] text-slate-400">
+          {% if d.template %}{{ d.template }} · {% endif %}
+          confidence: {{ d.confidence }}
+          {% if d.decided_at %} · {{ d.decided_at | et('%b %d %-I:%M %p ET') }}{% endif %}
+        </span>
+      </div>
+      {% if d.reason %}
+      <div class="text-[11px] text-slate-300 mt-1 leading-relaxed">{{ d.reason }}</div>
+      {% endif %}
+    </div>
+  {% endif %}
+
   {% if ev is none or (ev.last_run_started_at is none and not ev.top_leaderboard) %}
     <div class="text-sm text-slate-500">Lab has not produced any leaderboard rows yet. First successful nightly run will populate this.</div>
   {% else %}

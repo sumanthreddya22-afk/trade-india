@@ -138,6 +138,18 @@ def active_halts(session: Session) -> list[HaltView]:
 
 
 @dataclass
+class LastDebateView:
+    """Adversarial promotion-debate verdict from the most recent EvolutionRun
+    whose ``promotion_gate_pass`` JSON includes a ``debate`` field."""
+    recommendation: str  # "promote" | "block"
+    confidence: str      # "high" | "medium" | "low"
+    reason: str
+    template: str | None
+    decided_at: dt.datetime | None
+    promoted: bool       # whether the promotion still went through
+
+
+@dataclass
 class LabEvolutionView:
     # Most-recent attempt — may be a 0-trial no-op when nothing changed.
     last_run_started_at: dt.datetime | None
@@ -158,6 +170,45 @@ class LabEvolutionView:
     last_productive_run_template: str | None
     last_productive_run_promoted: bool
     top_leaderboard: list[dict]
+    # Most recent bull/bear/judge debate (None when the gate hasn't fired yet).
+    last_debate: "LastDebateView | None" = None
+
+
+def _parse_last_debate(session: Session) -> "LastDebateView | None":
+    """Walk recent EvolutionRun rows newest-first and return the first that
+    carries a ``debate`` field in its ``promotion_gate_pass`` JSON."""
+    import json as _json
+
+    rows = (
+        session.query(EvolutionRun)
+        .order_by(desc(EvolutionRun.started_at))
+        .limit(20)
+        .all()
+    )
+    for r in rows:
+        if not r.promotion_gate_pass:
+            continue
+        try:
+            payload = _json.loads(r.promotion_gate_pass)
+        except (ValueError, TypeError):
+            continue
+        debate = payload.get("debate") if isinstance(payload, dict) else None
+        if not isinstance(debate, dict):
+            continue
+        rec = debate.get("recommendation")
+        conf = debate.get("confidence")
+        reason = debate.get("reason", "")
+        if not rec or not conf:
+            continue
+        return LastDebateView(
+            recommendation=str(rec),
+            confidence=str(conf),
+            reason=str(reason),
+            template=r.template_name,
+            decided_at=r.started_at,
+            promoted=bool(r.auto_promoted),
+        )
+    return None
 
 
 def lab_evolution(session: Session) -> LabEvolutionView:
@@ -170,6 +221,7 @@ def lab_evolution(session: Session) -> LabEvolutionView:
         .order_by(desc(EvolutionRun.started_at))
         .first()
     )
+    last_debate = _parse_last_debate(session)
     top = (
         session.query(Leaderboard)
         .order_by(desc(Leaderboard.fitness_score))
@@ -199,6 +251,7 @@ def lab_evolution(session: Session) -> LabEvolutionView:
             last_productive_run_template=None,
             last_productive_run_promoted=False,
             top_leaderboard=leaderboard,
+            last_debate=last_debate,
         )
     return LabEvolutionView(
         last_run_started_at=last_run.started_at,
@@ -223,6 +276,7 @@ def lab_evolution(session: Session) -> LabEvolutionView:
             bool(last_productive.auto_promoted) if last_productive else False
         ),
         top_leaderboard=leaderboard,
+        last_debate=last_debate,
     )
 
 
