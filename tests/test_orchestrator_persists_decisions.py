@@ -186,6 +186,88 @@ class TestPersistsDecisions:
         assert len(rej) == 1
         assert "too_concentrated" in rej[0].reason
 
+    def test_stale_bars_emit_skipped_stale_data(self, watchlist, store):
+        """W2a — orchestrator runs the freshness gate before the strategy."""
+        market = MagicMock()
+        # Bars whose most recent timestamp is from 2026-01-01 — way > 48h old
+        import pandas as pd
+        old_idx = pd.date_range("2025-11-01", periods=40, freq="D", tz="UTC")
+        market.get_daily_bars.return_value = pd.DataFrame(
+            {"open": [100 + i for i in range(40)],
+             "high": [101 + i for i in range(40)],
+             "low": [99 + i for i in range(40)],
+             "close": [100 + i for i in range(40)],
+             "volume": [1_000_000] * 40},
+            index=old_idx,
+        )
+        alpaca = MagicMock()
+        alpaca.get_account.return_value = _account()
+        alpaca.get_positions.return_value = []
+        alpaca.get_open_order_symbols.return_value = set()
+        journal = MagicMock(); journal.traded_today.return_value = set()
+
+        orch = TradeOrchestrator(
+            config=_config(), market_data=market, alpaca=alpaca, journal=journal,
+            regime="trending_up", decision_store=store,
+        )
+        result = orch.scan(watchlist=watchlist)
+        skipped = [d for d in result.decisions if d.action == "skipped_stale_data"]
+        assert len(skipped) == 1
+        assert skipped[0].data_quality.fresh is False
+        # Persisted with truthful data_quality flags
+        rows = store.recent(limit=10)
+        assert any(r.action == "skipped_stale_data" for r in rows)
+        alpaca.place_order_with_stop_loss.assert_not_called()
+
+    def test_restricted_symbol_skipped_before_bar_fetch(self, watchlist, tmp_path, store):
+        """W2b — a symbol on the restricted list never reaches the data fetch."""
+        import yaml
+        rl = tmp_path / "restricted.yaml"
+        rl.write_text(yaml.safe_dump({"symbols": ["AAPL"]}))
+
+        market = MagicMock()
+        market.get_daily_bars.return_value = _bars()
+        alpaca = MagicMock()
+        alpaca.get_account.return_value = _account()
+        alpaca.get_positions.return_value = []
+        alpaca.get_open_order_symbols.return_value = set()
+        journal = MagicMock(); journal.traded_today.return_value = set()
+
+        orch = TradeOrchestrator(
+            config=_config(), market_data=market, alpaca=alpaca, journal=journal,
+            regime="trending_up", decision_store=store,
+            restricted_list_path=rl,
+        )
+        orch.scan(watchlist=watchlist)
+        # AAPL is the only symbol in the watchlist — should be skipped.
+        market.get_daily_bars.assert_not_called()
+        rows = store.recent(limit=10)
+        assert any(r.action == "skipped_restricted" for r in rows)
+        # Compliance flags persisted truthfully
+        import json
+        rec = next(r for r in rows if r.action == "skipped_restricted")
+        compliance = json.loads(rec.compliance_json)
+        assert compliance["restricted_list_clear"] is False
+
+    def test_unapproved_venue_escalates_for_every_symbol(self, watchlist, store):
+        """W2b — venue gate fails closed. The whole watchlist becomes
+        escalate_to_human; no orders submitted."""
+        market = MagicMock()
+        alpaca = MagicMock()
+        alpaca.get_account.return_value = _account()
+        alpaca.get_positions.return_value = []
+        alpaca.get_open_order_symbols.return_value = set()
+        journal = MagicMock(); journal.traded_today.return_value = set()
+
+        orch = TradeOrchestrator(
+            config=_config(), market_data=market, alpaca=alpaca, journal=journal,
+            regime="trending_up", decision_store=store,
+            approved_venue_url="https://api.alpaca.markets",  # LIVE — not approved
+        )
+        result = orch.scan(watchlist=watchlist)
+        assert all(d.action == "escalate_to_human" for d in result.decisions)
+        alpaca.place_order_with_stop_loss.assert_not_called()
+
     def test_no_store_is_safe_legacy_path(self, watchlist):
         """Existing call sites that don't pass decision_store still work."""
         market = MagicMock(); market.get_daily_bars.return_value = _bars()

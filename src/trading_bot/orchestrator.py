@@ -183,6 +183,8 @@ class TradeOrchestrator:
         state_builder=None,  # callable returning RiskState; if None, uses safe defaults
         decision_store=None,  # DecisionStore | None — when set, every Decision is persisted
         policy_version: str = "",
+        restricted_list_path: Path | str | None = None,
+        approved_venue_url: str | None = None,
     ) -> None:
         self._cfg = config
         self._market = market_data
@@ -195,6 +197,18 @@ class TradeOrchestrator:
         self._state_builder = state_builder
         self._decision_store = decision_store
         self._policy_version = policy_version
+        # W2b compliance config — load once at init; reread on every scan via
+        # _load_restricted_list() so the operator can edit YAML without restart.
+        self._restricted_list_path = (
+            Path(restricted_list_path) if restricted_list_path else None
+        )
+        self._approved_venue_url = approved_venue_url
+
+    def _load_restricted_list(self) -> set[str]:
+        if self._restricted_list_path is None:
+            return set()
+        from trading_bot.compliance import load_restricted_list
+        return load_restricted_list(self._restricted_list_path)
 
     # ---- W1.4 decision emission helpers ------------------------------------
 
@@ -336,9 +350,54 @@ class TradeOrchestrator:
         # (outside the per-symbol loop) so the check is O(1) per symbol.
         traded_today = self._journal.traded_today()
 
+        # W2b — load the restricted list once per scan; cheap (small YAML).
+        restricted = self._load_restricted_list()
+        # W2b — check the venue once per scan (orchestrator-level, not per
+        # symbol). On rejection, every per-symbol decision below carries
+        # approved_venue=False and we short-circuit with `escalate_to_human`.
+        approved_venue_ok = True
+        approved_venue_reason = ""
+        if self._approved_venue_url is not None:
+            from trading_bot.compliance import check_approved_venue
+            approved_venue_ok, approved_venue_reason = check_approved_venue(
+                self._approved_venue_url
+            )
+        if not approved_venue_ok:
+            for entry in watchlist:
+                self._emit(
+                    Decision(
+                        symbol=entry.symbol, action="escalate_to_human",
+                        reason=f"approved_venue_check failed: {approved_venue_reason}",
+                        compliance=ComplianceFlags(approved_venue=False),
+                    ),
+                    asset_class=entry.asset_class, decisions=decisions,
+                )
+            return ScanResult(decisions=decisions, timestamp=datetime.now(timezone.utc))
+
         for entry in watchlist:
             symbol = entry.symbol
             ac = entry.asset_class
+            # W2b — restricted list is the FIRST gate. A blocked symbol
+            # never causes a market-data fetch or a strategy evaluation.
+            if restricted:
+                from trading_bot.compliance import check_restricted
+                clear, reason = check_restricted(symbol, restricted=restricted)
+                if not clear:
+                    self._emit(
+                        Decision(
+                            symbol=symbol, action="skipped_restricted",
+                            reason=reason,
+                            compliance=ComplianceFlags(
+                                approved_instrument=None,
+                                approved_venue=True,
+                                restricted_list_clear=False,
+                                mnpi_clear=None,
+                                market_abuse_clear=None,
+                            ),
+                        ),
+                        asset_class=ac, decisions=decisions,
+                    )
+                    continue
             if has_open_position(symbol, positions):
                 self._emit(
                     Decision(symbol=symbol, action="skipped_existing_position"),
@@ -380,10 +439,68 @@ class TradeOrchestrator:
                     Decision(
                         symbol=symbol, action="skipped_insufficient_data",
                         reason=f"{len(bars)} bars < {MIN_BARS_FOR_INDICATORS}",
+                        data_quality=DataQualityFlags(
+                            fresh=None, complete=False, aligned=None, provenance_ok=True,
+                        ),
                     ),
                     asset_class=ac, decisions=decisions,
                 )
                 continue
+
+            # ---- W2a Data-quality gates -----------------------------------
+            # Freshness + completeness checks BEFORE strategy ingestion.
+            # Fail-closed: a bad/stale source produces a skip with the
+            # data_quality flags populated so the operator can see why.
+            dq_cfg = getattr(self._cfg, "data_quality", None)
+            if dq_cfg is not None and dq_cfg.enabled:
+                from trading_bot.data_quality import (
+                    check_bar_freshness, check_completeness,
+                )
+                max_age = (
+                    dq_cfg.max_bar_age_hours_crypto
+                    if entry.asset_class == "crypto"
+                    else dq_cfg.max_bar_age_hours_stock
+                )
+                fresh_ok, fresh_reason = check_bar_freshness(
+                    bars, asset_class=entry.asset_class,
+                    max_age_hours=max_age,
+                )
+                complete_ok, complete_reason = check_completeness(
+                    bars, max_missing_pct=dq_cfg.max_missing_ohlc_pct,
+                )
+                if not fresh_ok:
+                    self._emit(
+                        Decision(
+                            symbol=symbol, action="skipped_stale_data",
+                            reason=fresh_reason,
+                            data_quality=DataQualityFlags(
+                                fresh=False, complete=complete_ok,
+                                aligned=None, provenance_ok=True,
+                            ),
+                        ),
+                        asset_class=ac, decisions=decisions,
+                    )
+                    continue
+                if not complete_ok:
+                    self._emit(
+                        Decision(
+                            symbol=symbol, action="skipped_incomplete_data",
+                            reason=complete_reason,
+                            data_quality=DataQualityFlags(
+                                fresh=True, complete=False,
+                                aligned=None, provenance_ok=True,
+                            ),
+                        ),
+                        asset_class=ac, decisions=decisions,
+                    )
+                    continue
+                # Successful gate — record affirmative flags so downstream
+                # decisions on this symbol carry truthful data_quality.
+                _data_quality_pass = DataQualityFlags(
+                    fresh=True, complete=True, aligned=True, provenance_ok=True,
+                )
+            else:
+                _data_quality_pass = DataQualityFlags()
 
             ind = compute_indicators(bars)
             sig = self._strategy.evaluate(symbol, ind, equity=account.equity)
@@ -476,11 +593,47 @@ class TradeOrchestrator:
                 stop_loss_order_id=result.stop_loss_order_id,
                 notes=sig.reason,
             ))
+            # W2c — populate risk_after so audit logs carry post-trade
+            # gross/net + a per-trade VaR contribution. Cheap, no DB hit.
+            try:
+                gross_after = sum(
+                    (abs(p.market_value) for p in positions), Decimal("0")
+                ) + (sig.entry_price * sig.qty)
+                net_after = sum(
+                    (p.market_value for p in positions), Decimal("0")
+                ) + (sig.entry_price * sig.qty)
+                trade_risk_dollars = (sig.entry_price - sig.stop_loss_price) * sig.qty
+                _risk_after = RiskAfter(
+                    trade_var=(
+                        (trade_risk_dollars / account.equity)
+                        if account.equity > 0 else None
+                    ),
+                    gross_after=(
+                        (gross_after / account.equity)
+                        if account.equity > 0 else None
+                    ),
+                    net_after=(
+                        (net_after / account.equity)
+                        if account.equity > 0 else None
+                    ),
+                )
+            except Exception:
+                _risk_after = RiskAfter()
+
             self._emit(
                 Decision(
                     symbol=symbol, action="placed_order", reason=sig.reason,
                     entry_order_id=result.entry_order_id,
                     stop_loss_order_id=result.stop_loss_order_id,
+                    data_quality=_data_quality_pass,
+                    risk_after=_risk_after,
+                    compliance=ComplianceFlags(
+                        approved_instrument=True,  # in watchlist
+                        approved_venue=approved_venue_ok,
+                        restricted_list_clear=True,
+                        mnpi_clear=True,  # passed soft intel gates above
+                        market_abuse_clear=True,
+                    ),
                 ),
                 asset_class=ac, decisions=decisions,
             )

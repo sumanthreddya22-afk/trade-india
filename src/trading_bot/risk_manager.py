@@ -21,6 +21,10 @@ class RiskState:
     weekly_pnl_pct: Decimal
     consecutive_losing_days: int
     halted: bool
+    # W2c — per-strategy halt support. When a strategy name is in this set,
+    # RiskManager.check raises if invoked with that strategy name. Lets the
+    # operator pause one lane (e.g., wheel) without disabling the whole bot.
+    halted_strategies: frozenset[str] = frozenset()
 
 
 class RiskManager:
@@ -37,6 +41,7 @@ class RiskManager:
         positions: list[Position],
         state: RiskState,
         regime: str,
+        strategy_name: str | None = None,
     ) -> None:
         """Raise RiskRuleViolation if any rule is breached. Returns None on success."""
         if state.halted:
@@ -44,11 +49,57 @@ class RiskManager:
                 rule="halted",
                 detail="trading is halted by circuit-breaker; manual reset required",
             )
+        if strategy_name and strategy_name in state.halted_strategies:
+            raise RiskRuleViolation(
+                rule="strategy_halt",
+                detail=f"strategy '{strategy_name}' is halted; other lanes still trade",
+            )
         self._check_per_trade_risk(order, account)
         self._check_max_position(order, account)
         self._check_concentration(order, positions, account)
         self._check_asset_class_caps(order, positions, account, regime)
+        self._check_gross_net(order, positions, account)
         self._check_daily_weekly_limits(state)
+
+    def _check_gross_net(
+        self,
+        o: OrderRequest,
+        positions: list[Position],
+        a: AccountSnapshot,
+    ) -> None:
+        """W2c — gross / net notional caps as % of equity.
+
+        Gross = absolute sum of position market values + new order notional.
+        Net   = signed sum (longs +, shorts -) including the new order.
+        """
+        new_notional = o.limit_price * o.qty
+        # Existing positions: market_value is positive for longs; treat the
+        # absolute value as the gross contribution.
+        gross_existing = sum((abs(p.market_value) for p in positions), Decimal("0"))
+        net_existing = sum((p.market_value for p in positions), Decimal("0"))
+        if o.side == OrderSide.BUY:
+            gross_after = gross_existing + new_notional
+            net_after = net_existing + new_notional
+        else:
+            gross_after = gross_existing + new_notional
+            net_after = net_existing - new_notional
+
+        if a.equity <= 0:
+            return  # no meaningful ratio; let other gates fire
+        gross_pct = (gross_after / a.equity) * Decimal("100")
+        net_pct = (net_after / a.equity) * Decimal("100")
+        gross_cap = Decimal(str(getattr(self._cfg.risk, "gross_cap_pct", 200.0)))
+        net_cap = Decimal(str(getattr(self._cfg.risk, "net_cap_pct", 100.0)))
+        if gross_pct > gross_cap:
+            raise RiskRuleViolation(
+                rule="gross_cap_pct",
+                detail=f"gross {gross_pct:.1f}% exceeds cap {gross_cap}%",
+            )
+        if abs(net_pct) > net_cap:
+            raise RiskRuleViolation(
+                rule="net_cap_pct",
+                detail=f"net {net_pct:.1f}% exceeds cap ±{net_cap}%",
+            )
 
     # ---- individual rule helpers ----
 

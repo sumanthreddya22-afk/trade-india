@@ -47,6 +47,10 @@ class RiskConfig(BaseModel):
     # collateral in their underlying's sector. 'Unknown'-classified symbols
     # never block. Set to 1.0 to disable the gate entirely.
     sector_cap_pct: float = Field(default=0.25, gt=0, le=1.0)
+    # W2c — gross/net notional caps as % of equity.
+    # Defaults are intentionally loose (paper-only); tighten when going live.
+    gross_cap_pct: float = Field(default=200.0, gt=0, le=1000.0)
+    net_cap_pct: float = Field(default=100.0, gt=0, le=500.0)
 
 
 class AllocationConfig(BaseModel):
@@ -142,6 +146,23 @@ class WheelConfig(BaseModel):
     allowlist_path: str = "strategy/wheel_allowlist.yaml"
 
 
+class DataQualityConfig(BaseModel):
+    """W2a — pre-trade gates on bar quality. The orchestrator runs these
+    between data fetch and indicator computation.  Defaults are tuned for
+    daily bars; intraday paths can pass tighter values to ``check_bar_freshness``.
+    """
+
+    enabled: bool = Field(default=True)
+    # Maximum age in hours for the most recent bar (per asset class).
+    # Daily bars typically run within 48h during RTH (today's bar may not
+    # be built until end-of-day). Crypto trades 24/7 so we expect fresh
+    # bars every few hours.
+    max_bar_age_hours_stock: float = Field(default=48.0, gt=0, le=168.0)
+    max_bar_age_hours_crypto: float = Field(default=6.0, gt=0, le=168.0)
+    # Maximum % of NaN values in OHLC columns before the gate trips.
+    max_missing_ohlc_pct: float = Field(default=5.0, ge=0.0, le=50.0)
+
+
 class AppConfig(BaseModel):
     risk: RiskConfig
     allocation: AllocationConfig
@@ -151,6 +172,7 @@ class AppConfig(BaseModel):
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     wheel: WheelConfig = Field(default_factory=WheelConfig)
+    data_quality: DataQualityConfig = Field(default_factory=DataQualityConfig)
 
 
 def load_config(path: Path) -> AppConfig:
