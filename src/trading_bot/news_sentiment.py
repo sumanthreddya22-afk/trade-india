@@ -21,6 +21,7 @@ config.yaml::strategy.sentiment_floor`.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -102,9 +103,10 @@ class SentimentCache:
         )
 
 
-# Cap the per-run symbol count so an inflated active universe can't blow
-# through the Massive rate budget. 50 × 13s/call = ~11 min worst case.
-MAX_SYMBOLS_PER_WARM = 50
+# Bucket B: cap raised from 50 → 200 so the sentiment veto covers more of
+# the universe. Configurable via TRADING_BOT_NEWS_WARM_CAP env. Each call is
+# a single Massive fetch per symbol; 200 names ≈ 200 calls per run.
+MAX_SYMBOLS_PER_WARM = int(os.environ.get("TRADING_BOT_NEWS_WARM_CAP", "200"))
 
 
 def warm_for_symbols(

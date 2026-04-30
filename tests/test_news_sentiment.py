@@ -89,9 +89,15 @@ def test_warm_skips_symbols_already_cached_today(tmp_path):
     assert out["MSFT"] is not None
 
 
-def test_warm_caps_at_50_symbols(tmp_path):
-    """Defensive: the cron task can pass an oversized list; warm should cap."""
-    from trading_bot.news_sentiment import warm_for_symbols, SentimentCache
+def test_warm_caps_at_max_symbols(tmp_path):
+    """Defensive: the cron task can pass an oversized list; warm should cap.
+
+    Bucket B raised MAX_SYMBOLS_PER_WARM 50 → 200; assert against the actual
+    constant so future bumps don't require touching the test.
+    """
+    from trading_bot.news_sentiment import (
+        MAX_SYMBOLS_PER_WARM, SentimentCache, warm_for_symbols,
+    )
 
     cache = SentimentCache(tmp_path / "ns.db")
 
@@ -103,6 +109,7 @@ def test_warm_caps_at_50_symbols(tmp_path):
             return 0.0, 1, "neutral"
 
     fake = _FakeMassive()
-    symbols = [f"S{i:03d}" for i in range(80)]
+    # Pass an over-cap list; expect exactly MAX_SYMBOLS_PER_WARM calls.
+    symbols = [f"S{i:03d}" for i in range(MAX_SYMBOLS_PER_WARM + 30)]
     warm_for_symbols(symbols, cache=cache, massive=fake)
-    assert len(fake.calls) <= 50
+    assert len(fake.calls) == MAX_SYMBOLS_PER_WARM

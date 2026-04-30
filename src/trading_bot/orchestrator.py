@@ -151,13 +151,27 @@ def load_ranked_watchlist(path: Path) -> list[WatchlistEntry]:
     Entries look like:
         ### 1. NVDA (us_equity)
         ### 2. BTC/USD (crypto)
+
+    Bucket B: ONLY parses entries in the ``## Ranked Candidates`` section.
+    The stage-1 shortlist (under ``## Stage-1 Shortlist (no lane endorsements)``)
+    is informational and must NOT be auto-traded — those names had zero
+    stage-2 lane confirmation. Previous regex matched any ``### N. SYM``
+    heading, accidentally pulling shortlist rows into the trade lane.
     """
     if not path.exists():
         return []
     text = path.read_text()
+    # Slice between "## Ranked Candidates" and the next "## " heading.
+    start = text.find("## Ranked Candidates")
+    if start == -1:
+        return []
+    body_start = start + len("## Ranked Candidates")
+    rest = text[body_start:]
+    next_section = re.search(r"^##\s", rest, re.MULTILINE)
+    body = rest[: next_section.start()] if next_section else rest
     out: list[WatchlistEntry] = []
     pattern = re.compile(r"^###\s+\d+\.\s+(\S+)\s+\(([^)]+)\)\s*$", re.MULTILINE)
-    for match in pattern.finditer(text):
+    for match in pattern.finditer(body):
         symbol = match.group(1)
         asset_class_raw = match.group(2)
         # Preserve the raw asset_class value; only normalise crypto variants.
@@ -167,6 +181,30 @@ def load_ranked_watchlist(path: Path) -> list[WatchlistEntry]:
             asset_class = asset_class_raw
         out.append(WatchlistEntry(symbol=symbol, asset_class=asset_class, notes=""))
     return out
+
+
+def opportunities_age_hours(path: Path) -> float | None:
+    """Return age of strategy/opportunities.md in hours, parsed from the
+    ``Generated:`` line at the top. Returns None if missing/unparseable.
+    Bucket B: callers use this to gate stale-data trades and to fire alerts.
+    """
+    if not path.exists():
+        return None
+    try:
+        head = path.read_text()[:500]  # first ~500 chars cover the header
+    except OSError:
+        return None
+    m = re.search(r"^Generated:\s*(\S+)", head, re.MULTILINE)
+    if not m:
+        return None
+    try:
+        ts_raw = m.group(1).replace("Z", "+00:00")
+        ts = datetime.fromisoformat(ts_raw)
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - ts).total_seconds() / 3600.0
 
 
 class TradeOrchestrator:

@@ -200,12 +200,22 @@ def test_screen_universe_writes_snapshot(tmp_path, monkeypatch):
     assert "NVDA" in snapshot
 
 
-def test_load_active_universe_falls_back_to_watchlist(tmp_path, monkeypatch):
-    """Phase 0a: with no opportunities.md AND no Alpaca crypto discovery,
-    returns watchlist.yaml verbatim. Stub _load_crypto_universe so the
-    test exercises the fallback path (real path is now Alpaca-discovered)."""
+def test_load_active_universe_falls_back_to_seed_when_opportunities_missing(tmp_path, monkeypatch):
+    """Bucket B: when opportunities.md is missing AND Alpaca crypto discovery
+    is empty, the equity lane falls back to CORE_LIQUID_TICKERS (250 names),
+    NOT the 7-name strategy/watchlist.yaml. The crypto lane still falls
+    through to watchlist.yaml since that's the documented last-resort.
+    """
     import trading_bot.cli as cli_mod
+    from trading_bot.universe import CORE_LIQUID_TICKERS
     monkeypatch.setattr(cli_mod, "_load_crypto_universe", lambda: [])
+    monkeypatch.setattr(
+        cli_mod, "_seed_equity_fallback",
+        lambda: [
+            cli_mod.WatchlistEntry(symbol=s, asset_class="us_equity", notes="seed_fallback")
+            for s in CORE_LIQUID_TICKERS[:5]
+        ],
+    )
     monkeypatch.chdir(tmp_path)
     (tmp_path / "strategy").mkdir()
     (tmp_path / "strategy" / "watchlist.yaml").write_text(
@@ -215,14 +225,22 @@ def test_load_active_universe_falls_back_to_watchlist(tmp_path, monkeypatch):
     )
 
     universe = cli_mod._load_active_universe()
-    syms = [e.symbol for e in universe]
-    assert syms == ["AAPL", "BTC/USD"]
+    syms = {e.symbol for e in universe}
+    # Equity universe is the seed list (stubbed first 5 of CORE_LIQUID_TICKERS),
+    # NOT the 7-name watchlist. Crypto from watchlist.yaml is allowed since
+    # Alpaca discovery is stubbed empty.
+    assert "BTC/USD" in syms
+    seed_5 = set(CORE_LIQUID_TICKERS[:5])
+    assert seed_5.issubset(syms)
+    # AAPL from watchlist is NOT used as the equity fallback path anymore;
+    # presence/absence is incidental (it's also in CORE_LIQUID_TICKERS).
 
 
 def test_load_active_universe_merges_opportunities_with_crypto(tmp_path, monkeypatch):
-    """Phase 0a: top stocks come from opportunities.md; crypto from auto-discovery
-    (or watchlist.yaml fallback). Stub crypto discovery to return ETH/USD + BTC/USD
-    so we test the merge logic deterministically."""
+    """Bucket B: top stocks from opportunities.md (under the ## Ranked
+    Candidates section, with a fresh Generated: header); crypto from
+    auto-discovery."""
+    import datetime as _dt
     import trading_bot.cli as cli_mod
     from trading_bot.state import WatchlistEntry
     discovered_crypto = [
@@ -236,11 +254,13 @@ def test_load_active_universe_merges_opportunities_with_crypto(tmp_path, monkeyp
         "symbols:\n"
         "  - symbol: SPY\n    asset_class: stock\n    notes: legacy\n"
     )
+    fresh_ts = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
     (tmp_path / "strategy" / "opportunities.md").write_text(
-        "# Opportunities\n"
-        "### 1. NVDA (us_equity)\n"
-        "### 2. AMD (us_equity)\n"
-        "### 3. TSLA (us_equity)\n"
+        f"# Opportunities (Stage-2)\n\nGenerated: {fresh_ts}\nTotal endorsed: 3\n\n"
+        "## Ranked Candidates\n\n"
+        "### 1. NVDA (us_equity)\n- Lanes: momentum\n\n"
+        "### 2. AMD (us_equity)\n- Lanes: momentum\n\n"
+        "### 3. TSLA (us_equity)\n- Lanes: momentum\n"
     )
 
     universe = cli_mod._load_active_universe()

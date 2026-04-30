@@ -40,7 +40,7 @@ from trading_bot.reports import (
 )
 from trading_bot.email_digest import build_daily_digest_email, DigestContext, TradeRow as DigestTradeRow
 from trading_bot.risk_manager import RiskManager, RiskState
-from trading_bot.state import load_watchlist
+from trading_bot.state import WatchlistEntry, load_watchlist
 from trading_bot.trade_journal import TradeJournal
 from trading_bot.screener import build_stage1_shortlist, run_stage2, write_opportunities_snapshot
 from trading_bot.strategy_lanes import BreakoutLane, MeanReversionLane, MomentumLane
@@ -82,7 +82,11 @@ def _build_orchestrator(
         approved_venue_url=settings.alpaca_base_url,
     )
 
-ACTIVE_UNIVERSE_TOP_N_STOCKS = 25
+ACTIVE_UNIVERSE_TOP_N_STOCKS = int(os.environ.get("TRADING_BOT_SCAN_TOP_N", "100"))
+# Bucket B: opportunities.md is rebuilt at 07:30 + 12:00 ET. If it's older
+# than this many hours we treat it as stale, fire an alert, and fall back
+# to CORE_LIQUID_TICKERS (250 names) instead of trusting yesterday's signal.
+OPPORTUNITIES_MAX_AGE_HOURS = float(os.environ.get("TRADING_BOT_OPPORTUNITIES_MAX_AGE_HOURS", "12"))
 
 
 def _is_usd_crypto(symbol: str) -> bool:
@@ -121,19 +125,85 @@ def _load_crypto_universe():
     return discover_crypto_universe(ac, blocklist=blocklist)
 
 
+def _alert_universe_fallback(*, kind: str, detail: str) -> None:
+    """Bucket B: fire an alert when the equity universe degrades to a fallback.
+
+    Best-effort — alerting must never block universe construction. Uses the
+    ``daemon_critical`` AlertEvent kind since universe collapse is a first-class
+    operational issue.
+    """
+    try:
+        import datetime as _dt_alert
+        from trading_bot.alerts import AlertEvent, queue_alert
+        queue_alert(AlertEvent(
+            kind="daemon_critical",
+            severity="warn",
+            title=f"Universe fallback: {kind}",
+            detail_html=f"<p>{detail}</p>",
+            fired_at=_dt_alert.datetime.now(_dt_alert.timezone.utc),
+            dedup_key=f"universe_fallback:{kind}",
+        ))
+    except Exception:
+        pass
+
+
+def _seed_equity_fallback() -> list[WatchlistEntry]:
+    """Bucket B: 250-name `CORE_LIQUID_TICKERS` instead of the 7-name
+    watchlist.yaml. Replaces the pre-Bucket-B silent collapse to SPY/QQQ/AAPL/
+    MSFT/AMD when opportunities.md is missing or stale.
+
+    Tickers are intersected with Alpaca's currently tradable equity list so
+    delisted names drop silently. Returns equities only — crypto is handled
+    by the dedicated crypto-universe loader.
+    """
+    try:
+        from trading_bot.alpaca_client import AlpacaClient
+        from trading_bot.universe import CORE_LIQUID_TICKERS
+        ac = AlpacaClient(Settings())
+        tradable = {a.symbol for a in ac.get_active_assets("us_equity")}
+    except Exception:
+        # Last-resort: fall back to whatever symbols we hardcoded as core,
+        # without an Alpaca check. Better than a 7-name fallback.
+        from trading_bot.universe import CORE_LIQUID_TICKERS
+        tradable = set(CORE_LIQUID_TICKERS)
+    out: list[WatchlistEntry] = []
+    for sym in CORE_LIQUID_TICKERS:
+        if sym in tradable:
+            out.append(WatchlistEntry(symbol=sym, asset_class="us_equity", notes="seed_fallback"))
+    return out
+
+
 def _load_active_universe(*, crypto_only: bool = False):
     """Active trading universe.
 
       stocks = top-N ranked from strategy/opportunities.md (screener output;
-               source: market-wide Polygon grouped daily)
+               source: market-wide Polygon grouped daily). Default cap 100,
+               configurable via TRADING_BOT_SCAN_TOP_N. Stage-1 shortlist
+               rows are NOT auto-traded (Bucket B fix).
       crypto = auto-discovered from Alpaca's tradable asset list
                (USD-quoted, not stablecoin, not in crypto_blocklist.yaml)
 
-    Falls back to watchlist.yaml only if both auto-discovery sources fail
-    (Polygon down for stocks; Alpaca down for crypto). Falls back to ranked
-    crypto from opportunities.md if Alpaca crypto-discovery returns empty.
+    Bucket B: when ``opportunities.md`` is missing or older than
+    ``OPPORTUNITIES_MAX_AGE_HOURS`` (default 12h), the equity lane falls back
+    to the 250-name ``CORE_LIQUID_TICKERS`` seed list (NOT the 7-name
+    ``strategy/watchlist.yaml``) and fires a ``daemon_critical`` alert.
     """
-    ranked = load_ranked_watchlist(OPPORTUNITIES_PATH)
+    from trading_bot.orchestrator import opportunities_age_hours
+
+    age = opportunities_age_hours(OPPORTUNITIES_PATH)
+    is_stale = age is None or age > OPPORTUNITIES_MAX_AGE_HOURS
+    ranked = load_ranked_watchlist(OPPORTUNITIES_PATH) if not is_stale else []
+
+    if is_stale:
+        _alert_universe_fallback(
+            kind="opportunities_stale",
+            detail=(
+                f"opportunities.md missing or stale (age={age}h, "
+                f"budget={OPPORTUNITIES_MAX_AGE_HOURS}h). Falling back to "
+                f"CORE_LIQUID_TICKERS ({250} seed names). "
+                "Verify premarket_rank @ 07:30 ET ran today."
+            ),
+        )
 
     crypto_universe = _load_crypto_universe()
     # Fall back to opportunities.md ranked crypto (then watchlist.yaml) if
@@ -152,6 +222,12 @@ def _load_active_universe(*, crypto_only: bool = False):
             crypto_universe = [
                 e for e in fallback if e.asset_class == "crypto" and _is_usd_crypto(e.symbol)
             ]
+            if crypto_universe:
+                _alert_universe_fallback(
+                    kind="crypto_watchlist_fallback",
+                    detail="Alpaca crypto discovery + opportunities.md both empty; "
+                           "using watchlist.yaml crypto.",
+                )
 
     if crypto_only:
         seen: set[str] = set()
@@ -163,25 +239,25 @@ def _load_active_universe(*, crypto_only: bool = False):
             out.append(e)
         return out
 
-    if not ranked:
-        # No stock screener output → still scan crypto, but no equity universe
-        # (the orchestrator falls back to the equity watchlist via the existing
-        # path elsewhere — preserve historical behavior here).
-        try:
-            fallback = load_watchlist(WATCHLIST_PATH)
-        except Exception:
-            fallback = []
-        stocks_fallback = [e for e in fallback if e.asset_class != "crypto"]
-        seen = set()
-        out = []
-        for e in stocks_fallback + crypto_universe:
-            if e.symbol in seen:
-                continue
-            seen.add(e.symbol)
-            out.append(e)
-        return out
+    # Stocks: prefer ranked from opportunities.md, fall back to the 250-name
+    # CORE_LIQUID_TICKERS seed when opportunities.md is missing/stale or has
+    # zero stage-2 endorsed names. The 7-name watchlist.yaml is no longer
+    # used as the equity fallback.
+    stocks_ranked = [e for e in ranked if e.asset_class != "crypto"][:ACTIVE_UNIVERSE_TOP_N_STOCKS]
+    if stocks_ranked:
+        stocks = stocks_ranked
+    else:
+        if not is_stale:
+            # File was fresh but stage-2 had zero endorsements — that's a
+            # "low-conviction day" signal. Fall back to seed list rather than
+            # produce zero universe so crypto-only behaviour stays consistent.
+            _alert_universe_fallback(
+                kind="stage2_empty",
+                detail="opportunities.md is fresh but has zero stage-2 endorsed "
+                       "candidates; using CORE_LIQUID_TICKERS seed for equity scan.",
+            )
+        stocks = _seed_equity_fallback()
 
-    stocks = [e for e in ranked if e.asset_class != "crypto"][:ACTIVE_UNIVERSE_TOP_N_STOCKS]
     seen = set()
     out = []
     for e in stocks + crypto_universe:

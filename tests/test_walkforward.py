@@ -84,10 +84,15 @@ def test_lab_universe_falls_back_when_opportunities_missing(tmp_path):
 
 
 def test_lab_universe_reads_top_n_stocks_from_opportunities(tmp_path):
-    """Crypto entries are filtered out; only stocks in rank order, capped at N."""
+    """Crypto entries are filtered out; only stocks in rank order, capped at N.
+
+    Bucket B: stage-1 shortlist headings are now ignored; rows must be in
+    the ``## Ranked Candidates`` section to be picked up.
+    """
     p = tmp_path / "opp.md"
     p.write_text(
         "# Opportunities\n\n"
+        "## Ranked Candidates\n\n"
         "### 1. NVDA (us_equity)\n- Lanes: momentum\n\n"
         "### 2. ARB/USD (crypto)\n- Lanes: breakout\n\n"
         "### 3. AAPL (us_equity)\n- Lanes: momentum\n\n"
@@ -103,7 +108,7 @@ def test_lab_universe_caps_at_top_n(tmp_path):
         f"### {i}. SYM{i} (us_equity)\n- Lanes: momentum\n"
         for i in range(1, 50)
     )
-    p.write_text("# Opportunities\n\n" + lines)
+    p.write_text("# Opportunities\n\n## Ranked Candidates\n\n" + lines)
     universe = _lab_universe(opportunities_path=p)
     assert len(universe) == 25  # LAB_UNIVERSE_TOP_N
     assert universe[0] == "SYM1"
@@ -114,6 +119,7 @@ def test_lab_universe_empty_stock_list_falls_back(tmp_path):
     p = tmp_path / "opp.md"
     p.write_text(
         "# Opportunities\n\n"
+        "## Ranked Candidates\n\n"
         "### 1. BTC/USD (crypto)\n\n"
         "### 2. ETH/USD (crypto)\n"
     )

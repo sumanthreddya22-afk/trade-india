@@ -283,3 +283,60 @@ def test_load_ranked_watchlist_reads_opportunities(tmp_path: Path):
     assert syms == ["NVDA", "BTC/USD"]
     assert entries[0].asset_class == "us_equity"
     assert entries[1].asset_class == "crypto"
+
+
+def test_load_ranked_watchlist_skips_stage1_shortlist(tmp_path: Path):
+    """Bucket B: stage-1 shortlist rows must NOT be auto-traded."""
+    md = tmp_path / "opportunities.md"
+    md.write_text(
+        "# Opportunities (Stage-2)\n\n"
+        "## Ranked Candidates\n\n"
+        "### 1. NVDA (us_equity)\n\n"
+        "- Lanes: momentum\n\n"
+        "## Stage-1 Shortlist (no lane endorsements)\n\n"
+        "### 1. ARKK (us_equity)\n\n"
+        "- Stage-1 score: 0.42\n\n"
+        "### 2. PLTR (us_equity)\n\n"
+        "- Stage-1 score: 0.38\n"
+    )
+    entries = load_ranked_watchlist(md)
+    syms = [e.symbol for e in entries]
+    # ARKK and PLTR are stage-1 only — must be excluded.
+    assert syms == ["NVDA"]
+
+
+def test_load_ranked_watchlist_returns_empty_when_only_shortlist(tmp_path: Path):
+    """Bucket B: if all rows are shortlist (stage-2 was empty), return []."""
+    md = tmp_path / "opportunities.md"
+    md.write_text(
+        "# Opportunities (Stage-2)\n\n"
+        "## Stage-1 Shortlist (no lane endorsements)\n\n"
+        "### 1. ARKK (us_equity)\n"
+    )
+    assert load_ranked_watchlist(md) == []
+
+
+def test_opportunities_age_hours_parses_generated_header(tmp_path: Path):
+    from trading_bot.orchestrator import opportunities_age_hours
+    import datetime as _dt
+    md = tmp_path / "opportunities.md"
+    five_hours_ago = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=5)
+    md.write_text(
+        f"# Opportunities (Stage-2)\n\nGenerated: {five_hours_ago.isoformat(timespec='seconds')}\n"
+        "Total endorsed: 0\n"
+    )
+    age = opportunities_age_hours(md)
+    assert age is not None
+    assert 4.5 < age < 5.5
+
+
+def test_opportunities_age_hours_returns_none_when_missing(tmp_path: Path):
+    from trading_bot.orchestrator import opportunities_age_hours
+    assert opportunities_age_hours(tmp_path / "nope.md") is None
+
+
+def test_opportunities_age_hours_returns_none_without_generated_header(tmp_path: Path):
+    from trading_bot.orchestrator import opportunities_age_hours
+    md = tmp_path / "opportunities.md"
+    md.write_text("# Opportunities\n\nNo header here\n")
+    assert opportunities_age_hours(md) is None

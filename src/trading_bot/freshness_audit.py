@@ -10,6 +10,7 @@ Returns a list of FreshnessFinding rows; the digest renders any with
 from __future__ import annotations
 
 import datetime as dt
+import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,10 +81,60 @@ def _age_hours(ts_str, now: dt.datetime) -> float | None:
     return (now - ts).total_seconds() / 3600.0
 
 
+_OPPORTUNITIES_PATH = Path("strategy/opportunities.md")
+_OPPORTUNITIES_BUDGET_HOURS = 12.0
+_OPPORTUNITIES_NOTE = "premarket_rank @ 07:30 ET + midday_rerank @ 12:00 ET on weekdays"
+
+
+def _audit_opportunities_md(now: dt.datetime) -> FreshnessFinding:
+    """Bucket B: add opportunities.md to the freshness audit. The equity scan
+    lane reads its top-N from this file; if it's stale, the bot acts on
+    yesterday's signal. The intel_scan path falls back to CORE_LIQUID_TICKERS
+    when this is missing/stale, so detection here lets the operator notice
+    the underlying job (premarket_rank / midday_rerank) failed.
+    """
+    cache = "opportunities_md"
+    if not _OPPORTUNITIES_PATH.exists():
+        return FreshnessFinding(
+            cache=cache, last_seen="-", age_hours=float("inf"),
+            budget_hours=_OPPORTUNITIES_BUDGET_HOURS, severity="missing",
+            note=f"file missing: {_OPPORTUNITIES_PATH}",
+        )
+    try:
+        head = _OPPORTUNITIES_PATH.read_text()[:500]
+    except OSError as e:
+        return FreshnessFinding(
+            cache=cache, last_seen="-", age_hours=float("inf"),
+            budget_hours=_OPPORTUNITIES_BUDGET_HOURS, severity="missing",
+            note=f"read failed: {e}",
+        )
+    m = re.search(r"^Generated:\s*(\S+)", head, re.MULTILINE)
+    if not m:
+        return FreshnessFinding(
+            cache=cache, last_seen="-", age_hours=float("inf"),
+            budget_hours=_OPPORTUNITIES_BUDGET_HOURS, severity="missing",
+            note="no Generated: header line",
+        )
+    age = _age_hours(m.group(1), now)
+    if age is None:
+        return FreshnessFinding(
+            cache=cache, last_seen="-", age_hours=float("inf"),
+            budget_hours=_OPPORTUNITIES_BUDGET_HOURS, severity="missing",
+            note=_OPPORTUNITIES_NOTE,
+        )
+    severity = "ok" if age <= _OPPORTUNITIES_BUDGET_HOURS else "stale"
+    return FreshnessFinding(
+        cache=cache, last_seen=m.group(1),
+        age_hours=age, budget_hours=_OPPORTUNITIES_BUDGET_HOURS,
+        severity=severity, note=_OPPORTUNITIES_NOTE,
+    )
+
+
 def audit_freshness(now: dt.datetime | None = None) -> list[FreshnessFinding]:
     """Walk every cache and return per-cache freshness verdicts."""
     now = now or dt.datetime.now(dt.timezone.utc)
     out: list[FreshnessFinding] = []
+    out.append(_audit_opportunities_md(now))
     for cache, db_path, query, budget, note in _CACHE_CHECKS:
         if not db_path.exists():
             out.append(FreshnessFinding(
