@@ -11,8 +11,14 @@ risk:
 
 allocation:
   options_max_pct: 20.0  # honored by wheel collateral gate
-  # stocks_max_pct / crypto_max_pct / cash_floor_pct removed in Bucket F
-  # — they were never enforced by any code path.
+  # The three keys below are unused by current code (Bucket F dropped the
+  # AllocationConfig fields), but kept here so a long-running pre-Bucket-F
+  # dashboard / daemon process that's still validating them on every YAML
+  # reload doesn't 500 the dashboard. Safe to delete after the daemon and
+  # dashboard processes have been restarted on the new code.
+  stocks_max_pct: 70.0
+  crypto_max_pct: 30.0
+  cash_floor_pct: 10.0
 
 regime_allocations:
   trending_up:    {stocks: 60.0, crypto: 25.0, options: 15.0, cash: 0.0}
@@ -22,9 +28,11 @@ regime_allocations:
 
 email:
   to: bharath8887@gmail.com
-  # daily_summary_time_et / weekly_summary_day removed in Bucket F — the
-  # 16:30 ET digest schedule is hardcoded in scheduler_jobs.py and there's
-  # no weekly digest job.
+  # Same Bucket F transitional note as `allocation` above. These keys are
+  # unused by the new code; kept here only so a pre-Bucket-F process can
+  # still validate the YAML during the rolling restart window.
+  daily_summary_time_et: "16:30"
+  weekly_summary_day: "Sunday"
 
 storage:
   trade_journal_path: data/trade_journal.db
