@@ -6,7 +6,6 @@ USD cost into state.db. Refuses to call when CostHalt is active.
 Defaults (operator policy: always Opus 4.7 — see memory/feedback_opus_only.md):
   Strategy Architect → claude-opus-4-7
   Tone Analyst       → claude-opus-4-7
-  News Controller    → claude-opus-4-7 (pinned in news_trader/news_controller.py)
 
 Override via env: ANTHROPIC_ARCHITECT_MODEL, ANTHROPIC_TONE_MODEL — but if you
 need a cheaper tier, talk to the operator first; the policy reason is

@@ -96,14 +96,14 @@ class TestBuildAudit:
 
     def test_with_model_and_prompt_versions(self):
         a = build_audit(
-            strategy="news_trader",
+            strategy="strategy_coach",
             regime="trending_up",
             policy_version="x",
-            model_versions={"news_controller": "claude-opus-4-7"},
-            prompt_versions={"news_controller": "v1:abc"},
+            model_versions={"coach": "claude-opus-4-7"},
+            prompt_versions={"coach": "v1:abc"},
         )
-        assert a.model_versions == {"news_controller": "claude-opus-4-7"}
-        assert a.prompt_versions == {"news_controller": "v1:abc"}
+        assert a.model_versions == {"coach": "claude-opus-4-7"}
+        assert a.prompt_versions == {"coach": "v1:abc"}
 
     def test_with_data_snapshots(self):
         a = build_audit(
