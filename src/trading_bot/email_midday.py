@@ -134,6 +134,35 @@ def build_midday_snapshot_email(ctx: SnapshotContext) -> Email:
     ])
     body_sections.append(section(title="Risk", glyph="\U0001f6e1️", body=risk_html))
 
+    # Freshness audit — silent green is the norm, surface only when stale.
+    # The same check runs at 16:30 ET in the daily digest; midday gives the
+    # operator a half-day-earlier signal so a stale cache doesn't poison the
+    # afternoon scans before EOD.
+    try:
+        from trading_bot.freshness_audit import audit_freshness
+        findings = audit_freshness()
+        stale = [f for f in findings if f.severity != "ok"]
+        if stale:
+            rows = [
+                [f.cache, f"{f.age_hours:.1f}h", f"{f.budget_hours:.1f}h", f.severity]
+                for f in stale
+            ]
+            body_sections.append(section(
+                title="Stale Data", glyph="⚠️",
+                body=(
+                    f'<p style="color:{_BAD};font-size:13px">'
+                    f'Caches over budget — afternoon scans may run on stale data.</p>'
+                    + data_table(
+                        headers=["Cache", "Age", "Budget", "Severity"],
+                        rows=rows, right_align_cols=[1, 2],
+                    )
+                ),
+                severity="bad",
+            ))
+    except Exception:
+        # Freshness audit must never block the snapshot.
+        pass
+
     body_sections.append(footer(version=ctx.version, git_sha=ctx.git_sha,
                                 dashboard_url=ctx.dashboard_url))
 
