@@ -232,7 +232,20 @@ class TradeOrchestrator:
         from dataclasses import replace
         return replace(decision, audit=a)
 
-    def _emit(self, decision: "Decision", *, asset_class: str, decisions: list) -> None:
+    @staticmethod
+    def _normalise_asset_class(value) -> str:
+        """Coerce an Alpaca AssetClass enum or arbitrary string into a
+        canonical lowercase tag. The persistence layer should never see an
+        ungainly ``"AssetClass.US_EQUITY"`` string from a bare ``str(enum)``."""
+        if value is None:
+            return ""
+        v = getattr(value, "value", value)
+        s = str(v).lower().strip()
+        if s.startswith("assetclass."):
+            s = s.split(".", 1)[1]
+        return s
+
+    def _emit(self, decision: "Decision", *, asset_class, decisions: list) -> None:
         """Append a decision to the in-memory list AND persist it to the
         DecisionStore when one is configured. Audit metadata is filled in
         from orchestrator state if the caller didn't provide it."""
@@ -245,7 +258,7 @@ class TradeOrchestrator:
                 d,
                 strategy=self._strategy_name(),
                 regime=self._regime,
-                asset_class=asset_class,
+                asset_class=self._normalise_asset_class(asset_class),
             )
         except Exception:
             # Decision persistence failures must never block trading. The in-

@@ -75,6 +75,14 @@ class MarketDataClient:
         )
 
     def get_daily_bars(self, symbol: str, lookback_days: int = 60) -> pd.DataFrame:
+        # NOTE — the previous implementation set ``limit=lookback_days`` here.
+        # Alpaca's SDK returns the FIRST N bars after ``start``, so that
+        # combination silently fetched a window starting ``lookback_days * 2``
+        # days ago and ending ~60 days ago — meaning every strategy was
+        # evaluating on ancient data without anyone noticing. The W1 freshness
+        # gate (data_quality.py) is what surfaced this. Fix: drop ``limit``
+        # and rely on the trailing ``.tail(lookback_days)`` to take the most
+        # recent bars from the full range.
         start = datetime.now(timezone.utc) - timedelta(days=lookback_days * 2)
         try:
             if _is_crypto(symbol):
@@ -82,7 +90,6 @@ class MarketDataClient:
                     symbol_or_symbols=symbol,
                     timeframe=TimeFrame.Day,
                     start=start,
-                    limit=lookback_days,
                 )
                 resp = self._crypto_client.get_crypto_bars(req)
             else:
@@ -90,7 +97,6 @@ class MarketDataClient:
                     symbol_or_symbols=symbol,
                     timeframe=TimeFrame.Day,
                     start=start,
-                    limit=lookback_days,
                 )
                 resp = self._stock_client.get_stock_bars(req)
         except Exception as e:

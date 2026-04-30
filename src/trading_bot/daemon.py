@@ -435,25 +435,9 @@ def main() -> int:
     # Auto-apply pending migrations on boot. Idempotent — exits clean if up-to-date.
     # Set TRADING_BOT_SKIP_MIGRATIONS=1 to skip (used by integration tests that
     # set up their own schema via SQLAlchemy directly).
-    if os.environ.get("TRADING_BOT_SKIP_MIGRATIONS") != "1":
-        try:
-            import subprocess
-            repo_root = Path(__file__).parent.parent.parent  # src/trading_bot/daemon.py → repo root
-            result = subprocess.run(
-                [str(repo_root / ".venv" / "bin" / "alembic"),
-                 "-c", str(repo_root / "migrations" / "alembic.ini"),
-                 "upgrade", "head"],
-                capture_output=True, text=True, timeout=30, cwd=str(repo_root),
-            )
-            if result.returncode != 0:
-                log.error("alembic_upgrade_failed", error=RuntimeError(result.stderr))
-                return 1
-            log.event("alembic_upgrade", result="ok")
-        except Exception as e:
-            log.error("alembic_upgrade_exception", error=e)
-            return 1
-    else:
-        log.event("alembic_upgrade_skipped", reason="TRADING_BOT_SKIP_MIGRATIONS=1")
+    from trading_bot.migrations_shim import ensure_migrations_at_head
+    if not ensure_migrations_at_head(log=log):
+        return 1
 
     log.event("daemon_boot", config_path=str(CONFIG_PATH))
 

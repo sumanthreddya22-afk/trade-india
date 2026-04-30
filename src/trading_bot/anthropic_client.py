@@ -3,11 +3,14 @@
 Wraps `anthropic.Anthropic` so every Claude call records its tokens and
 USD cost into state.db. Refuses to call when CostHalt is active.
 
-Defaults:
-  Strategy Architect → claude-opus-4-7 (best reasoning for code generation)
-  Tone Analyst       → claude-haiku-4-5 (fast/cheap)
+Defaults (operator policy: always Opus 4.7 — see memory/feedback_opus_only.md):
+  Strategy Architect → claude-opus-4-7
+  Tone Analyst       → claude-opus-4-7
+  News Controller    → claude-opus-4-7 (pinned in news_trader/news_controller.py)
 
-Override via env: ANTHROPIC_ARCHITECT_MODEL, ANTHROPIC_TONE_MODEL.
+Override via env: ANTHROPIC_ARCHITECT_MODEL, ANTHROPIC_TONE_MODEL — but if you
+need a cheaper tier, talk to the operator first; the policy reason is
+judgement consistency, not budget optimisation.
 """
 from __future__ import annotations
 
@@ -48,7 +51,9 @@ def default_architect_model() -> str:
 
 
 def default_tone_model() -> str:
-    return os.environ.get("ANTHROPIC_TONE_MODEL", "claude-haiku-4-5-20251001")
+    # Operator policy: always Opus 4.7 across every Claude call. Override
+    # with ANTHROPIC_TONE_MODEL only after talking to the operator.
+    return os.environ.get("ANTHROPIC_TONE_MODEL", "claude-opus-4-7")
 
 
 class AnthropicClient:

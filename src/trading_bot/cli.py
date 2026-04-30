@@ -57,6 +57,30 @@ RULES_PATH = Path("strategy/rules.md")
 PARAMS_PATH = Path("strategy/params.yaml")
 CLOSED_DB_PATH = Path("data/closed_trades.db")
 SNAPSHOT_PATH = Path("data/portfolio_snapshot.json")
+STATE_DB_PATH = Path("data/state.db")
+RESTRICTED_LIST_PATH = Path("strategy/restricted_list.yaml")
+
+
+def _build_orchestrator(
+    *, cfg, market, alpaca, journal, regime: str, settings,
+    state_builder=None,
+):
+    """Construct a TradeOrchestrator wired with the W1+W2 surface area.
+
+    Centralised so every CLI command + daemon job gets the same
+    decision-persistence + compliance behaviour automatically. Without this,
+    individual call sites silently lose the new gates.
+    """
+    from trading_bot.decisions_store import DecisionStore
+    from trading_bot.orchestrator import TradeOrchestrator
+    return TradeOrchestrator(
+        config=cfg, market_data=market, alpaca=alpaca,
+        journal=journal, regime=regime,
+        state_builder=state_builder,
+        decision_store=DecisionStore(STATE_DB_PATH),
+        restricted_list_path=RESTRICTED_LIST_PATH,
+        approved_venue_url=settings.alpaca_base_url,
+    )
 
 ACTIVE_UNIVERSE_TOP_N_STOCKS = 25
 
@@ -196,6 +220,12 @@ def _build_risk_state() -> RiskState:
 @click.group()
 def main() -> None:
     """Trading bot CLI."""
+    # Auto-apply pending migrations on every CLI invocation. Idempotent —
+    # alembic exits instantly when the schema is already at head. Set
+    # TRADING_BOT_SKIP_MIGRATIONS=1 to skip (e.g. during tests that build
+    # their own schema). Must run before any command opens state.db.
+    from trading_bot.migrations_shim import ensure_migrations_at_head
+    ensure_migrations_at_head()
 
 
 @main.command()
@@ -286,9 +316,9 @@ def scan(regime: str) -> None:
     journal = TradeJournal(Path(cfg.storage.trade_journal_path))
     watchlist = _load_active_universe()
 
-    orch = TradeOrchestrator(
-        config=cfg, market_data=market, alpaca=alpaca,
-        journal=journal, regime=regime,
+    orch = _build_orchestrator(
+        cfg=cfg, market=market, alpaca=alpaca, journal=journal,
+        regime=regime, settings=settings,
     )
     result = orch.scan(watchlist=watchlist)
     write_last_scan(command="scan", regime=regime, universe_size=len(watchlist), result=result)
@@ -534,9 +564,9 @@ def full_run() -> None:
     click.echo(f"[regime] {regime} (vol {regime_reading.vol_annualized_pct:.1f}%, conf {regime_reading.confidence})")
 
     # 3. Scan + place trades through risk manager (with live P&L state)
-    orch = TradeOrchestrator(
-        config=cfg, market_data=market, alpaca=alpaca,
-        journal=journal, regime=regime,
+    orch = _build_orchestrator(
+        cfg=cfg, market=market, alpaca=alpaca, journal=journal,
+        regime=regime, settings=settings,
         state_builder=pnl_builder.to_risk_state,
     )
     result = orch.scan(watchlist=watchlist)
@@ -580,9 +610,9 @@ def intel_scan() -> None:
     regime_reading = _live_regime(market, cfg)
     regime = regime_reading.regime.value
 
-    orch = TradeOrchestrator(
-        config=cfg, market_data=market, alpaca=alpaca,
-        journal=journal, regime=regime,
+    orch = _build_orchestrator(
+        cfg=cfg, market=market, alpaca=alpaca, journal=journal,
+        regime=regime, settings=settings,
         state_builder=pnl_builder.to_risk_state,
     )
     result = orch.scan(watchlist=watchlist)
@@ -683,9 +713,9 @@ def rich_report(period: str) -> None:
     # 2. Regime + scan (allows trades to be placed if signals appear)
     regime_reading = _live_regime(market, cfg)
     regime = regime_reading.regime.value
-    orch = TradeOrchestrator(
-        config=cfg, market_data=market, alpaca=alpaca,
-        journal=journal, regime=regime,
+    orch = _build_orchestrator(
+        cfg=cfg, market=market, alpaca=alpaca, journal=journal,
+        regime=regime, settings=settings,
         state_builder=pnl_builder.to_risk_state,
     )
     result = orch.scan(watchlist=watchlist)
@@ -751,9 +781,9 @@ def crypto_scan() -> None:
     regime_reading = _live_regime(market, cfg)
     regime = regime_reading.regime.value
 
-    orch = TradeOrchestrator(
-        config=cfg, market_data=market, alpaca=alpaca,
-        journal=journal, regime=regime,
+    orch = _build_orchestrator(
+        cfg=cfg, market=market, alpaca=alpaca, journal=journal,
+        regime=regime, settings=settings,
         state_builder=pnl_builder.to_risk_state,
     )
     result = orch.scan(watchlist=watchlist)
