@@ -219,6 +219,10 @@ class DashboardSnapshot:
     equity_curve: list[EquityPoint]
     universe_size: int
     universe_source: str  # "opportunities.md" or "watchlist.yaml (fallback)"
+    # When the opportunities.md file was last regenerated. Lets the watchlist
+    # panel show "list age" so a stale weekend watchlist isn't mistaken for a
+    # fresh one.
+    opportunities_generated_at: datetime | None = None
     risk_headroom: list[RiskHeadroomRow] = field(default_factory=list)
     halt: HaltStatusBlock | None = None
     scheduled_jobs: list[ScheduledJobRow] = field(default_factory=list)
@@ -947,6 +951,16 @@ def build_snapshot(
 
     orders = _build_orders(settings, errors)
     opps = _build_opportunities(opportunities_path)
+    # Opportunities-file mtime → exposed so the dashboard can show "list age"
+    # and surface a stale weekend watchlist instead of letting it look fresh.
+    opps_generated_at: datetime | None = None
+    try:
+        if opportunities_path.exists():
+            opps_generated_at = datetime.fromtimestamp(
+                opportunities_path.stat().st_mtime, tz=timezone.utc,
+            )
+    except Exception:
+        pass
     exposure = _build_exposure(positions, kpi.equity, kpi.cash)
     universe_size, universe_source = _build_universe_meta(opportunities_path, watchlist_path)
 
@@ -995,6 +1009,7 @@ def build_snapshot(
         equity_curve=curve,
         universe_size=universe_size,
         universe_source=universe_source,
+        opportunities_generated_at=opps_generated_at,
         risk_headroom=headroom,
         halt=halt,
         scheduled_jobs=scheduled,

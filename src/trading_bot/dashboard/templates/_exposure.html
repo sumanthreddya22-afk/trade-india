@@ -58,7 +58,7 @@
             {% if sc is none or sc.stop_status == "missing" %}
               <span class="px-2 py-0.5 rounded text-[11px] bg-rose-500/15 border border-rose-500/40 text-rose-300">No stop</span>
             {% elif sc.stop_price %}
-              <span class="text-emerald-300 font-mono text-xs">${{ "%.2f"|format(sc.stop_price) }}</span>
+              <span class="text-emerald-300 font-mono text-xs">${{ "{:,.2f}".format(sc.stop_price) }}</span>
               {% if sc.distance_pct is not none %}<span class="text-slate-500 text-[11px] ml-1">({{ "%.1f"|format(sc.distance_pct) }}% below)</span>{% endif %}
             {% else %}
               <span class="text-emerald-300 text-xs">Live</span>

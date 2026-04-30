@@ -1,71 +1,55 @@
-<section id="regime" class="card p-6 lg:p-8"
+<section id="regime" class="card p-6 h-full flex flex-col"
          hx-get="/fragment/regime" hx-trigger="every 60s" hx-swap="outerHTML">
-  <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-    <div class="space-y-2">
+  <div class="flex items-start justify-between gap-4">
+    <div class="space-y-2 min-w-0">
       <div class="label" title="The bot's read on the broad market right now. Drives which playbook is active.">Market Mood</div>
-      <h2 class="text-3xl lg:text-5xl font-bold capitalize gradient-text">
+      <h2 class="text-3xl font-bold capitalize gradient-text leading-tight">
         {{ s.regime.replace('_', ' ') }}
       </h2>
-      <p class="text-sm text-slate-400 max-w-2xl">{{ s.regime_notes or "—" }}</p>
+      <p class="text-sm text-slate-400">{{ s.regime_notes or "—" }}</p>
     </div>
     <div class="text-right shrink-0">
       <div class="label mb-2">Automation</div>
       {% set color = "emerald" if s.automation_status == "OK" else ("amber" if s.automation_status == "WARN" else "rose") %}
-      <div class="px-5 py-3 rounded-xl border border-{{ color }}-500/40 bg-{{ color }}-500/10 inline-block">
-        <div class="text-3xl font-bold text-{{ color }}-400">{{ s.automation_status }}</div>
+      <div class="px-3 py-1.5 rounded-lg border border-{{ color }}-500/40 bg-{{ color }}-500/10 inline-block">
+        <div class="text-lg font-bold text-{{ color }}-400">{{ s.automation_status }}</div>
       </div>
-      <div class="text-xs text-slate-500 mt-1">{{ s.automation_note }}</div>
+      <div class="text-[11px] text-slate-500 mt-1 max-w-[12rem]">{{ s.automation_note }}</div>
     </div>
   </div>
 
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-6 text-sm">
+  {# Compact macro chips. Anything that can't be loaded simply doesn't render. #}
+  <div class="flex flex-wrap gap-2 mt-4 text-xs">
     {% if s.vix is not none %}
-    <div class="rounded-lg bg-slate-900/60 border border-slate-800 p-3" title="Volatility Index — measures expected stock-market swings. Above 25 = jittery markets, below 15 = calm.">
-      <div class="text-[10px] uppercase tracking-wider text-slate-500">Fear gauge (VIX)</div>
-      <div class="text-cyan-400 font-semibold mt-1">{{ "%.2f"|format(s.vix) }}</div>
-    </div>
+    <span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700 text-slate-300"
+          title="Volatility Index — Above 25 = jittery, below 15 = calm.">
+      <span class="text-slate-500">Fear gauge</span>
+      <span class="text-cyan-300 font-mono ml-1">{{ "%.1f"|format(s.vix) }}</span>
+    </span>
     {% endif %}
-    <div class="rounded-lg bg-slate-900/60 border border-slate-800 p-3" title="How much the S&P 500 has been swinging over the last 20 trading days.">
-      <div class="text-[10px] uppercase tracking-wider text-slate-500">Recent swings</div>
-      <div class="text-cyan-400 font-semibold mt-1">{{ "%.1f"|format(s.vol_pct) }}%</div>
-    </div>
-    {% if s.macro %}
-      {% if s.macro.yield_10y_pct is not none %}
-      <div class="rounded-lg bg-slate-900/60 border border-slate-800 p-3" title="10-Year US Treasury Yield. Higher yields signal tighter financial conditions.">
-        <div class="text-[10px] uppercase tracking-wider text-slate-500">10-Year yield</div>
-        <div class="text-cyan-400 font-semibold mt-1">{{ "%.2f"|format(s.macro.yield_10y_pct) }}%</div>
-      </div>
-      {% endif %}
-      {% if s.macro.fed_funds_pct is not none %}
-      <div class="rounded-lg bg-slate-900/60 border border-slate-800 p-3" title="Federal Funds Rate — what the Fed sets for overnight bank lending. Drives short-term borrowing costs.">
-        <div class="text-[10px] uppercase tracking-wider text-slate-500">Fed rate</div>
-        <div class="text-cyan-400 font-semibold mt-1">{{ "%.2f"|format(s.macro.fed_funds_pct) }}%</div>
-      </div>
-      {% endif %}
+    <span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700 text-slate-300"
+          title="How much the S&P 500 has been swinging over the last 20 trading days.">
+      <span class="text-slate-500">20d swings</span>
+      <span class="text-cyan-300 font-mono ml-1">{{ "%.1f"|format(s.vol_pct) }}%</span>
+    </span>
+    {% if s.macro and s.macro.yield_10y_pct is not none %}
+    <span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700 text-slate-300"
+          title="10-Year US Treasury Yield.">
+      <span class="text-slate-500">10y yield</span>
+      <span class="text-cyan-300 font-mono ml-1">{{ "%.2f"|format(s.macro.yield_10y_pct) }}%</span>
+    </span>
     {% endif %}
-    <div class="rounded-lg bg-slate-900/60 border border-slate-800 p-3" title="Number of symbols being scanned for opportunities right now.">
-      <div class="text-[10px] uppercase tracking-wider text-slate-500">Symbols watched</div>
-      <div class="text-cyan-400 font-semibold mt-1">{{ s.universe_size }}</div>
-    </div>
+    {% if s.macro and s.macro.fed_funds_pct is not none %}
+    <span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700 text-slate-300"
+          title="Federal Funds Rate.">
+      <span class="text-slate-500">Fed rate</span>
+      <span class="text-cyan-300 font-mono ml-1">{{ "%.2f"|format(s.macro.fed_funds_pct) }}%</span>
+    </span>
+    {% endif %}
+    <span class="px-2 py-1 rounded bg-slate-800/60 border border-slate-700 text-slate-300"
+          title="Number of symbols being scanned for opportunities right now.">
+      <span class="text-slate-500">Symbols watched</span>
+      <span class="text-cyan-300 font-mono ml-1">{{ s.universe_size }}</span>
+    </span>
   </div>
-
-  {% if s.allocation_drift %}
-  <div class="mt-6 border-t border-slate-800 pt-4">
-    <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2" title="Where money is parked vs the regime's target mix.">Capital mix vs plan</div>
-    <div class="space-y-2">
-      {% for d in s.allocation_drift %}
-      <div class="flex items-baseline justify-between text-sm">
-        <span class="capitalize text-slate-300">{{ d.bucket }}</span>
-        <span class="text-slate-400 text-xs">
-          <span class="text-slate-500">target</span> {{ fmt.pct(d.target_pct) }}
-          <span class="text-slate-600">·</span>
-          <span class="text-cyan-300">actual</span> {{ fmt.pct(d.actual_pct) }}
-          <span class="text-slate-600">·</span>
-          <span class="text-{{ 'rose' if d.drift_pct < 0 else ('emerald' if d.drift_pct > 0 else 'slate') }}-400">{{ fmt.pct(d.drift_pct, sign=true) }}</span>
-        </span>
-      </div>
-      {% endfor %}
-    </div>
-  </div>
-  {% endif %}
 </section>

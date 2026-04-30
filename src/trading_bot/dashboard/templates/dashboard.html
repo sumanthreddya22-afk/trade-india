@@ -84,23 +84,25 @@
     {# Action Required banner — top of page. Renders nothing on a healthy day. #}
     {% include "_action_required.html" %}
 
-    {# ─── Right Now ────────────────────────────────────────────────── #}
-    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-      <div class="lg:col-span-1">{% include "_strategy_mode.html" %}</div>
-      <div class="lg:col-span-2">{% include "_regime.html" %}</div>
-    </section>
-
+    {# Most important real-time numbers first. #}
     {% include "_kpi.html" %}
+
+    {# Strategy mode + Market mood: equal-height pair, balanced widths. #}
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {% include "_strategy_mode.html" %}
+      {% include "_regime.html" %}
+    </section>
 
     {% include "_risk.html" %}
 
-    {# Holdings now carries stop-loss column + click-to-expand drill-down. #}
-    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-      {% include "_exposure.html" %}
-      {% include "_equity.html" %}
-    </section>
+    {# Holdings carries stop-loss column + click-to-expand drill-down (full width — it's the densest source of truth on the page). #}
+    {% include "_exposure.html" %}
 
-    {% include "_orders.html" %}
+    {# Equity curve + live orders side-by-side. #}
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {% include "_equity.html" %}
+      {% include "_orders.html" %}
+    </section>
 
     {# Live Activity — what the bot is doing right now. #}
     {% include "_activity_feed.html" %}
