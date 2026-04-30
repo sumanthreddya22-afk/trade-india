@@ -453,6 +453,30 @@ def build_daily_digest_email(ctx: DigestContext) -> Email:
 
     # 11. System health (only if anything to report)
     health_blocks = []
+    # 11a. Freshness audit — surface only when something exceeds its budget.
+    # Daily silent green is the desired UX; the operator only hears about
+    # the four caches the workflows depend on when one of them goes stale.
+    try:
+        from trading_bot.freshness_audit import audit_freshness
+        findings = audit_freshness()
+        stale = [f for f in findings if f.severity != "ok"]
+        if stale:
+            rows = [
+                [f.cache, f"{f.age_hours:.1f}h", f"{f.budget_hours:.1f}h", f.severity]
+                for f in stale
+            ]
+            health_blocks.append(
+                f'<p style="color:{_BAD};font-size:13px;font-weight:600">'
+                f'Stale data caches detected — workflows may run on old data.</p>'
+                + data_table(
+                    headers=["Cache", "Age", "Budget", "Severity"],
+                    rows=rows, right_align_cols=[1, 2],
+                )
+            )
+    except Exception:
+        # Audit must never block the digest. Cache failures are rare and
+        # logged via runs/ already.
+        pass
     if ctx.schedule_audit_warnings:
         rows = [[w["job_id"], str(w["expected"]), str(w["actual"]),
                  f"{w['ratio']:.2f}"] for w in ctx.schedule_audit_warnings]
