@@ -16,6 +16,7 @@ from alpaca.trading.requests import GetPortfolioHistoryRequest
 from trading_bot.config import AppConfig, Settings
 from trading_bot.exceptions import AlpacaClientError
 from trading_bot.risk_manager import RiskState
+from trading_bot.state_pause import read_halted_strategies, HALTED_STRATEGIES_PATH
 
 
 @dataclass(frozen=True)
@@ -25,6 +26,12 @@ class PnlReading:
     consecutive_losing_days: int
     halted: bool
     halt_reason: str = ""
+    # Bucket A: sizing throttle. 1.0 = full size, 0.5 = half, 0.25 = quarter.
+    # Computed from consecutive_losing_days vs cfg.risk.max_consecutive_losing_days.
+    size_multiplier: Decimal = Decimal("1")
+    # Bucket A: per-strategy halts (e.g. {"wheel"}). Sourced from a state file
+    # so the operator can pause one lane without halting the whole bot.
+    halted_strategies: frozenset[str] = frozenset()
 
 
 class PnlStateBuilder:
@@ -39,6 +46,7 @@ class PnlStateBuilder:
         self._cfg = config
 
     def read(self) -> PnlReading:
+        halted_strategies = read_halted_strategies(HALTED_STRATEGIES_PATH)
         try:
             req = GetPortfolioHistoryRequest(period="1W", timeframe="1D")
             hist = self._client.get_portfolio_history(req)
@@ -53,6 +61,7 @@ class PnlStateBuilder:
                 weekly_pnl_pct=Decimal("0"),
                 consecutive_losing_days=0,
                 halted=False,
+                halted_strategies=halted_strategies,
             )
 
         # Filter out None values (Alpaca returns None for non-trading days)
@@ -63,6 +72,7 @@ class PnlStateBuilder:
                 weekly_pnl_pct=Decimal("0"),
                 consecutive_losing_days=0,
                 halted=False,
+                halted_strategies=halted_strategies,
             )
 
         last = Decimal(str(clean[-1]))
@@ -91,12 +101,22 @@ class PnlStateBuilder:
             halted = True
             halt_reason = f"weekly P&L {weekly_pnl_pct}% breaches -{w_limit}%"
 
+        # Bucket A: consecutive-losing-days throttle ladder.
+        cap = int(self._cfg.risk.max_consecutive_losing_days)
+        size_multiplier, ladder_reason = _throttle_ladder(consecutive_losses, cap)
+        if ladder_reason and consecutive_losses >= cap + 2:
+            halted = True
+            if not halt_reason:
+                halt_reason = ladder_reason
+
         return PnlReading(
             daily_pnl_pct=daily_pnl_pct,
             weekly_pnl_pct=weekly_pnl_pct,
             consecutive_losing_days=consecutive_losses,
             halted=halted,
             halt_reason=halt_reason,
+            size_multiplier=size_multiplier,
+            halted_strategies=halted_strategies,
         )
 
     def to_risk_state(self) -> RiskState:
@@ -106,4 +126,21 @@ class PnlStateBuilder:
             weekly_pnl_pct=r.weekly_pnl_pct,
             consecutive_losing_days=r.consecutive_losing_days,
             halted=r.halted,
+            halted_strategies=r.halted_strategies,
+            size_multiplier=r.size_multiplier,
         )
+
+
+def _throttle_ladder(consecutive_losses: int, cap: int) -> tuple[Decimal, str]:
+    """Map a losing-day streak to a size multiplier + human reason.
+
+    Below cap: full size. At cap: half. cap+1: quarter. cap+2 and beyond:
+    multiplier is 0.25 but the caller flips `halted=True` so trading stops.
+    """
+    if cap <= 0 or consecutive_losses < cap:
+        return Decimal("1"), ""
+    if consecutive_losses == cap:
+        return Decimal("0.5"), f"{consecutive_losses} consecutive losing days at cap {cap}"
+    if consecutive_losses == cap + 1:
+        return Decimal("0.25"), f"{consecutive_losses} consecutive losing days (cap+1)"
+    return Decimal("0.25"), f"{consecutive_losses} consecutive losing days — circuit breaker"

@@ -25,6 +25,11 @@ class RiskState:
     # RiskManager.check raises if invoked with that strategy name. Lets the
     # operator pause one lane (e.g., wheel) without disabling the whole bot.
     halted_strategies: frozenset[str] = frozenset()
+    # Bucket A — sizing throttle driven by consecutive_losing_days.
+    # 1.0 = full size, 0.5 = half, 0.25 = quarter. Applied to per-trade-risk
+    # and max-position caps so a streak of bad days reduces exposure without
+    # halting trading. The full halt happens at cap+2 via `halted=True`.
+    size_multiplier: Decimal = Decimal("1")
 
 
 class RiskManager:
@@ -54,8 +59,11 @@ class RiskManager:
                 rule="strategy_halt",
                 detail=f"strategy '{strategy_name}' is halted; other lanes still trade",
             )
-        self._check_per_trade_risk(order, account)
-        self._check_max_position(order, account)
+        # size_multiplier scales per-trade-risk and max-position caps; defaults
+        # to 1.0 when set by callers that pre-date Bucket A.
+        sm = state.size_multiplier if state.size_multiplier > 0 else Decimal("1")
+        self._check_per_trade_risk(order, account, size_multiplier=sm)
+        self._check_max_position(order, account, size_multiplier=sm)
         self._check_concentration(order, positions, account)
         self._check_asset_class_caps(order, positions, account, regime)
         self._check_gross_net(order, positions, account)
@@ -103,7 +111,9 @@ class RiskManager:
 
     # ---- individual rule helpers ----
 
-    def _check_per_trade_risk(self, o: OrderRequest, a: AccountSnapshot) -> None:
+    def _check_per_trade_risk(
+        self, o: OrderRequest, a: AccountSnapshot, *, size_multiplier: Decimal
+    ) -> None:
         # risk = (entry - stop) * qty for buy, (stop - entry) * qty for sell
         if o.side == OrderSide.BUY:
             per_share_risk = o.limit_price - o.stop_loss_price
@@ -116,22 +126,30 @@ class RiskManager:
             )
         risk_dollars = per_share_risk * o.qty
         risk_pct = (risk_dollars / a.equity) * Decimal("100")
-        limit = Decimal(str(self._cfg.risk.per_trade_risk_pct))
-        if risk_pct > limit:
-            raise RiskRuleViolation(
-                rule="per_trade_risk_pct",
-                detail=f"risk {risk_pct:.2f}% exceeds limit {limit}%",
-            )
+        base_limit = Decimal(str(self._cfg.risk.per_trade_risk_pct))
+        effective_limit = base_limit * size_multiplier
+        if risk_pct > effective_limit:
+            detail = f"risk {risk_pct:.2f}% exceeds limit {effective_limit}%"
+            if size_multiplier < 1:
+                detail += (
+                    f" (throttled from {base_limit}% by size_multiplier={size_multiplier})"
+                )
+            raise RiskRuleViolation(rule="per_trade_risk_pct", detail=detail)
 
-    def _check_max_position(self, o: OrderRequest, a: AccountSnapshot) -> None:
+    def _check_max_position(
+        self, o: OrderRequest, a: AccountSnapshot, *, size_multiplier: Decimal
+    ) -> None:
         notional = o.limit_price * o.qty
         pct = (notional / a.equity) * Decimal("100")
-        limit = Decimal(str(self._cfg.risk.max_position_pct))
-        if pct > limit:
-            raise RiskRuleViolation(
-                rule="max_position_pct",
-                detail=f"position {pct:.2f}% exceeds limit {limit}%",
-            )
+        base_limit = Decimal(str(self._cfg.risk.max_position_pct))
+        effective_limit = base_limit * size_multiplier
+        if pct > effective_limit:
+            detail = f"position {pct:.2f}% exceeds limit {effective_limit}%"
+            if size_multiplier < 1:
+                detail += (
+                    f" (throttled from {base_limit}% by size_multiplier={size_multiplier})"
+                )
+            raise RiskRuleViolation(rule="max_position_pct", detail=detail)
 
     def _check_concentration(
         self, o: OrderRequest, positions: list[Position], a: AccountSnapshot

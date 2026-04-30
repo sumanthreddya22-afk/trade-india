@@ -271,11 +271,21 @@ class TradeOrchestrator:
     def _build_state(self) -> RiskState:
         if self._state_builder is not None:
             return self._state_builder()
+        # Bucket A: when no live builder is wired (test harnesses, dry-runs),
+        # still surface halted_strategies from the on-disk file so per-lane
+        # operator pauses are honored even on fallback. size_multiplier=1.0
+        # is the safe default; the Pnl-driven throttle only applies when the
+        # real builder is in play.
+        from trading_bot.state_pause import (
+            HALTED_STRATEGIES_PATH,
+            read_halted_strategies,
+        )
         return RiskState(
             daily_pnl_pct=Decimal("0"),
             weekly_pnl_pct=Decimal("0"),
             consecutive_losing_days=0,
             halted=False,
+            halted_strategies=read_halted_strategies(HALTED_STRATEGIES_PATH),
         )
 
     def _news_intel_gate(self, symbol: str, asset_class: str) -> str | None:

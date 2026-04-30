@@ -278,3 +278,92 @@ def test_option_collateral_ok_zero_equity():
     )
     assert ok is False
     assert "equity_zero" in reason
+
+
+# ---- Bucket A: size_multiplier (consecutive losing days throttle) ----
+
+
+def _state(*, multiplier: Decimal = Decimal("1"), halted: bool = False,
+           halted_strategies: frozenset = frozenset()) -> RiskState:
+    return RiskState(
+        daily_pnl_pct=Decimal("0"),
+        weekly_pnl_pct=Decimal("0"),
+        consecutive_losing_days=0,
+        halted=halted,
+        halted_strategies=halted_strategies,
+        size_multiplier=multiplier,
+    )
+
+
+def test_throttle_half_blocks_orders_above_half_per_trade_risk(cfg, acct):
+    """At size_multiplier=0.5 the per-trade-risk cap effectively becomes 0.5%."""
+    rm = RiskManager(cfg)
+    # Order that risks 0.7% of equity — fine at full size, blocked at 0.5x
+    req = OrderRequest(
+        symbol="AAPL", qty=Decimal("10"), side=OrderSide.BUY,
+        asset_class=AssetClass.STOCK,
+        limit_price=Decimal("100"),
+        stop_loss_price=Decimal("30"),  # $700 risk vs $100k equity = 0.7%
+    )
+    # Full-size: passes
+    rm.check(req, account=acct, positions=[], state=_state(), regime="trending_up")
+    # Half-size: blocked
+    with pytest.raises(RiskRuleViolation) as e:
+        rm.check(req, account=acct, positions=[],
+                 state=_state(multiplier=Decimal("0.5")), regime="trending_up")
+    assert e.value.rule == "per_trade_risk_pct"
+    assert "throttled" in e.value.detail
+
+
+def test_throttle_quarter_blocks_at_three_pct_position(cfg, acct):
+    """At 0.25x the max-position cap is 2.5%; a 3% notional order is blocked.
+
+    Concentration cap is 5% so 3% is fine on that gate. _check_per_trade_risk
+    runs before _check_max_position; the stop is set tight so per-trade-risk
+    doesn't fire and we're isolating the max-position throttle.
+    """
+    rm = RiskManager(cfg)
+    req = OrderRequest(
+        symbol="AAPL", qty=Decimal("30"), side=OrderSide.BUY,
+        asset_class=AssetClass.STOCK,
+        limit_price=Decimal("100"),  # $3000 = 3% of $100k
+        stop_loss_price=Decimal("99.5"),  # $0.50 risk * 30 = $15 = 0.015% — way under
+    )
+    # Full size: 3% < 10% cap, 5% concentration ok, passes.
+    rm.check(req, account=acct, positions=[], state=_state(), regime="trending_up")
+    # Quarter size: 3% > 2.5% throttled cap, blocked at max_position.
+    with pytest.raises(RiskRuleViolation) as e:
+        rm.check(req, account=acct, positions=[],
+                 state=_state(multiplier=Decimal("0.25")), regime="trending_up")
+    assert e.value.rule == "max_position_pct"
+    assert "throttled" in e.value.detail
+
+
+def test_throttle_default_one_passes_unchanged(cfg, acct):
+    """size_multiplier=1.0 is the back-compat path; behavior identical to pre-Bucket-A."""
+    rm = RiskManager(cfg)
+    req = OrderRequest(
+        symbol="AAPL", qty=Decimal("10"), side=OrderSide.BUY,
+        asset_class=AssetClass.STOCK,
+        limit_price=Decimal("195"),
+        stop_loss_price=Decimal("191.10"),
+    )
+    rm.check(req, account=acct, positions=[], state=_state(), regime="trending_up")
+
+
+def test_strategy_halt_blocks_named_lane(cfg, acct):
+    rm = RiskManager(cfg)
+    req = OrderRequest(
+        symbol="AAPL", qty=Decimal("1"), side=OrderSide.BUY,
+        asset_class=AssetClass.STOCK,
+        limit_price=Decimal("100"), stop_loss_price=Decimal("99"),
+    )
+    halted = _state(halted_strategies=frozenset({"wheel"}))
+    # Wheel is halted — wheel order rejected
+    with pytest.raises(RiskRuleViolation) as e:
+        rm.check(req, account=acct, positions=[], state=halted,
+                 regime="trending_up", strategy_name="wheel")
+    assert e.value.rule == "strategy_halt"
+    # Equity scan keeps trading
+    rm.check(req, account=acct, positions=[], state=halted,
+             regime="trending_up", strategy_name="momentum")

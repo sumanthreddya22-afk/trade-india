@@ -299,14 +299,21 @@ def _load_runners(log: StructuredLogger):
         # Also write the legacy heartbeat file so supervisor's StallDetector still works.
         write_heartbeat(HEARTBEAT_PATH, version=config_version, last_action="heartbeat")
 
+    # Bucket A: every job that may place a NEW entry order short-circuits on
+    # pause.flag. Jobs that protect EXISTING positions (verify_stops,
+    # portfolio_watch, wheel_manage) keep running so the drawdown circuit
+    # breaker doesn't strand open trades without exits/rolls. Read-only data
+    # jobs (rank, news_warm, iv_capture, universe_build) keep running too —
+    # they don't place orders and we still want fresh signal when pause clears.
+    _PAUSE_BLOCKED_JOBS = frozenset({
+        "intel_scan", "crypto_scan", "vip_scan", "wheel_scan",
+    })
+
     def _wrap(name: str, role_fn):
         """Wrap a role callable with pause-flag check and heartbeat update."""
         def runner():
             log.event(f"{name}_start")
-            # Block any job that may place orders.
-            # midday_snapshot is informational only (no orders placed).
-            # daily_digest invokes eod-report (read-only) so it is safe during pause.
-            if is_paused(PAUSE_PATH) and name in {"intel_scan", "crypto_scan"}:
+            if is_paused(PAUSE_PATH) and name in _PAUSE_BLOCKED_JOBS:
                 log.event(f"{name}_skipped", reason="pause.flag set")
                 write_heartbeat(HEARTBEAT_PATH, version=config_version,
                                 last_action=f"{name}_skipped_paused")
