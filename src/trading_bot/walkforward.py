@@ -31,14 +31,28 @@ def default_folds(
     n_folds: int = 6,
     train_months: int = 12,
     test_months: int = 3,
+    embargo_days: int = 0,
 ) -> list[FoldDefinition]:
     """Returns up to N folds with `train_months` train + `test_months` test,
-    walking forward by `test_months`. Truncates if the range can't fit N."""
+    walking forward by `test_months`. Truncates if the range can't fit N.
+
+    W3.1 — `embargo_days` (recommended ≥5 calendar days for daily-bar
+    strategies) inserts a gap between train_end and test_start to break
+    information leakage from indicators with multi-day lookback (e.g., a
+    14-day RSI computed at the last day of training shares 13 bars with the
+    first day of testing). Default is 0 for backward compatibility with
+    historical leaderboard records; production callers should pass
+    ``embargo_days=5`` explicitly (or use ``walk_forward_backtest`` which
+    defaults to that value).
+    """
+    if embargo_days < 0:
+        raise ValueError(f"embargo_days must be >= 0; got {embargo_days}")
     folds: list[FoldDefinition] = []
     cursor = start
     for _ in range(n_folds):
         train_end = _add_months(cursor, train_months) - dt.timedelta(days=1)
-        test_start = train_end + dt.timedelta(days=1)
+        # Embargo gap between train and test windows.
+        test_start = train_end + dt.timedelta(days=1 + embargo_days)
         test_end = _add_months(test_start, test_months) - dt.timedelta(days=1)
         if test_end > end:
             break
@@ -187,8 +201,14 @@ def walk_forward_backtest(
     start: dt.date,
     end: dt.date,
     n_folds: int = 6,
+    embargo_days: int = 5,
 ) -> list[BacktestRunResult]:
-    folds = default_folds(start=start, end=end, n_folds=n_folds)
+    """Production walk-forward path. Defaults to a 5-day embargo so
+    train/test bar overlaps from multi-day-lookback indicators (RSI_14,
+    MACD, EMA_20) cannot leak information into the test window."""
+    folds = default_folds(
+        start=start, end=end, n_folds=n_folds, embargo_days=embargo_days,
+    )
     results: list[BacktestRunResult] = []
     for fold in folds:
         results.append(_run_simulator(template_name=template_name, params=params, fold=fold))
