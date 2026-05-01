@@ -13,10 +13,11 @@ from trading_bot.journal_alpha import (
 )
 
 
-def _fake_closed_trade(*, exit_date, pnl):
+def _fake_closed_trade(*, exit_date, pnl, notes=""):
     t = MagicMock()
     t.exit_time = dt.datetime.combine(exit_date, dt.time.min, tzinfo=dt.timezone.utc)
     t.realized_pnl = Decimal(str(pnl))
+    t.notes = notes
     return t
 
 
@@ -121,3 +122,51 @@ def test_trades_outside_window_excluded(tmp_path):
         cdb.write_bytes(b"")
         out = compute_journal_alpha_vs_spy(closed_trades_db=cdb, benchmark=bench)
     assert out["n_trades"] == 3  # only the last 3 are in window
+
+
+def test_audit_rows_excluded_from_alpha(tmp_path):
+    """Regression: cancelled_unfilled / reconciled_no_fill_found audit rows
+    have realized_pnl=0 and entry_price==exit_price. They are not actual
+    trades and must NOT be counted by the alpha calculation. Counting them
+    inflates n_trades past the insufficient-data threshold and zeroes the
+    strategy return, which previously misfired strategy_coach's fallback
+    gate (2026-04-29 incident: 8 zombie audit rows tipped the trade count
+    from 3 → 11, flipped fallback_active=1, halted all trading).
+    """
+    today = dt.date.today()
+    # 8 audit rows + 3 real trades — without the filter this looks like 11
+    # losing trades and trips the threshold. With the filter, only 3 count.
+    fake_trades = [
+        _fake_closed_trade(exit_date=today - dt.timedelta(days=2), pnl=0,
+                           notes=f"cancelled_unfilled: entry_order_id=z-{i}")
+        for i in range(8)
+    ] + [
+        _fake_closed_trade(exit_date=today - dt.timedelta(days=1),
+                           pnl=Decimal("-27.70")),
+        _fake_closed_trade(exit_date=today, pnl=Decimal("-0.09")),
+        _fake_closed_trade(exit_date=today, pnl=Decimal("-10.37")),
+    ]
+    fake_store = MagicMock()
+    fake_store.all.return_value = fake_trades
+
+    with patch("trading_bot.reconciliation.ClosedTradeStore", return_value=fake_store):
+        cdb = tmp_path / "x.db"
+        cdb.write_bytes(b"")
+        out = compute_journal_alpha_vs_spy(closed_trades_db=cdb)
+    # 3 real trades, below threshold of 5 → insufficient_data
+    assert out["n_trades"] == 3
+    assert out["insufficient_data"] is True
+    # Confirms audit rows skipped — without filter n_trades would be 11
+
+    # Also verify the older note shape ('reconciled_no_fill_found') is
+    # filtered, since the previous reconciler used that label.
+    fake_trades2 = [
+        _fake_closed_trade(exit_date=today, pnl=0,
+                           notes=f"reconciled_no_fill_found: entry_order_id=x-{i}")
+        for i in range(20)
+    ]
+    fake_store.all.return_value = fake_trades2
+    with patch("trading_bot.reconciliation.ClosedTradeStore", return_value=fake_store):
+        out2 = compute_journal_alpha_vs_spy(closed_trades_db=cdb)
+    assert out2["n_trades"] == 0
+    assert out2["insufficient_data"] is True

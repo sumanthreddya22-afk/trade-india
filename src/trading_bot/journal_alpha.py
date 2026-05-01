@@ -15,6 +15,17 @@ from trading_bot.benchmark import SpyBenchmark
 INSUFFICIENT_TRADES_THRESHOLD = 5  # below this n, treat as no signal
 ALPHA_INF_CLAMP = 100.0
 
+# Notes substrings that mark an audit row, not an actual trade. These rows
+# have realized_pnl=0 and entry_price==exit_price; counting them inflates
+# n_trades and zeros out the strategy return, which can spuriously trip
+# the strategy_coach fallback gate.
+_AUDIT_NOTE_MARKERS = ("cancelled_unfilled", "reconciled_no_fill_found")
+
+
+def _is_audit_row(notes: str | None) -> bool:
+    n = (notes or "").lower()
+    return any(m in n for m in _AUDIT_NOTE_MARKERS)
+
 
 def compute_journal_alpha_vs_spy(
     *,
@@ -44,6 +55,8 @@ def compute_journal_alpha_vs_spy(
 
         store = ClosedTradeStore(cdb)
         for t in store.all():
+            if _is_audit_row(getattr(t, "notes", "")):
+                continue  # cancelled/never-filled audit row — not a real trade
             exit_date = t.exit_time.date() if hasattr(t.exit_time, "date") else None
             if exit_date and window_start <= exit_date <= as_of:
                 realized += t.realized_pnl

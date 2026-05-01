@@ -101,6 +101,22 @@ class ClosedTradeStore:
             ))
             s.commit()
 
+    def delete_by_entry_order_id(self, entry_order_id: str) -> int:
+        """Remove a row by entry_order_id. Returns rowcount.
+
+        Used by the reconciler to self-heal stale `reconciled_no_fill_found` /
+        `cancelled_unfilled` audit rows whose entry order is later observed
+        FILLED on Alpaca — so the round-trip pass can write the real outcome.
+        """
+        from sqlalchemy import delete as _delete
+        with self._engine.begin() as c:
+            res = c.execute(
+                _delete(_ClosedTradeRow).where(
+                    _ClosedTradeRow.entry_order_id == entry_order_id
+                )
+            )
+            return res.rowcount or 0
+
     def all(self) -> list[ClosedTrade]:
         with Session(self._engine) as s:
             rows = s.execute(
