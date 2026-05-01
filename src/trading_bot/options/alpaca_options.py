@@ -12,7 +12,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide as AlpacaSide, OrderType, TimeInForce
 from alpaca.trading.requests import GetOrdersRequest, LimitOrderRequest
 
-from trading_bot.alpaca_client import PAPER_URL_PREFIX
+from trading_bot.alpaca_client import PAPER_URL_PREFIX, _audit_order_submitted
 from trading_bot.exceptions import AlpacaClientError, LiveModeDisabled
 from trading_bot.options.chain import ChainContract
 from trading_bot.options.symbols import parse_occ
@@ -71,15 +71,18 @@ class OptionAlpacaClient:
     def sell_to_open(
         self, *, contract_symbol: str, qty: int, limit_price: Decimal,
     ) -> str:
-        return self._submit(contract_symbol, qty, limit_price, AlpacaSide.SELL)
+        return self._submit(contract_symbol, qty, limit_price, AlpacaSide.SELL,
+                            source="option_sell_to_open")
 
     def buy_to_close(
         self, *, contract_symbol: str, qty: int, limit_price: Decimal,
     ) -> str:
-        return self._submit(contract_symbol, qty, limit_price, AlpacaSide.BUY)
+        return self._submit(contract_symbol, qty, limit_price, AlpacaSide.BUY,
+                            source="option_buy_to_close")
 
     def _submit(
         self, contract_symbol: str, qty: int, limit_price: Decimal, side: AlpacaSide,
+        *, source: str = "option",
     ) -> str:
         if qty <= 0:
             raise ValueError("qty must be positive integer")
@@ -90,6 +93,13 @@ class OptionAlpacaClient:
                 type=OrderType.LIMIT,
             )
             order = self._trading.submit_order(req)
+            _audit_order_submitted(
+                source=source, symbol=contract_symbol,
+                side="buy" if side == AlpacaSide.BUY else "sell",
+                qty=qty, asset_class="option",
+                order_id=str(order.id), order_type="limit",
+                limit_price=limit_price,
+            )
             return str(order.id)
         except Exception as e:
             raise AlpacaClientError(f"option order {side} {contract_symbol}: {e}") from e

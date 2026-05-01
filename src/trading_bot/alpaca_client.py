@@ -18,8 +18,36 @@ from pydantic import BaseModel, model_validator
 
 from trading_bot.config import Settings
 from trading_bot.exceptions import AlpacaClientError, LiveModeDisabled
+from trading_bot.log_structured import StructuredLogger
 
 PAPER_URL_PREFIX = "https://paper-api.alpaca.markets"
+
+_audit_log = StructuredLogger(role="alpaca")
+
+
+def _audit_order_submitted(
+    *, source: str, symbol: str, side: str, qty, asset_class: str,
+    order_id: str, order_type: str, limit_price=None, stop_price=None,
+) -> None:
+    """Single audit event per order that successfully reached Alpaca.
+
+    Emitted post-submit_order so we never log phantom orders that threw
+    before reaching the venue. Powers the Phase 5 learning loop and the
+    Phase 7 dashboard.
+    """
+    try:
+        kwargs = dict(
+            source=source, symbol=symbol, side=side, qty=str(qty),
+            asset_class=asset_class, order_id=order_id, order_type=order_type,
+        )
+        if limit_price is not None:
+            kwargs["limit_price"] = str(limit_price)
+        if stop_price is not None:
+            kwargs["stop_price"] = str(stop_price)
+        _audit_log.event("order_submitted", **kwargs)
+    except Exception:
+        # Audit must never break the trade path.
+        pass
 
 # Alpaca crypto rejects plain stop orders, so we use stop-limits. The limit
 # is offset 5% past the trigger so the order has room to fill in fast moves
@@ -206,6 +234,11 @@ class AlpacaClient:
                 time_in_force=TimeInForce.GTC if asset_class == AssetClass.CRYPTO else TimeInForce.DAY,
             )
             order = self._client.submit_order(mkt_req)
+            _audit_order_submitted(
+                source="market", symbol=symbol, side=side.value, qty=qty,
+                asset_class=asset_class.value, order_id=str(order.id),
+                order_type="market",
+            )
             return str(order.id)
         except Exception as e:
             raise AlpacaClientError(f"market order failed for {symbol}: {e}") from e
@@ -251,6 +284,12 @@ class AlpacaClient:
                     stop_price=float(stop_price),
                 )
             order = self._client.submit_order(req)
+            _audit_order_submitted(
+                source="protective_stop", symbol=symbol, side=stop_side.value,
+                qty=qty, asset_class=asset_class.value, order_id=str(order.id),
+                order_type="stop_limit" if asset_class == AssetClass.CRYPTO else "stop",
+                stop_price=stop_price,
+            )
             return str(order.id)
         except Exception as e:
             raise AlpacaClientError(
@@ -286,6 +325,12 @@ class AlpacaClient:
                 take_profit=TakeProfitRequest(limit_price=round(take_profit_price, 2)),
             )
             entry = self._client.submit_order(entry_req)
+            _audit_order_submitted(
+                source="bracket_entry", symbol=req.symbol, side=req.side.value,
+                qty=req.qty, asset_class=req.asset_class.value,
+                order_id=str(entry.id), order_type="limit_bracket",
+                limit_price=req.limit_price, stop_price=req.stop_loss_price,
+            )
         except Exception as e:
             raise AlpacaClientError(f"bracket order failed: {e}") from e
 
@@ -324,6 +369,11 @@ class AlpacaClient:
                 time_in_force=TimeInForce.GTC,
             )
             entry = self._client.submit_order(entry_req)
+            _audit_order_submitted(
+                source="crypto_entry", symbol=req.symbol, side=req.side.value,
+                qty=req.qty, asset_class=req.asset_class.value,
+                order_id=str(entry.id), order_type="market",
+            )
         except Exception as e:
             raise AlpacaClientError(f"crypto entry order failed: {e}") from e
 
@@ -370,6 +420,12 @@ class AlpacaClient:
                 limit_price=round(stop_limit, 6),
             )
             stop = self._client.submit_order(stop_req)
+            _audit_order_submitted(
+                source="crypto_stop", symbol=req.symbol, side=stop_side.value,
+                qty=actual_qty, asset_class=req.asset_class.value,
+                order_id=str(stop.id), order_type="stop_limit",
+                stop_price=stop_trigger,
+            )
         except Exception as e:
             stop_error = e
 
@@ -471,7 +527,14 @@ class AlpacaClient:
                 side=_to_alpaca_side(_opposite(req.side)),
                 time_in_force=TimeInForce.GTC,
             )
-            self._client.submit_order(flatten_req)
+            flatten_order = self._client.submit_order(flatten_req)
+            _audit_order_submitted(
+                source="crypto_flatten_emergency", symbol=req.symbol,
+                side=_opposite(req.side).value,
+                qty=getattr(pos, "qty", req.qty),
+                asset_class=req.asset_class.value,
+                order_id=str(flatten_order.id), order_type="market",
+            )
         except Exception as e:
             raise AlpacaClientError(
                 f"UNPROTECTED CRYPTO POSITION ({req.symbol}, entry={entry_id}) "
