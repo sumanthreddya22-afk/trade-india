@@ -246,6 +246,7 @@ class MailboxQueue:
             raw = json.loads(done.read_text())
         except Exception as e:
             self._move_failed(done, reason=f"unparseable_result: {e}")
+            self._cleanup_pending(brief_id)
             return None
 
         try:
@@ -263,13 +264,27 @@ class MailboxQueue:
             output_tokens=_safe_int(raw.get("output_tokens")),
             error=raw.get("error"),
         )
-        # Move done/ → processed/ for audit retention.
+        # Move done/ → processed/ for audit retention. Also clean up the
+        # original pending/ entry — routines that lack Bash/Edit can't
+        # move files themselves, so the daemon owns the pending cleanup.
         try:
             (self.base / "processed" / done.name).write_text(done.read_text())
             done.unlink()
         except OSError:
             pass
+        self._cleanup_pending(brief_id)
         return result
+
+    def _cleanup_pending(self, brief_id: str) -> None:
+        """Remove pending/<brief_id>.json once the daemon has consumed
+        the matching done/ file. Idempotent: silent no-op if missing.
+        """
+        pending = self._pending_path(brief_id)
+        if pending.exists():
+            try:
+                pending.unlink()
+            except OSError:
+                pass
 
     def _move_failed(self, path: Path, *, reason: str) -> None:
         try:

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bharath.trading.mailbox-routine</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/bharathkandala/Trading/tools/run_mailbox_routine.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/bharathkandala/Trading</string>
+
+  <!-- Match the user's interactive shell PATH so `claude` resolves the same
+       way it does when you run it by hand. The wrapper validates and exits
+       cleanly if claude is missing. -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/bharathkandala</string>
+  </dict>
+
+  <!-- Fire every 30 minutes. Don't run when launchd loads the plist —
+       wait until the first interval so we never collide with a manual
+       run during install. -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- One-shot per fire. If the previous invocation hasn't finished by the
+       next interval, launchd will skip rather than spawn a duplicate. -->
+  <key>KeepAlive</key>
+  <false/>
+
+  <!-- Throttle floor — defensive against rapid re-fires from a crash loop. -->
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/bharathkandala/Trading/runs/_launchd/mailbox-routine.stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/bharathkandala/Trading/runs/_launchd/mailbox-routine.stderr.log</string>
+</dict>
+</plist>
