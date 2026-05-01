@@ -181,6 +181,8 @@ def main() -> int:
     )
 
     last_account_check = 0.0
+    last_wheel_stall_check = 0.0
+    last_wheel_stall_alert = 0.0
 
     stop = {"flag": False}
 
@@ -254,6 +256,39 @@ def main() -> int:
                 except Exception as e:
                     log.error("account_check_failed", error=e)
                 last_account_check = now
+
+            # 3. Wheel-scan stall watchdog: if a wheel_scan started but
+            # never finished and the gap exceeds 15 min, emit a structured
+            # event + alert (rate-limited to once per hour).
+            if now - last_wheel_stall_check >= 60:
+                last_wheel_stall_check = now
+                try:
+                    from trading_bot.options.wheel_runner import is_wheel_scan_stalled
+                    stalled, info = is_wheel_scan_stalled(max_age_seconds=900)
+                    if stalled:
+                        log.event("wheel_scan_stalled", **info)
+                        if now - last_wheel_stall_alert >= _ALERT_COOLDOWN_SECONDS:
+                            email = build_critical_email(
+                                title=f"wheel_scan stalled {info.get('age_seconds',0)}s",
+                                detail=(
+                                    f"wheel_scan started at {info.get('started_at')} "
+                                    f"and has not emitted finished_at in "
+                                    f"{info.get('age_seconds',0)}s "
+                                    f"(threshold 900s). The Alpaca options-chain "
+                                    f"endpoint is the most likely culprit. The "
+                                    f"per-call 30s timeout should bound any one "
+                                    f"call, so a stall here suggests a different "
+                                    f"hang — investigate the daemon stderr log."
+                                ),
+                            )
+                            _send_alert(
+                                log, kind="wheel_scan_stalled",
+                                to=ALERT_RECIPIENT, subject=email.subject,
+                                html_body=email.html_body,
+                            )
+                            last_wheel_stall_alert = now
+                except Exception as e:
+                    log.error("wheel_stall_check_failed", error=e)
 
         except Exception as e:
             log.error("supervisor_loop_error", error=e)

@@ -1,9 +1,18 @@
 """OptionAlpacaClient — wraps OptionHistoricalDataClient (chain + Greeks via the
 free indicative feed) and the TradingClient for option order submission.
-Paper-only: rejects any non-paper base_url at construction."""
+Paper-only: rejects any non-paper base_url at construction.
+
+Hardening (2026-05-01): every options-chain call is wrapped in a per-attempt
+30s timeout + 2 retries. On 2026-04-30/05-01 the wheel_scan job hung for
+50 minutes / 3+ hours respectively because Alpaca's options-chain endpoint
+went unresponsive without any client-side bound. The thread-pool wrapper
+guarantees the role unblocks even when the upstream endpoint stalls.
+"""
 from __future__ import annotations
 
+import concurrent.futures
 import datetime as dt
+import logging
 from decimal import Decimal
 
 from alpaca.data.historical.option import OptionHistoricalDataClient
@@ -16,6 +25,65 @@ from trading_bot.alpaca_client import PAPER_URL_PREFIX, _audit_order_submitted
 from trading_bot.exceptions import AlpacaClientError, LiveModeDisabled
 from trading_bot.options.chain import ChainContract
 from trading_bot.options.symbols import parse_occ
+
+
+log = logging.getLogger(__name__)
+
+# Defense-in-depth around Alpaca's options-chain endpoint, which has no
+# native client-side timeout. Per-attempt cap + bounded retries; total
+# worst-case wall time ≈ (retries+1) × timeout = 90s.
+_OPTION_CHAIN_TIMEOUT_S = 30.0
+_OPTION_CHAIN_RETRIES = 2
+
+# Module-level executor: shared across all OptionAlpacaClient instances so
+# we don't churn threads. Threads that outlive a timeout (Python can't
+# actually kill a blocking syscall) keep running to completion in the
+# background — harmless, since the result is discarded.
+_options_chain_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="alpaca-options-chain",
+)
+
+
+def _call_with_timeout(fn, *, timeout_s: float, retries: int, label: str):
+    """Run fn() with a wall-clock timeout and bounded retries.
+
+    Raises AlpacaClientError after exhausting attempts. Non-retryable
+    errors (e.g. malformed request) propagate immediately.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 2):  # retries=2 → 3 attempts
+        future = _options_chain_executor.submit(fn)
+        try:
+            return future.result(timeout=timeout_s)
+        except concurrent.futures.TimeoutError as e:
+            last_exc = e
+            future.cancel()  # advisory; may not interrupt the network call
+            log.warning(
+                "%s timed out after %.0fs (attempt %d/%d)",
+                label, timeout_s, attempt, retries + 1,
+            )
+            continue
+        except Exception as e:
+            msg = str(e).lower()
+            retryable = (
+                "rate" in msg
+                or "timeout" in msg
+                or "connection" in msg
+                or "503" in msg
+                or "504" in msg
+                or "502" in msg
+            )
+            if not retryable:
+                raise
+            last_exc = e
+            log.warning(
+                "%s failed (attempt %d/%d): %s",
+                label, attempt, retries + 1, e,
+            )
+            continue
+    raise AlpacaClientError(
+        f"{label} exhausted {retries + 1} attempts; last error: {last_exc}"
+    )
 
 
 class OptionAlpacaClient:
@@ -33,13 +101,20 @@ class OptionAlpacaClient:
         self, underlying: str, *,
         expiration_gte: dt.date, expiration_lte: dt.date,
     ) -> list[ChainContract]:
+        req = OptionChainRequest(
+            underlying_symbol=underlying,
+            expiration_date_gte=expiration_gte,
+            expiration_date_lte=expiration_lte,
+        )
         try:
-            req = OptionChainRequest(
-                underlying_symbol=underlying,
-                expiration_date_gte=expiration_gte,
-                expiration_date_lte=expiration_lte,
+            snap_map = _call_with_timeout(
+                lambda: self._data.get_option_chain(req),
+                timeout_s=_OPTION_CHAIN_TIMEOUT_S,
+                retries=_OPTION_CHAIN_RETRIES,
+                label=f"get_option_chain({underlying})",
             )
-            snap_map = self._data.get_option_chain(req)
+        except AlpacaClientError:
+            raise  # already wrapped by _call_with_timeout
         except Exception as e:
             raise AlpacaClientError(f"get_option_chain {underlying}: {e}") from e
 

@@ -1,10 +1,24 @@
 """run_wheel_scan + run_wheel_manage — the orchestrator entry points.
-The deps-bag pattern makes the runner deterministic and unit-testable."""
+The deps-bag pattern makes the runner deterministic and unit-testable.
+
+Audit logging (added 2026-05-01): every wheel_scan now records a
+WheelScanStats summary — universe size, per-stage rejection counts, and
+representative reasons — both as a structured log event
+(`wheel_scan_summary`) and as a JSON file at
+`data/wheel_scan_last.json`. Mirrors the equity scanner's last_scan.json
+pattern so the dashboard and the daemon log can answer "where are
+options candidates dying?" without re-running the scan.
+"""
 from __future__ import annotations
 
+import collections
+import dataclasses
 import datetime as dt
-from dataclasses import dataclass
+import json
+import logging
+from dataclasses import dataclass, field
 from decimal import Decimal
+from pathlib import Path
 from typing import Callable
 
 from sqlalchemy.engine import Engine
@@ -13,6 +27,7 @@ from sqlalchemy.orm import Session
 from trading_bot.alerts import AlertEvent
 from trading_bot.config import WheelConfig
 from trading_bot.intelligence_finnhub import FinnhubClient
+from trading_bot.log_structured import StructuredLogger
 from trading_bot.options.alpaca_options import OptionAlpacaClient
 from trading_bot.options.chain import ChainContract
 from trading_bot.options.wheel_lane import WheelInputs, WheelLane
@@ -22,6 +37,55 @@ from trading_bot.options.wheel_state import (
 )
 from trading_bot.options.symbols import parse_occ
 from trading_bot.state_db import OptionFill, WheelCycle
+
+
+_log = logging.getLogger(__name__)
+_audit_log = StructuredLogger(role="wheel_scan")
+_LAST_SCAN_PATH = Path("data/wheel_scan_last.json")
+_REASON_SAMPLE_CAP = 5  # cap per-stage representative reasons in the summary
+
+
+@dataclass
+class WheelScanStats:
+    """Per-stage counts + reason histograms recorded across one wheel_scan
+    run. Persisted as `data/wheel_scan_last.json` and emitted as a
+    `wheel_scan_summary` structured event so the dashboard / log can show
+    a candidate funnel without re-running the scan.
+    """
+    started_at: str = field(default_factory=lambda: dt.datetime.now(dt.timezone.utc).isoformat())
+    finished_at: str | None = None
+    universe_size: int = 0
+    preflight_skipped: int = 0
+    chain_fetch_failed: int = 0
+    no_contract_picked: int = 0
+    risk_alloc_rejected: int = 0
+    sector_cap_rejected: int = 0
+    submit_failed: int = 0
+    orders_placed: int = 0
+    preflight_reasons: dict[str, int] = field(default_factory=lambda: collections.defaultdict(int))
+    no_contract_reasons: dict[str, int] = field(default_factory=lambda: collections.defaultdict(int))
+    risk_alloc_reasons: dict[str, int] = field(default_factory=lambda: collections.defaultdict(int))
+    sector_cap_reasons: dict[str, int] = field(default_factory=lambda: collections.defaultdict(int))
+
+    def to_dict(self) -> dict:
+        # Build manually — dataclasses.asdict() chokes on defaultdict
+        # because it tries to call type(obj)((k, v), ...) on the dict.
+        return {
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "universe_size": self.universe_size,
+            "preflight_skipped": self.preflight_skipped,
+            "chain_fetch_failed": self.chain_fetch_failed,
+            "no_contract_picked": self.no_contract_picked,
+            "risk_alloc_rejected": self.risk_alloc_rejected,
+            "sector_cap_rejected": self.sector_cap_rejected,
+            "submit_failed": self.submit_failed,
+            "orders_placed": self.orders_placed,
+            "preflight_reasons": dict(self.preflight_reasons),
+            "no_contract_reasons": dict(self.no_contract_reasons),
+            "risk_alloc_reasons": dict(self.risk_alloc_reasons),
+            "sector_cap_reasons": dict(self.sector_cap_reasons),
+        }
 
 
 @dataclass
@@ -141,6 +205,10 @@ def run_wheel_scan(deps: WheelDeps) -> None:
     equity = Decimal(str(account.equity))
     existing_opt = _existing_options_value(deps)
     lane = WheelLane(deps.cfg)
+    stats = WheelScanStats(universe_size=len(eligible))
+    # Write the started snapshot immediately so a hang past _emit_scan_summary
+    # leaves a trace on disk for the stall-watchdog to pick up.
+    _persist_scan_summary(stats)
 
     # Precompute current sector exposure once per scan: equity positions +
     # pending option collateral on open wheel cycles. Mutated as we open new
@@ -185,6 +253,8 @@ def run_wheel_scan(deps: WheelDeps) -> None:
         # earnings, cycle state). Skips ~95% of names on a typical day.
         skip_reason = lane.passes_preflight(intel)
         if skip_reason is not None:
+            stats.preflight_skipped += 1
+            stats.preflight_reasons[_norm_reason(skip_reason)] += 1
             continue
 
         # Stage 2: chain fetch (only for symbols that passed preflight)
@@ -195,6 +265,7 @@ def run_wheel_scan(deps: WheelDeps) -> None:
                 expiration_lte=today + dt.timedelta(days=deps.cfg.dte_max),
             )
         except Exception as e:
+            stats.chain_fetch_failed += 1
             _emit(deps, kind="wheel_chain_fetch_failure", severity="bad",
                   title=f"chain fetch failed: {symbol}",
                   detail_html=f"<p>{e}</p>", dedup_key=f"chain_fail_{symbol}_{today}")
@@ -204,6 +275,8 @@ def run_wheel_scan(deps: WheelDeps) -> None:
         from dataclasses import replace
         decision = lane.evaluate(replace(intel, chain=chain))
         if decision.action == "skip" or decision.contract is None:
+            stats.no_contract_picked += 1
+            stats.no_contract_reasons[_norm_reason(getattr(decision, "reason", "no_contract"))] += 1
             continue
         contract = decision.contract
         per_symbol_collateral = Decimal(str(contract.strike)) * Decimal(100)
@@ -213,6 +286,8 @@ def run_wheel_scan(deps: WheelDeps) -> None:
             per_symbol_collateral=per_symbol_collateral,
         )
         if not ok:
+            stats.risk_alloc_rejected += 1
+            stats.risk_alloc_reasons[_norm_reason(reason)] += 1
             _emit(deps, kind="wheel_allocation_cap", severity="bad",
                   title=f"wheel skipped {symbol}: {reason}",
                   detail_html=f"<p>{symbol}: {reason}</p>",
@@ -224,6 +299,8 @@ def run_wheel_scan(deps: WheelDeps) -> None:
             classifier=sector_classifier, cap_pct=sector_cap_pct,
         )
         if not sector_ok:
+            stats.sector_cap_rejected += 1
+            stats.sector_cap_reasons[_norm_reason(sector_reason)] += 1
             _emit(deps, kind="wheel_allocation_cap", severity="bad",
                   title=f"wheel skipped {symbol}: {sector_reason}",
                   detail_html=f"<p>{symbol}: {sector_reason}</p>",
@@ -239,11 +316,13 @@ def run_wheel_scan(deps: WheelDeps) -> None:
                 contract_symbol=contract.contract_symbol, qty=1, limit_price=limit,
             )
         except Exception as e:
+            stats.submit_failed += 1
             _emit(deps, kind="wheel_chain_fetch_failure", severity="bad",
                   title=f"sell-to-open failed: {symbol}",
                   detail_html=f"<p>{e}</p>",
                   dedup_key=f"sto_fail_{symbol}_{today}")
             continue
+        stats.orders_placed += 1
         if decision.action == "open_csp":
             cid = open_csp(repo, symbol=symbol, contract=contract.contract_symbol,
                            strike=Decimal(str(contract.strike)),
@@ -275,6 +354,92 @@ def run_wheel_scan(deps: WheelDeps) -> None:
             addition = float(per_symbol_collateral / equity)
             sector_exposure[sector] = sector_exposure.get(sector, 0.0) + addition
         existing_opt = existing_opt + per_symbol_collateral
+
+    _emit_scan_summary(stats)
+
+
+def _norm_reason(reason) -> str:
+    """Normalise a freeform reject reason into a histogram bucket — strip
+    symbol-specific suffixes ('rsi 41.2 outside [55,70]' → 'rsi outside band')
+    so the per-stage histograms stay legible.
+    """
+    s = str(reason or "unspecified").strip().lower()
+    # Keep first 60 chars; replace digits with N to collapse value variants.
+    import re
+    s = re.sub(r"-?\d+(?:\.\d+)?", "N", s)
+    return s[:60]
+
+
+def _emit_scan_summary(stats: WheelScanStats) -> None:
+    """Persist + log the scan summary so we can answer 'why didn't wheel
+    place anything?' from artifacts alone — without re-running the scan."""
+    stats.finished_at = dt.datetime.now(dt.timezone.utc).isoformat()
+    _persist_scan_summary(stats)
+    try:
+        payload = stats.to_dict()
+        _audit_log.event("wheel_scan_summary", **{
+            k: v for k, v in payload.items()
+            if k in ("universe_size", "preflight_skipped", "chain_fetch_failed",
+                     "no_contract_picked", "risk_alloc_rejected",
+                     "sector_cap_rejected", "submit_failed", "orders_placed")
+        })
+    except Exception:
+        pass
+
+
+def _persist_scan_summary(stats: WheelScanStats) -> None:
+    """Atomic write of the scan-state file. Called both at scan start
+    (with finished_at=None) and at scan end (with stats fully filled).
+    The presence of finished_at=None on a stale started_at is the
+    signal a stall watchdog uses."""
+    payload = stats.to_dict()
+    try:
+        _LAST_SCAN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _LAST_SCAN_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, default=str, indent=2))
+        tmp.rename(_LAST_SCAN_PATH)
+    except OSError as e:
+        _log.warning("could not write %s: %s", _LAST_SCAN_PATH, e)
+
+
+def is_wheel_scan_stalled(*, max_age_seconds: int = 900,
+                           path: Path | None = None,
+                           now_utc: dt.datetime | None = None) -> tuple[bool, dict]:
+    """Check whether the latest wheel_scan started but never finished.
+
+    Returns (stalled, info_dict). ``info_dict`` carries started_at,
+    finished_at, age_seconds, and universe_size for downstream alerting.
+    A clean run (finished_at populated) returns (False, ...).
+    Missing scan-state file returns (False, {"reason": "no_scan_state"}).
+    """
+    p = path or _LAST_SCAN_PATH
+    if not p.exists():
+        return False, {"reason": "no_scan_state"}
+    try:
+        payload = json.loads(p.read_text())
+    except Exception as e:
+        return False, {"reason": f"unparseable_scan_state: {e}"}
+    if payload.get("finished_at"):
+        return False, {"reason": "completed",
+                       "started_at": payload.get("started_at"),
+                       "finished_at": payload["finished_at"]}
+    started_iso = payload.get("started_at")
+    if not started_iso:
+        return False, {"reason": "no_started_at"}
+    try:
+        started = dt.datetime.fromisoformat(str(started_iso))
+    except Exception:
+        return False, {"reason": "unparseable_started_at"}
+    now = now_utc or dt.datetime.now(dt.timezone.utc)
+    age = (now - started).total_seconds()
+    if age > max_age_seconds:
+        return True, {
+            "started_at": started_iso, "finished_at": None,
+            "age_seconds": int(age),
+            "universe_size": payload.get("universe_size", 0),
+        }
+    return False, {"started_at": started_iso, "finished_at": None,
+                   "age_seconds": int(age)}
 
 
 def _dte(expiration: dt.date, today: dt.date) -> int:

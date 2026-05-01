@@ -99,6 +99,59 @@ def test_wheel_scan_skips_when_risk_blocks(engine):
     assert any("wheel_allocation_cap" in str(c) for c in d.alert_queue.mock_calls)
 
 
+def test_wheel_scan_writes_audit_summary(engine, tmp_path, monkeypatch):
+    """Phase 6.2 regression: every wheel_scan run must persist a structured
+    summary so we can answer 'why didn't wheel place anything?' from
+    artifacts alone, without rerunning the scan.
+    """
+    import json as _json
+    from pathlib import Path
+    import trading_bot.options.wheel_runner as wr
+
+    last_path = tmp_path / "wheel_scan_last.json"
+    monkeypatch.setattr(wr, "_LAST_SCAN_PATH", last_path)
+
+    d = _deps(engine)
+    run_wheel_scan(d)
+
+    assert last_path.exists()
+    summary = _json.loads(last_path.read_text())
+    assert summary["universe_size"] == 1
+    assert summary["orders_placed"] == 1
+    assert summary["preflight_skipped"] == 0
+    # Stage counters should sum to universe_size when no chain failures occur.
+    assert (
+        summary["preflight_skipped"]
+        + summary["chain_fetch_failed"]
+        + summary["no_contract_picked"]
+        + summary["risk_alloc_rejected"]
+        + summary["sector_cap_rejected"]
+        + summary["submit_failed"]
+        + summary["orders_placed"]
+        == summary["universe_size"]
+    )
+
+
+def test_wheel_scan_audit_records_risk_rejection(engine, tmp_path, monkeypatch):
+    """When risk_manager rejects collateral, the summary must show the
+    rejection in risk_alloc_rejected and capture a normalised reason."""
+    import json as _json
+    import trading_bot.options.wheel_runner as wr
+
+    last_path = tmp_path / "wheel_scan_last.json"
+    monkeypatch.setattr(wr, "_LAST_SCAN_PATH", last_path)
+
+    d = _deps(engine)
+    d.risk_manager.option_collateral_ok.return_value = (False, "exceeds wheel options cap")
+    run_wheel_scan(d)
+
+    summary = _json.loads(last_path.read_text())
+    assert summary["risk_alloc_rejected"] == 1
+    assert summary["orders_placed"] == 0
+    # Reason normalised + recorded in the histogram
+    assert any("exceeds" in k for k in summary["risk_alloc_reasons"])
+
+
 def test_wheel_manage_buys_to_close_at_50pct_profit(engine):
     d = _deps(engine)
     repo = WheelStateRepo(engine)
