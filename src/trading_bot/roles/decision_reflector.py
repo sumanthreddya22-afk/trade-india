@@ -37,6 +37,7 @@ from trading_bot.anthropic_client import (
     default_architect_model,
 )
 from trading_bot.decision_lessons import append_lesson, has_lesson
+from trading_bot.mailbox_backed_client import MailboxBackedClient, MailboxRouting
 from trading_bot.reconciliation import ClosedTradeStore
 from trading_bot.roles.runner import BaseRole
 from trading_bot.state_db import Decisions, DecisionLesson, RoleRun
@@ -45,6 +46,27 @@ from trading_bot.state_db import Decisions, DecisionLesson, RoleRun
 CLOSED_TRADES_DB_DEFAULT = Path("data/closed_trades.db")
 DEFAULT_LOOKBACK_DAYS = 14
 DEFAULT_MAX_PER_RUN = 10  # cap LLM spend per run; backlog catches up over days
+
+# Mailbox routing — opt in via env so this lands as zero-impact change
+# until you flip the flag. When enabled, reflector calls submit a brief
+# to data/llm_queue/ and wait for a Claude Code routine to fulfill it
+# (subscription-billed); on timeout the call falls back to direct API.
+_MAILBOX_ENABLED_ENV = "TRADING_BOT_REFLECTOR_MAILBOX_ENABLED"
+_MAILBOX_TIMEOUT_ENV = "TRADING_BOT_REFLECTOR_MAILBOX_TIMEOUT_SECONDS"
+
+
+def _mailbox_enabled() -> bool:
+    import os
+    return os.environ.get(_MAILBOX_ENABLED_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _mailbox_timeout_seconds() -> float:
+    import os
+    try:
+        v = os.environ.get(_MAILBOX_TIMEOUT_ENV)
+        return float(v) if v else 900.0  # 15 min default
+    except ValueError:
+        return 900.0
 
 
 class _LessonOutput(BaseModel):
@@ -131,8 +153,18 @@ class DecisionReflectorRole(BaseRole):
 
     def _do_work(self, ctx):
         try:
-            client = AnthropicClient(
-                role_name=self.name, model=default_architect_model(), engine=self.engine
+            # MailboxBackedClient is a drop-in for AnthropicClient. When
+            # TRADING_BOT_MAILBOX_ENABLED is unset (default), it routes
+            # straight to the API. When enabled, the latency-tolerant
+            # reflector calls go through the Claude Code mailbox routine
+            # (subscription-billed) and fall back to the API on timeout.
+            client = MailboxBackedClient(
+                role_name=self.name, model=default_architect_model(), engine=self.engine,
+                routing=MailboxRouting(
+                    enabled=_mailbox_enabled(),
+                    timeout_seconds=_mailbox_timeout_seconds(),
+                    model_class="reflector",
+                ),
             )
         except AnthropicCredsMissingError:
             return {"skipped": True, "reason": "no_anthropic_creds"}

@@ -76,7 +76,7 @@ def test_reflects_unreflected_trade_and_writes_lesson(state_engine, tmp_path, mo
     )
 
     role = DecisionReflectorRole(engine=state_engine, closed_trades_db=closed_db)
-    with patch("trading_bot.roles.decision_reflector.AnthropicClient") as mock_cls:
+    with patch("trading_bot.roles.decision_reflector.MailboxBackedClient") as mock_cls:
         instance = MagicMock()
         instance.complete_structured.return_value = fake_resp
         mock_cls.return_value = instance
@@ -109,7 +109,7 @@ def test_skips_trades_without_matching_decision(state_engine, tmp_path, monkeypa
     _seed_closed_trade(closed_db, entry_order_id="o_orphan")
 
     role = DecisionReflectorRole(engine=state_engine, closed_trades_db=closed_db)
-    with patch("trading_bot.roles.decision_reflector.AnthropicClient") as mock_cls:
+    with patch("trading_bot.roles.decision_reflector.MailboxBackedClient") as mock_cls:
         instance = MagicMock()
         # Should not be called; if it is, the test will catch a 'no candidate' branch.
         instance.complete_structured.side_effect = AssertionError("LLM should not be called")
@@ -134,7 +134,7 @@ def test_idempotent_does_not_double_reflect(state_engine, tmp_path, monkeypatch)
     )
 
     role = DecisionReflectorRole(engine=state_engine, closed_trades_db=closed_db)
-    with patch("trading_bot.roles.decision_reflector.AnthropicClient") as mock_cls:
+    with patch("trading_bot.roles.decision_reflector.MailboxBackedClient") as mock_cls:
         instance = MagicMock()
         instance.complete_structured.return_value = fake_resp
         mock_cls.return_value = instance
@@ -164,7 +164,7 @@ def test_falls_back_when_tool_use_skipped(state_engine, tmp_path, monkeypatch):
     )
 
     role = DecisionReflectorRole(engine=state_engine, closed_trades_db=closed_db)
-    with patch("trading_bot.roles.decision_reflector.AnthropicClient") as mock_cls:
+    with patch("trading_bot.roles.decision_reflector.MailboxBackedClient") as mock_cls:
         instance = MagicMock()
         instance.complete_structured.return_value = fallback
         mock_cls.return_value = instance
