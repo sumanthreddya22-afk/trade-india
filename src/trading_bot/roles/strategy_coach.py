@@ -10,6 +10,10 @@ flag with hysteresis to prevent whipsaw:
     flip OFF when alpha > 1.65x SPY today AND > 1.5x for 5 consecutive
     trading days.
 
+Warmup guard (added 2026-05-01 after the 2026-04-29 misfire): the gate
+only evaluates after the bot has been live for MIN_DAYS_BEFORE_FALLBACK
+days. Below that, alpha is statistical noise from a tiny sample.
+
 Spec §7.3 Role 10 + §11 Beat-SPY logic.
 """
 from __future__ import annotations
@@ -18,6 +22,7 @@ import datetime as dt
 from decimal import Decimal
 from pathlib import Path
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from trading_bot.journal_alpha import compute_journal_alpha_vs_spy
@@ -29,6 +34,42 @@ from trading_bot.state_fallback import current_flag, set_flag
 ALPHA_THRESHOLD_LOW = 1.5     # below → enter fallback
 ALPHA_THRESHOLD_HIGH = 1.65   # above + sustained → resume
 RESUME_HYSTERESIS_DAYS = 5    # days that must all be > 1.5 before resume
+MIN_DAYS_BEFORE_FALLBACK = 21 # warmup: don't flip the gate before day 21
+
+
+def _resolve_bot_start_date(session: Session) -> dt.date | None:
+    """Resolve when the bot first came alive.
+
+    Lookup order:
+      1. bot_meta['bot_start_date'] — explicit override (ISO YYYY-MM-DD)
+      2. earliest set_at from fallback_flags (the bootstrap row is written
+         once on first boot — that's effectively day 0)
+
+    Returns None when neither source exists. The caller treats None as
+    "unknown — be conservative and skip the flip".
+    """
+    try:
+        row = session.execute(
+            text("SELECT value FROM bot_meta WHERE key = :k"),
+            {"k": "bot_start_date"},
+        ).first()
+        if row and row[0]:
+            return dt.date.fromisoformat(str(row[0]))
+    except Exception:
+        pass
+
+    try:
+        row = session.execute(
+            text("SELECT MIN(set_at) FROM fallback_flags")
+        ).first()
+        if row and row[0]:
+            ts = row[0]
+            if isinstance(ts, str):
+                ts = dt.datetime.fromisoformat(ts)
+            return ts.date() if isinstance(ts, dt.datetime) else ts
+    except Exception:
+        pass
+    return None
 
 
 class StrategyCoachRole(BaseRole):
@@ -49,13 +90,33 @@ class StrategyCoachRole(BaseRole):
         engine,
         closed_trades_db: str | Path = "data/closed_trades.db",
         starting_equity: Decimal = Decimal("15000"),
+        bot_start_date: dt.date | None = None,
     ):
         super().__init__(engine=engine)
         self.closed_trades_db = Path(closed_trades_db)
         self.starting_equity = starting_equity
+        # When None, _do_work resolves it from the database on each run so a
+        # bot_meta override added later takes effect without restart.
+        self._bot_start_date_override = bot_start_date
 
     def _do_work(self, ctx):
         today = ctx.get("as_of") or dt.date.today()
+
+        # Warmup guard — refuse to flip the gate while the trade sample is
+        # too young to mean anything. Prevents the 2026-04-29 misfire where
+        # 4 days of trading + 8 zombie audit rows tripped fallback_active.
+        with Session(self.engine) as session:
+            start_date = self._bot_start_date_override or _resolve_bot_start_date(session)
+        if start_date is not None:
+            days_live = (today - start_date).days
+            if days_live < MIN_DAYS_BEFORE_FALLBACK:
+                return {
+                    "flag_change": False,
+                    "reason": "warmup_period",
+                    "days_live": days_live,
+                    "min_days_required": MIN_DAYS_BEFORE_FALLBACK,
+                }
+
         today_alpha = self._alpha_at(today)
         if today_alpha["insufficient_data"]:
             return {

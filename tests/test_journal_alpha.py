@@ -31,14 +31,41 @@ def test_insufficient_data_when_few_trades(tmp_path):
     assert out["alpha_multiplier"] == 0.0
 
 
-def test_strategy_beats_spy_two_x(tmp_path):
-    """Strategy makes 6%, SPY makes 3% → alpha_multiplier = 2.0."""
+def test_threshold_raised_to_15(tmp_path):
+    """Phase 3.2 regression: 14 real trades must still report
+    insufficient_data=True. Below 15 trades, the alpha estimate is
+    statistical noise and shouldn't gate any decisions.
+    """
+    today = dt.date.today()
     fake_trades = [
-        _fake_closed_trade(exit_date=dt.date.today() - dt.timedelta(days=i), pnl=120)
-        for i in range(INSUFFICIENT_TRADES_THRESHOLD + 5)
+        _fake_closed_trade(exit_date=today - dt.timedelta(days=i % 25),
+                           pnl=Decimal("10"))
+        for i in range(14)
+    ]
+    fake_store = MagicMock()
+    fake_store.all.return_value = fake_trades
+    with patch("trading_bot.reconciliation.ClosedTradeStore", return_value=fake_store):
+        cdb = tmp_path / "x.db"
+        cdb.write_bytes(b"")
+        out = compute_journal_alpha_vs_spy(closed_trades_db=cdb)
+    assert out["n_trades"] == 14
+    assert out["insufficient_data"] is True
+    assert INSUFFICIENT_TRADES_THRESHOLD == 15
+
+
+def test_strategy_beats_spy_two_x(tmp_path):
+    """Strategy beats SPY by ~2x. Uses a fixed sample size above the
+    insufficient-data threshold so the alpha math is independent of the
+    threshold constant.
+    """
+    n = 16  # > INSUFFICIENT_TRADES_THRESHOLD (15) for stable assertions
+    pnl_each = Decimal("28.125")  # 16 * 28.125 = 450; 450/15000 = 3% strat
+    fake_trades = [
+        _fake_closed_trade(exit_date=dt.date.today() - dt.timedelta(days=i), pnl=pnl_each)
+        for i in range(n)
     ]
     spy_df = pd.DataFrame(
-        {"close": [100.0, 103.0]},
+        {"close": [100.0, 101.5]},  # 1.5% SPY return
         index=pd.to_datetime(
             [
                 (dt.date.today() - dt.timedelta(days=30)).isoformat(),
@@ -52,7 +79,6 @@ def test_strategy_beats_spy_two_x(tmp_path):
     bench.get.return_value = spy_df
 
     with patch("trading_bot.reconciliation.ClosedTradeStore", return_value=fake_store):
-        # Make the cdb.exists() call succeed
         cdb = tmp_path / "x.db"
         cdb.write_bytes(b"")
         out = compute_journal_alpha_vs_spy(
@@ -61,17 +87,16 @@ def test_strategy_beats_spy_two_x(tmp_path):
             benchmark=bench,
         )
     assert out["insufficient_data"] is False
-    # 10 trades * $120 = $1200 realized; / 15000 = 8% strategy return
-    # SPY = 3%; alpha = 8/3 ≈ 2.66
-    assert out["alpha_multiplier"] > 2.0
-    assert out["alpha_multiplier"] < 3.0
+    # strat = 3.0%, SPY = 1.5% → alpha ≈ 2.0
+    assert out["alpha_multiplier"] > 1.8
+    assert out["alpha_multiplier"] < 2.2
 
 
 def test_spy_flat_clamps_alpha(tmp_path):
     """SPY ≈ 0% → alpha clamped to a sentinel, not infinity."""
     fake_trades = [
         _fake_closed_trade(exit_date=dt.date.today(), pnl=100)
-        for _ in range(INSUFFICIENT_TRADES_THRESHOLD + 5)
+        for _ in range(INSUFFICIENT_TRADES_THRESHOLD + 1)
     ]
     spy_df = pd.DataFrame(
         {"close": [100.0, 100.00001]},

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from trading_bot.benchmark import SpyBenchmark
 
-INSUFFICIENT_TRADES_THRESHOLD = 5  # below this n, treat as no signal
+INSUFFICIENT_TRADES_THRESHOLD = 15  # below this n, treat as no signal
 ALPHA_INF_CLAMP = 100.0
 
 # Notes substrings that mark an audit row, not an actual trade. These rows
