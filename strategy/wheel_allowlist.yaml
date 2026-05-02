@@ -9,12 +9,20 @@
 # filters (market cap ≥ $10B, listed ≥ 3 years). Per-cycle filters
 # (delta band, IV rank, earnings, sentiment, WSB spike) STILL apply.
 #
-# Use cases for adding here:
-#   - Quality name with newer listing (< 3 years) you trust anyway
-#   - Mid-cap with rich premium you specifically want
-#   - Name the auto-discovery filtered out by mistake
+# 2026-05-01 manual scout run — see data/wheel_candidates_today.json for the
+# structured output (theses, IV, earnings dates, max collateral per symbol).
+# The list below is the symbol-only view consumed by daemon.py:_eligible_set().
 #
-# Most names you want to wheel will be picked up by auto-discovery WITHOUT
-# being listed here. Leave empty unless you have a specific override.
+# Constraints used:
+#   * Spot ≤ $55 (affordability for $15k account)
+#   * No earnings within 7 days
+#   * Liquid options chain (cross-checked via option_iv_history coverage)
+#   * Mix of low-IV defensive (F/T/BAC) and high-IV opportunistic (RBLX/MRNA/SOFI)
 
-symbols: []
+symbols:
+  - F      # Ford,            spot $11.88, post-earnings 2026-04-29
+  - T      # AT&T,             spot $26.12, post-earnings 2026-04-22
+  - BAC    # Bank of America,  spot $53.24, post-earnings 2026-04-15
+  - SOFI   # SoFi Technologies,spot $16.43, post-earnings 2026-04-29
+  - RBLX   # Roblox,           spot $45.13, post-earnings 2026-04-30, IV ~72%
+  - MRNA   # Moderna,          spot $45.37, post-earnings 2026-05-01, IV ~70%

@@ -150,6 +150,11 @@ class WheelConfig(BaseModel):
     universe_cache_hours: int = Field(default=24, ge=1, le=168)
     blocklist_path: str = "strategy/wheel_blocklist.yaml"
     allowlist_path: str = "strategy/wheel_allowlist.yaml"
+    # When True, the eligible universe is `allowlist - blocklist` only —
+    # the discovered cache is ignored. Used when the operator (or a future
+    # scout agent) explicitly curates a small candidate list. Default
+    # False preserves prior behavior of unioning allowlist + discovered.
+    allowlist_only: bool = Field(default=False)
 
 
 class DataQualityConfig(BaseModel):

@@ -75,3 +75,7 @@ wheel:
   min_annualized_yield: 0.12
   min_open_interest: 100
   universe_cache_hours: 24
+  # 2026-05-01: scout-curated allowlist mode. The wheel iterates the 6
+  # names in strategy/wheel_allowlist.yaml only, skipping the 3000+ symbol
+  # discovered universe. Flip back to false to restore broad scanning.
+  allowlist_only: true

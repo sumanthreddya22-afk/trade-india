@@ -75,13 +75,19 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
             return set()
 
     def _eligible_set() -> set[str]:
-        """Wheel-eligible universe = discovered set (wheel_universe_cache,
-        eligible=True) plus operator allowlist override, minus blocklist
-        override, intersected with currently-optionable. The discovered set
-        is built nightly by wheel_universe_builder.
+        """Wheel-eligible universe.
 
-        Bucket C: when both discovered AND allowlist are empty (first-ever
-        run hasn't completed, or the universe builder cratered), fire a
+        Default (allowlist_only=False): discovered set (wheel_universe_cache,
+        eligible=True) UNION operator allowlist, minus blocklist, intersected
+        with currently-optionable. The discovered set is built nightly by
+        wheel_universe_builder.
+
+        allowlist_only=True: skip discovered entirely. Eligible = allowlist
+        ∩ optionable - blocklist. Used when the operator (or a future scout
+        agent) curates a small candidate list — avoids iterating the full
+        3000+ symbol discovered cache when scope is intentionally narrow.
+
+        Bucket C: when the resulting eligible set is empty, fire a
         daemon_critical alert so the operator notices instead of the wheel
         silently iterating an empty set.
         """
@@ -90,6 +96,26 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
         optionable = opt.list_optionable_us_equities()
         blocklist = _load_yaml_symbols(app_cfg.wheel.blocklist_path)
         allowlist = _load_yaml_symbols(app_cfg.wheel.allowlist_path)
+        if app_cfg.wheel.allowlist_only:
+            eligible = (allowlist & optionable) - blocklist
+            if not eligible:
+                try:
+                    from trading_bot.alerts import AlertEvent
+                    queue_alert(AlertEvent(
+                        kind="daemon_critical", severity="warn",
+                        title="Wheel allowlist_only is set but allowlist is empty",
+                        detail_html=(
+                            "<p><code>wheel.allowlist_only</code> is True but "
+                            "<code>wheel_allowlist.yaml</code> contains no "
+                            "symbols (or all symbols are non-optionable). The "
+                            "wheel scan will iterate an empty universe.</p>"
+                        ),
+                        fired_at=dt.datetime.now(dt.timezone.utc),
+                        dedup_key=f"wheel_allowlist_empty:{dt.date.today().isoformat()}",
+                    ))
+                except Exception:
+                    pass
+            return eligible
         with _S(state_engine) as _s:
             discovered = {
                 r.symbol for r in
