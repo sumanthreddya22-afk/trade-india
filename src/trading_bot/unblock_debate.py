@@ -62,7 +62,10 @@ class UnblockVerdict:
 
 class _UnblockJudgeOutput(BaseModel):
     confidence: Literal["high", "medium", "low"]
-    reason: str = Field(min_length=20, max_length=500)
+    # Generous upper bound — Opus often writes 600-1500 char reasons
+    # explaining the override / respect call. We want the full reasoning
+    # in the audit trail; truncation belongs in the dashboard, not here.
+    reason: str = Field(min_length=20, max_length=4000)
     recommendation: Literal["place", "reject"] = Field(
         description=(
             "'place' to OVERRIDE the deterministic gate's rejection and "
