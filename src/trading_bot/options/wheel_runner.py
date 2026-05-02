@@ -346,6 +346,26 @@ def _maybe_run_wheel_unblock(
     except Exception as e:
         _log.warning("unblock_debate persist failed for %s: %s", symbol, e)
 
+    # Operator-visibility: email every debate (whether the verdict was
+    # acted on or not) so the operator sees what the committee considered
+    # for each ticker. Wrapped in try/except — email failures never
+    # break the scan loop.
+    try:
+        from trading_bot.email_unblock_debate import (
+            DebateEmailContext, send_debate_email,
+        )
+        send_debate_email(DebateEmailContext(
+            asset_class="wheel", symbol=symbol,
+            block_reason=block_reason, overage_ratio=overage_ratio,
+            candidate_score=score,
+            proposal_summary=proposal,
+            fundamentals=fundamentals,
+            operational_context=operational_context,
+            verdict=verdict,
+        ))
+    except Exception as e:
+        _log.warning("wheel debate email failed for %s: %s", symbol, e)
+
     if verdict is None:
         _audit_log.event(
             "wheel_unblock_fail_closed", symbol=symbol,

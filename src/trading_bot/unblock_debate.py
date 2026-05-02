@@ -61,16 +61,29 @@ class UnblockVerdict:
 
 
 class _UnblockJudgeOutput(BaseModel):
-    confidence: Literal["high", "medium", "low"]
-    # Generous upper bound — Opus often writes 600-1500 char reasons
-    # explaining the override / respect call. We want the full reasoning
-    # in the audit trail; truncation belongs in the dashboard, not here.
-    reason: str = Field(min_length=20, max_length=4000)
+    # The verdict is the load-bearing field. We want a reason for
+    # explainability but Opus occasionally drops it from structured
+    # output — making it required tripped fail-closed even when the
+    # verdict itself was unambiguous. Default empty + post-fill from
+    # the neutral reviewer's text if judge omits it.
     recommendation: Literal["place", "reject"] = Field(
         description=(
-            "'place' to OVERRIDE the deterministic gate's rejection and "
-            "submit the order; 'reject' to RESPECT the gate and skip."
+            "REQUIRED. 'place' to OVERRIDE the deterministic gate's "
+            "rejection and submit the order; 'reject' to RESPECT the "
+            "gate and skip."
         )
+    )
+    confidence: Literal["high", "medium", "low"] = Field(
+        description="REQUIRED. 'high'|'medium'|'low' confidence in the recommendation."
+    )
+    reason: str = Field(
+        default="",
+        max_length=4000,
+        description=(
+            "REQUIRED. 1-3 sentences explaining the verdict: which "
+            "reviewer's case was load-bearing and why. The audit trail "
+            "depends on this — do not omit."
+        ),
     )
 
 
@@ -319,10 +332,25 @@ def run_unblock_debate(
         log.warning("unblock_debate: judge schema mismatch, failing closed: %s", e)
         return None
 
+    # Opus occasionally drops the `reason` field even when forced into
+    # tool use. Fail-closed on a missing reason wastes a perfectly good
+    # verdict, so fall back to a synthesized reason from the neutral
+    # reviewer's text. The verdict itself remains the load-bearing field.
+    final_reason = v.reason.strip() if v.reason else ""
+    if not final_reason:
+        neutral_excerpt = (neutral.text or "").strip().replace("\n", " ")
+        if neutral_excerpt:
+            final_reason = (
+                "(judge omitted reason; synthesized from neutral reviewer) "
+                + neutral_excerpt[:600]
+            )
+        else:
+            final_reason = "(judge omitted reason; no neutral text either)"
+
     return UnblockVerdict(
         recommendation=v.recommendation,
         confidence=v.confidence,
-        reason=v.reason,
+        reason=final_reason,
         aggressive_text=aggressive.text,
         conservative_text=conservative.text,
         neutral_text=neutral.text,
