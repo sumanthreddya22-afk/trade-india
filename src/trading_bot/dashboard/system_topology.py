@@ -87,7 +87,9 @@ NODES: tuple[Node, ...] = (
     Node("fred",               "intake", "FRED Macro",       passive=True),
     Node("websearch",          "intake", "WebSearch",        passive=True),
     Node("market_data_stream", "intake", "Market Data Stream",
-         cadence_label="OFF (Phase 8)", passive=True),
+         subscribes=("price.update",),
+         cadence_label="websocket · gated", passive=False,
+         process="dashboard"),
 
     # ---------- DISCOVERY -------------------------------------------------
     Node("universe_curator",   "discovery", "Universe Curator",
@@ -269,6 +271,8 @@ EDGES: tuple[tuple[str, str], ...] = (
     # Decision/Execution
     ("order_submitter",   "alpaca_trade_stream"),
     ("alpaca_trade_stream", "position_tracker"),
+    # Phase 8 market-data stream feeds the Position Tracker for live mark-to-market.
+    ("market_data_stream",  "position_tracker"),
     ("position_tracker",  "reconciler"),
     ("order_steward",     "alpaca_trade_stream"),
     ("portfolio_monitor", "alpaca_trade_stream"),

@@ -58,9 +58,14 @@ class Event:
     created_at: datetime
 
     def to_sse_line(self) -> str:
-        """Format for the wire. Each event is `id`, `event` (name), `data`
-        (JSON) — three SSE fields plus a blank line. Browser-side
-        EventSource will match on the `event` field."""
+        """Format for the wire. Each event is `id` (durable only),
+        `event` (name), `data` (JSON) — plus a blank line.
+
+        Ephemeral events (id == 0) are sent WITHOUT an ``id:`` line so
+        they never affect the browser's ``Last-Event-ID`` cursor. This
+        is how Phase 8 price ticks ride the same SSE channel without
+        polluting the resume semantics.
+        """
         body = {
             "id": self.id,
             "type": self.type,
@@ -69,7 +74,10 @@ class Event:
             "process": self.process,
             "created_at": self.created_at.isoformat(),
         }
-        return f"id: {self.id}\nevent: {self.type}\ndata: {json.dumps(body, default=str, separators=(',', ':'))}\n\n"
+        data_line = f"data: {json.dumps(body, default=str, separators=(',', ':'))}"
+        if self.id and self.id > 0:
+            return f"id: {self.id}\nevent: {self.type}\n{data_line}\n\n"
+        return f"event: {self.type}\n{data_line}\n\n"
 
 
 def _is_critical(type_: str) -> bool:
@@ -250,6 +258,32 @@ class Broadcaster:
     async def unsubscribe(self, cq: _ClientQueue) -> None:
         async with self._lock:
             self._clients.discard(cq)
+
+    async def broadcast(self, ev: Event) -> None:
+        """Inject an event directly into every connected client's queue
+        without persisting to SQLite.
+
+        Phase 8 path: market-data ticks are high-rate and ephemeral, so
+        they bypass the durable bus entirely. Browser still sees them as
+        named SSE events but they don't affect Last-Event-ID resume.
+        """
+        async with self._lock:
+            clients = list(self._clients)
+        for cq in clients:
+            await cq.put(ev)
+
+    def broadcast_threadsafe(self, ev: Event, loop: asyncio.AbstractEventLoop) -> None:
+        """Schedule a ``broadcast`` from a non-event-loop thread.
+
+        Alpaca's ``StockDataStream`` runs its handler on its own asyncio
+        loop in a worker thread. Calling ``asyncio.Queue.put`` from
+        there is unsafe; this helper bridges via ``call_soon_threadsafe``.
+        """
+        try:
+            asyncio.run_coroutine_threadsafe(self.broadcast(ev), loop)
+        except RuntimeError:
+            # Loop closed during shutdown — drop silently.
+            pass
 
     async def replay_for(self, cq: _ClientQueue, since_id: int) -> int:
         """Push events with id > since_id directly into a single client's

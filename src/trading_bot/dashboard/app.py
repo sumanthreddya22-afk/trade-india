@@ -312,6 +312,69 @@ def _recent_events_for(db_path: str, types: tuple[str, ...], *, limit: int = 20)
     return out
 
 
+async def _maybe_start_market_data_stream(app, broadcaster, cache) -> None:
+    """Phase 8: live market-data ticks for held + top-N watchlist symbols.
+
+    Gated behind ``TRADING_BOT_DASHBOARD_LIVE_PRICES``. When on, opens
+    Alpaca's ``StockDataStream`` from the dashboard process (so ticks
+    never round-trip through SQLite), then schedules a background task
+    that listens for ``position.changed`` / ``opportunities.updated`` /
+    ``intel.updated`` events and asks the runner to recompute its
+    symbol set (debounced, 5s).
+    """
+    try:
+        from trading_bot.config import Settings
+        from trading_bot.streams.market_data_stream import maybe_start as _md_start
+    except Exception:
+        return
+    top_n = int(os.environ.get("TRADING_BOT_DASHBOARD_PRICE_TOP_N", "10"))
+
+    def _provider() -> list[str]:
+        # Held positions ∪ top-N watchlist (stocks only; crypto handled
+        # via a separate stream in a later iteration if we light it up).
+        try:
+            snap = cache.get().data
+        except Exception:
+            return []
+        held = [p.symbol for p in (snap.positions or [])
+                if (p.asset_class or "").lower() in ("us_equity", "stock", "")]
+        watchlist = [o.symbol for o in (snap.opportunities or [])[:top_n]
+                     if (o.asset_class or "").lower() in ("us_equity", "stock", "")]
+        seen: set[str] = set()
+        out: list[str] = []
+        for s in held + watchlist:
+            su = (s or "").upper()
+            if su and su not in seen:
+                seen.add(su)
+                out.append(su)
+        return out
+
+    loop = asyncio.get_running_loop()
+    runner = _md_start(
+        settings=Settings(), broadcaster=broadcaster, loop=loop,
+        symbol_provider=_provider,
+    )
+    if runner is None:
+        return
+    app.state.market_data_runner = runner
+
+    # Listen for symbol-set churn events. Debounce is in the runner;
+    # we just trigger it on each relevant event.
+    async def _symbol_listener() -> None:
+        cq = await broadcaster.subscribe()
+        try:
+            while True:
+                ev = await cq.q.get()
+                if ev.type in ("position.changed", "opportunities.updated", "intel.updated"):
+                    runner.update_symbols()
+        finally:
+            await broadcaster.unsubscribe(cq)
+
+    app.state.market_data_listener_task = asyncio.create_task(
+        _symbol_listener(), name="market-data-symbol-listener",
+    )
+
+
 def _system_view_ctx() -> dict[str, Any]:
     """Extra context for system.html. Computes node health + last-activity
     once per page load; live updates come from /fragment/system_nodes
@@ -387,9 +450,20 @@ def create_app() -> FastAPI:
             _bus_mod.emit("process.started", {"process": "dashboard"}, source="dashboard")
         except Exception:
             pass
+        # Phase 8 — gated live market-data ticks. Off by default.
+        await _maybe_start_market_data_stream(app, broadcaster, cache)
 
     @app.on_event("shutdown")
     async def _stop_broadcaster() -> None:
+        runner = getattr(app.state, "market_data_runner", None)
+        if runner is not None:
+            try:
+                runner.stop()
+            except Exception:
+                pass
+        sym_listener = getattr(app.state, "market_data_listener_task", None)
+        if sym_listener is not None:
+            sym_listener.cancel()
         await broadcaster.stop()
 
     cache = _SnapshotCache(ttl=CACHE_TTL_SECONDS)
@@ -600,6 +674,23 @@ def create_app() -> FastAPI:
             "queue_depth": bus_stats["queue_depth"],
             "by_process_last_hour": per_process,
         })
+
+    @app.post("/api/stream/test-tick")
+    async def api_stream_test_tick(request: Request, symbol: str, price: float) -> Any:
+        """Phase 8 smoke test: inject a synthetic ``price.update`` event
+        directly into the broadcaster (bypassing Alpaca) so the operator
+        can verify the holdings cell update path without standing up the
+        real market-data stream."""
+        if not _host_ok(request):
+            raise HTTPException(status_code=403, detail="Host header not allowed")
+        ev = Event(
+            id=0, type="price.update",
+            payload={"symbol": symbol.upper(), "price": float(price)},
+            source="dashboard.test", process="dashboard",
+            created_at=datetime.now(timezone.utc),
+        )
+        await broadcaster.broadcast(ev)
+        return JSONResponse({"emitted": True, "symbol": symbol.upper(), "price": float(price)})
 
     @app.post("/api/stream/test-emit")
     def api_stream_test_emit(request: Request, type: str = "stream.hello", payload: str = "{}") -> Any:

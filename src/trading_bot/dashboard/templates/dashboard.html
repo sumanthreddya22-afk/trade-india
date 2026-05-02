@@ -50,6 +50,16 @@
     body[data-stream-status="reconn"] .stream-pill .label::after { content: "RECONN"; }
     body[data-stream-status="down"] .stream-pill .label::after { content: "OFFLINE"; }
     body[data-stream-status="off"] .stream-pill .label::after { content: "PAUSED"; }
+
+    /* Live price ticks (Phase 8). Cell flashes briefly green/red on
+       up/down ticks. data-tick-source="live" tags cells that have
+       received at least one push update so the operator can see which
+       holdings are actually streaming. */
+    [data-tick-symbol].tick-up   { animation: tickUp .35s ease-out; }
+    [data-tick-symbol].tick-down { animation: tickDown .35s ease-out; }
+    @keyframes tickUp   { 0% { background-color: rgba(16,185,129,.28); } 100% { background-color: transparent; } }
+    @keyframes tickDown { 0% { background-color: rgba(244,63,94,.28); } 100% { background-color: transparent; } }
+    [data-tick-symbol][data-tick-source="live"]::after { content: " ●"; color: #34d399; opacity: .6; font-size: 8px; vertical-align: super; }
   </style>
 </head>
 <body class="min-h-full" data-stream-status="off">

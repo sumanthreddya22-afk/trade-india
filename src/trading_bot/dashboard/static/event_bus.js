@@ -55,10 +55,49 @@
     "email.sent",
     // Bus health (dashboard self-emitted)
     "stream.hello",
+    // Live market-data ticks (Phase 8) — ephemeral, not persisted.
+    // Single named event "price.update" carries {symbol, price, ts} so
+    // we don't have to listen per-symbol; DOM cells with data-tick-symbol
+    // are updated in place. See updatePriceCell below.
+    "price.update",
   ];
 
+  // Per-symbol last price (for tick direction coloring).
+  const lastPriceBySymbol = new Map();
+
+  function fmtUsd(v) {
+    const n = Number(v);
+    if (!isFinite(n)) return "—";
+    return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function updatePriceCell(payload) {
+    if (!payload || !payload.symbol || payload.price == null) return;
+    const sym = String(payload.symbol).toUpperCase();
+    const price = Number(payload.price);
+    const prev = lastPriceBySymbol.get(sym);
+    lastPriceBySymbol.set(sym, price);
+    const cells = document.querySelectorAll('[data-tick-symbol="' + sym + '"]');
+    if (!cells.length) return;
+    const flashClass = prev == null ? null : (price > prev ? "tick-up" : (price < prev ? "tick-down" : null));
+    cells.forEach((c) => {
+      c.textContent = fmtUsd(price);
+      c.dataset.tickSource = "live";
+      if (flashClass) {
+        c.classList.remove("tick-up", "tick-down");
+        // Force reflow so the same class can re-trigger the animation.
+        // eslint-disable-next-line no-unused-expressions
+        c.offsetWidth;
+        c.classList.add(flashClass);
+      }
+    });
+  }
+
   function dispatch(name, body) {
-    try { lastEventId = Math.max(lastEventId, body.id || 0); } catch (e) { /* ignore */ }
+    try { if (body.id) lastEventId = Math.max(lastEventId, body.id); } catch (e) { /* ignore */ }
+    if (name === "price.update") {
+      updatePriceCell(body && body.payload);
+    }
     document.body.dispatchEvent(new CustomEvent(name, { detail: body, bubbles: true }));
     // Also fire a generic "stream:event" so observers can see everything.
     document.body.dispatchEvent(new CustomEvent("stream:event", { detail: body, bubbles: true }));

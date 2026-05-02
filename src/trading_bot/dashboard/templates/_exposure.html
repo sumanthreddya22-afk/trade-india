@@ -52,7 +52,10 @@
           <td class="py-2 pr-2 font-mono font-semibold">{{ p.symbol }}<span class="text-slate-600 ml-1 text-xs">▾</span></td>
           <td class="py-2 pr-2 text-right">{{ p.qty }}</td>
           <td class="py-2 pr-2 text-right text-slate-400">{{ fmt.usd(p.avg_entry) }}</td>
-          <td class="py-2 pr-2 text-right">{{ fmt.usd(p.last_price) }}</td>
+          <td class="py-2 pr-2 text-right">
+            <span data-tick-symbol="{{ p.symbol.replace('/','').upper() }}"
+                  data-tick-source="rest">{{ fmt.usd(p.last_price) }}</span>
+          </td>
           <td class="py-2 pr-2 text-right text-slate-400">{{ fmt.usd(p.market_value) }}</td>
           <td class="py-2 pr-2">
             {% if sc is none or sc.stop_status == "missing" %}
