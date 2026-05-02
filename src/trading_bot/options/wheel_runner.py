@@ -315,6 +315,12 @@ def _maybe_run_wheel_unblock(
         fundamentals=fundamentals,
         operational_context=operational_context,
         # lessons_block left empty until the lesson loop is wired
+        # Wheel-scan is a synchronous interactive flow — using the
+        # async mailbox here would block the scan for up to N minutes
+        # waiting for the next routine fire. Mailbox is the right
+        # transport for nightly batch (decision_reflector); direct API
+        # is the right transport for in-loop wheel debates.
+        use_mailbox=False,
     )
 
     # Persist the row whether verdict is None, place, or reject — full audit.
