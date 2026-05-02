@@ -33,6 +33,11 @@ from trading_bot.email_shell import (
 
 
 _THROTTLE_MIN = 20
+# Phase 7 noise cap: don't re-send the same dedup_key within this window
+# even if alerts_pending was drained between fires. 4h is generous enough
+# to silence the per-cron-tick wheel skipped emails while still
+# re-alerting if a state change persists across a quarter-day.
+_PERSIST_DEDUP_HOURS = 4.0
 _KEY_LAST_SENT = "last_alert_sent_at"
 
 
@@ -55,8 +60,24 @@ class AlertStore:
     def __init__(self, db_path: Path | str = "data/state.db") -> None:
         self._engine = create_engine(f"sqlite:///{db_path}", future=True)
 
-    def queue(self, event: AlertEvent) -> bool:
-        """Insert into alerts_pending. Returns True if newly queued, False if dedup'd."""
+    def queue(self, event: AlertEvent,
+              persist_dedup_hours: float = _PERSIST_DEDUP_HOURS,
+              *, now: dt.datetime | None = None) -> bool:
+        """Insert into alerts_pending. Returns True if newly queued, False if dedup'd.
+
+        Two dedup layers:
+          * In-flight: alerts_pending UNIQUE on dedup_key (existing).
+          * Persistent: skip if same dedup_key was SENT in the last
+            ``persist_dedup_hours``. This survives claim_pending+drain
+            so re-queueing the same alert on the next cron tick doesn't
+            re-flood the operator.
+
+        ``now`` is injectable for tests. Default real-time.
+        """
+        if persist_dedup_hours > 0 and self._was_recently_sent(
+            event.dedup_key, hours=persist_dedup_hours, now=now,
+        ):
+            return False
         with self._engine.begin() as c:
             res = c.execute(
                 text("INSERT OR IGNORE INTO alerts_pending "
@@ -67,6 +88,30 @@ class AlertStore:
                  "detail": event.detail_html, "dedup": event.dedup_key},
             )
             return (res.rowcount or 0) > 0
+
+    def _was_recently_sent(self, dedup_key: str, *, hours: float,
+                            now: dt.datetime | None = None) -> bool:
+        """True if any row in alerts_sent has this dedup_key within the
+        last ``hours`` from ``now`` (default real wall-clock). Defensive:
+        missing column / DB error → False so the alert path doesn't
+        itself become a noise source.
+        """
+        if not dedup_key:
+            return False
+        now = now or dt.datetime.now(dt.timezone.utc)
+        cutoff = now - dt.timedelta(hours=hours)
+        try:
+            with self._engine.begin() as c:
+                row = c.execute(
+                    text(
+                        "SELECT 1 FROM alerts_sent "
+                        "WHERE dedup_key = :k AND sent_at > :cutoff LIMIT 1"
+                    ),
+                    {"k": dedup_key, "cutoff": cutoff},
+                ).first()
+            return row is not None
+        except Exception:
+            return False
 
     def claim_pending(self) -> list[AlertEvent]:
         """Atomically read + delete all pending rows. Returns the events."""
@@ -101,13 +146,23 @@ class AlertStore:
             ), {"k": _KEY_LAST_SENT, "v": ts.isoformat()})
 
     def record_send(self, *, sent_at: dt.datetime, subject: str,
-                    event_count: int, max_severity: str) -> None:
+                    event_count: int, max_severity: str,
+                    dedup_keys: list[str] | None = None) -> None:
+        """Record one row per dedup_key in the batch so future queue()
+        calls can look up "did we already send this dedup_key recently".
+        Falls back to a single row with empty dedup_key when no keys
+        passed (back-compat with older callers / tests).
+        """
+        keys = list(dedup_keys) if dedup_keys else [""]
         with self._engine.begin() as c:
-            c.execute(text(
-                "INSERT INTO alerts_sent (sent_at, subject, event_count, max_severity) "
-                "VALUES (:sent_at, :subject, :n, :sev)"
-            ), {"sent_at": sent_at, "subject": subject,
-                "n": event_count, "sev": max_severity})
+            for k in keys:
+                c.execute(text(
+                    "INSERT INTO alerts_sent "
+                    "(sent_at, subject, event_count, max_severity, dedup_key) "
+                    "VALUES (:sent_at, :subject, :n, :sev, :dedup)"
+                ), {"sent_at": sent_at, "subject": subject,
+                    "n": event_count, "sev": max_severity,
+                    "dedup": k})
 
 
 _SEV_ORDER = {"info": 0, "warn": 1, "bad": 2}
@@ -165,7 +220,7 @@ def queue_alert(
     store = store or AlertStore()
     now = now or dt.datetime.now(dt.timezone.utc)
 
-    is_new = store.queue(event)
+    is_new = store.queue(event, now=now)
     if not is_new:
         return  # dedup'd
 
@@ -209,7 +264,10 @@ def drain_alerts(
         send_logged(sender=sender, subject=subject, html_body=html,
                     kind="alert", recipient=cfg.email.to)
 
-    store.record_send(sent_at=now, subject=subject, event_count=len(events),
-                      max_severity=_max_severity(events))
+    store.record_send(
+        sent_at=now, subject=subject, event_count=len(events),
+        max_severity=_max_severity(events),
+        dedup_keys=[e.dedup_key for e in events],
+    )
     store.set_last_sent(now)
     return len(events)

@@ -19,7 +19,7 @@ def state_db(tmp_path):
         c.execute(text(
             "CREATE TABLE alerts_sent (id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "sent_at TIMESTAMP NOT NULL, subject TEXT NOT NULL, event_count INTEGER NOT NULL, "
-            "max_severity TEXT NOT NULL)"
+            "max_severity TEXT NOT NULL, dedup_key TEXT NOT NULL DEFAULT '')"
         ))
         c.execute(text("CREATE TABLE bot_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)"))
     return db
@@ -95,6 +95,37 @@ def test_dedup_key_prevents_double_queue(state_db):
     queue_alert(e, store=store, sender_send=_mock_send(sent), now=base + dt.timedelta(minutes=2))
 
     assert len(sent) == 1  # second was deduped, never queued
+
+
+def test_persistent_dedup_blocks_repeat_within_window(state_db):
+    """Regression for the 'wheel skipped X' email storm: even after the
+    in-flight queue is drained, the same dedup_key shouldn't fire again
+    for ~4 hours. Without this, every cron tick re-emails the operator."""
+    from trading_bot.alerts import AlertEvent, AlertStore, queue_alert
+    sent = []
+    store = AlertStore(state_db)
+    base = dt.datetime(2026, 4, 28, 13, 0, tzinfo=dt.timezone.utc)
+
+    e = AlertEvent(
+        kind="wheel_allocation_cap", severity="bad",
+        title="wheel skipped MRNA: options_cap (26.7% > 20.0%)",
+        detail_html="<p>x</p>", fired_at=base,
+        dedup_key="alloc_cap_MRNA_2026-04-28",
+    )
+
+    # 1st fire — sends immediately because severity=bad bypasses throttle
+    queue_alert(e, store=store, sender_send=_mock_send(sent), now=base)
+    assert len(sent) == 1
+
+    # 2nd fire — same dedup_key, drained-but-recently-sent → suppressed
+    queue_alert(e, store=store, sender_send=_mock_send(sent),
+                now=base + dt.timedelta(hours=2))
+    assert len(sent) == 1  # no second email
+
+    # 3rd fire — past the 4-hour persistent dedup window → re-emails
+    queue_alert(e, store=store, sender_send=_mock_send(sent),
+                now=base + dt.timedelta(hours=5))
+    assert len(sent) == 2  # window expired, alert flows again
 
 
 def test_drain_with_empty_queue_no_email(state_db):

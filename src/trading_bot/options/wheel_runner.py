@@ -502,10 +502,17 @@ def run_wheel_scan(deps: WheelDeps) -> None:
             if not override:
                 stats.risk_alloc_rejected += 1
                 stats.risk_alloc_reasons[_norm_reason(reason)] += 1
-                _emit(deps, kind="wheel_allocation_cap", severity="bad",
-                      title=f"wheel skipped {symbol}: {reason}",
-                      detail_html=f"<p>{symbol}: {reason}</p>",
-                      dedup_key=f"alloc_cap_{symbol}_{today}")
+                # In allowlist_only mode the operator explicitly curated
+                # the candidate list; routine "skipped because over cap"
+                # alerts are noise — they show up in wheel_scan_summary
+                # and the audit log already. Only emit when the operator
+                # is using the broad discovered universe (where a skip
+                # is actionable info).
+                if not getattr(deps.cfg, "allowlist_only", False):
+                    _emit(deps, kind="wheel_allocation_cap", severity="bad",
+                          title=f"wheel skipped {symbol}: {reason}",
+                          detail_html=f"<p>{symbol}: {reason}</p>",
+                          dedup_key=f"alloc_cap_{symbol}_{today}")
                 continue
             # Override path: log and proceed to sector-cap check (which
             # may itself fire another debate).
@@ -538,10 +545,11 @@ def run_wheel_scan(deps: WheelDeps) -> None:
             if not override:
                 stats.sector_cap_rejected += 1
                 stats.sector_cap_reasons[_norm_reason(sector_reason)] += 1
-                _emit(deps, kind="wheel_allocation_cap", severity="bad",
-                      title=f"wheel skipped {symbol}: {sector_reason}",
-                      detail_html=f"<p>{symbol}: {sector_reason}</p>",
-                      dedup_key=f"sector_cap_{symbol}_{today}")
+                if not getattr(deps.cfg, "allowlist_only", False):
+                    _emit(deps, kind="wheel_allocation_cap", severity="bad",
+                          title=f"wheel skipped {symbol}: {sector_reason}",
+                          detail_html=f"<p>{symbol}: {sector_reason}</p>",
+                          dedup_key=f"sector_cap_{symbol}_{today}")
                 continue
             _emit(deps, kind="wheel_unblock_override", severity="info",
                   title=f"unblock: override sector-cap for {symbol}",

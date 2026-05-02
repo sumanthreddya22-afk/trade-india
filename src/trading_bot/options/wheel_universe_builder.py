@@ -208,32 +208,50 @@ def run_universe_build(deps: BuilderDeps) -> dict[str, int]:
             time.sleep(deps.rate_delay_s)
 
     log.info("wheel_universe_build complete: %s", counts)
-    _alert_if_unhealthy(counts)
+    _alert_if_unhealthy(counts, engine=deps.engine,
+                         operator_has_allowlist=bool(deps.allowlist))
     return counts
 
 
-def _alert_if_unhealthy(counts: dict[str, int]) -> None:
-    """Bucket C: fire a daemon_critical alert when the build looks unhealthy.
+def _alert_if_unhealthy(counts: dict[str, int], *, engine: Engine,
+                          operator_has_allowlist: bool = False) -> None:
+    """Bucket C: fire a daemon_critical alert when the cache looks unhealthy.
 
     Two triggers:
-    1. Eligible count below floor → likely Finnhub-wide outage or filter bug.
-    2. Unavailable rate above threshold → Finnhub flaking, which would
-       silently shrink the universe over time without this signal.
+    1. Total eligible rows in `wheel_universe_cache` below floor → cache
+       collapse (filter bug, mass de-listing, persistent Finnhub outage).
+       NOTE: we read the cache, not `counts["eligible"]` — that count only
+       reflects symbols *re-evaluated this run*. On any subsequent (cached)
+       build it's near-zero even when the cache is healthy with 2k+ names.
+    2. This run's unavailable rate above threshold → Finnhub flaking, which
+       would silently shrink the cache over time without this signal.
 
     Best-effort — alerting must never raise. Idempotent dedup keys so the
     operator gets one alert per build, not per failure.
     """
+    # When the operator runs in allowlist mode (curated list non-empty),
+    # the wheel doesn't read from the discovered cache — alerts about
+    # cache health become operator noise.
+    if operator_has_allowlist:
+        return
     try:
-        eligible = counts.get("eligible", 0)
+        cached_eligible = (
+            Session(engine)
+            .query(WheelUniverseCache)
+            .filter_by(eligible=True)
+            .count()
+        )
+        run_eligible = counts.get("eligible", 0)
         unavailable = counts.get("unavailable", 0)
         rejected = counts.get("rejected", 0)
-        processed = eligible + unavailable + rejected
+        processed = run_eligible + unavailable + rejected
         unavailable_rate = unavailable / processed if processed else 0.0
 
         msgs: list[str] = []
-        if eligible < _ELIGIBLE_FLOOR_ALERT:
+        if cached_eligible < _ELIGIBLE_FLOOR_ALERT:
             msgs.append(
-                f"<b>eligible={eligible}</b> &lt; floor {_ELIGIBLE_FLOOR_ALERT}"
+                f"<b>cache eligible={cached_eligible}</b> &lt; floor "
+                f"{_ELIGIBLE_FLOOR_ALERT}"
             )
         if unavailable_rate > _UNAVAILABLE_RATE_ALERT:
             msgs.append(
@@ -243,9 +261,11 @@ def _alert_if_unhealthy(counts: dict[str, int]) -> None:
         if not msgs:
             return
         detail = (
-            "<p>Wheel universe build looks unhealthy.</p>"
-            f"<p>Counts: eligible={eligible}, rejected={rejected}, "
-            f"unavailable={unavailable}, fell_out={counts.get('fell_out', 0)}, "
+            "<p>Wheel universe cache looks unhealthy.</p>"
+            f"<p>Cache: eligible={cached_eligible} total.</p>"
+            f"<p>This run: re-evaluated={run_eligible} eligible, "
+            f"rejected={rejected}, unavailable={unavailable}, "
+            f"fell_out={counts.get('fell_out', 0)}, "
             f"cached_skip={counts.get('cached_skip', 0)}.</p>"
             "<ul>" + "".join(f"<li>{m}</li>" for m in msgs) + "</ul>"
             "<p>Affected names will be re-checked tomorrow due to the "
@@ -255,7 +275,7 @@ def _alert_if_unhealthy(counts: dict[str, int]) -> None:
         queue_alert(AlertEvent(
             kind="daemon_critical",
             severity="warn",
-            title=f"Wheel universe degraded: eligible={eligible}",
+            title=f"Wheel universe degraded: cache_eligible={cached_eligible}",
             detail_html=detail,
             fired_at=dt.datetime.now(dt.timezone.utc),
             dedup_key=f"wheel_universe_unhealthy:{dt.date.today().isoformat()}",

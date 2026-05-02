@@ -78,6 +78,7 @@ def _deps(engine):
     d.cfg.unblock_min_candidate_score = 7.0
     d.cfg.unblock_daily_debate_cap = 15
     d.cfg.options_max_pct = 20.0
+    d.cfg.allowlist_only = False  # routine wheel-skipped alerts fire normally
     d.cfg.take_profit_pct = 0.50
     d.cfg.dte_force_close = 21
     d.cfg.delta_breach_csp = 0.45
