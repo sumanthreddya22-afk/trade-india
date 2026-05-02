@@ -92,8 +92,8 @@ def test_lab_cli_subcommand_registered():
     assert "lab" in cmd_names
 
 
-def test_lab_register_jobs_creates_four_jobs():
-    """Lab scheduler should register param_search, auto_promote, calibrate, saturday_evolve."""
+def test_lab_register_jobs_creates_expected_jobs():
+    """Lab scheduler should register all standard lab jobs."""
     from apscheduler.schedulers.background import BackgroundScheduler
 
     from trading_bot.lab import _register_lab_jobs
@@ -103,8 +103,36 @@ def test_lab_register_jobs_creates_four_jobs():
         "param_search": lambda: None,
         "auto_promote": lambda: None,
         "calibrate": lambda: None,
+        "decision_reflect": lambda: None,
         "saturday_evolve": lambda: None,
     }
     _register_lab_jobs(sched, runners)
     job_ids = {j.id for j in sched.get_jobs()}
-    assert job_ids == {"param_search", "auto_promote", "calibrate", "saturday_evolve"}
+    assert job_ids == {
+        "param_search", "auto_promote", "calibrate",
+        "decision_reflect", "saturday_evolve",
+    }
+
+
+def test_decision_reflect_runs_at_0330_et():
+    """Regression: decision_reflect must fire at 03:30 ET, after the daemon's
+    21:55 ET reconciler has settled and before pre-market work begins."""
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from trading_bot.lab import _register_lab_jobs
+
+    sched = BackgroundScheduler()
+    runners = {
+        "param_search": lambda: None,
+        "auto_promote": lambda: None,
+        "calibrate": lambda: None,
+        "decision_reflect": lambda: None,
+        "saturday_evolve": lambda: None,
+    }
+    _register_lab_jobs(sched, runners)
+    job = next(j for j in sched.get_jobs() if j.id == "decision_reflect")
+    trigger = job.trigger
+    # APScheduler CronTrigger exposes fields as a list of named field objects.
+    fields = {f.name: str(f) for f in trigger.fields}
+    assert fields["hour"] == "3"
+    assert fields["minute"] == "30"
+    assert "America/New_York" in str(trigger.timezone)

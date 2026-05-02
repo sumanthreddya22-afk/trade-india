@@ -4,11 +4,14 @@ Usage:
     python -m trading_bot.lab
 
 Runs nightly param search + auto-promote alongside daemon and supervisor.
-SIGTERM gracefully stops the scheduler. Three cron jobs:
+SIGTERM gracefully stops the scheduler. Cron jobs:
 
-    02:00 ET daily — param_search (ParamOptimizerRole)
-    02:45 ET daily — auto_promote (PromoterRole)
-    05:00 ET daily — calibrate    (CalibratorRole, Phase 3.5)
+    02:00 ET daily — param_search       (ParamOptimizerRole)
+    02:45 ET daily — auto_promote       (PromoterRole)
+    03:30 ET daily — decision_reflect   (DecisionReflectorRole; latency-tolerant,
+                                          reads via mailbox if env flag is set)
+    05:00 ET daily — calibrate          (CalibratorRole, Phase 3.5)
+    06:00 ET Sat   — saturday_evolve    (Architect → Reviewer)
 """
 from __future__ import annotations
 
@@ -32,6 +35,7 @@ STATE_DB = Path(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
 def _build_runners(log: StructuredLogger):
     from trading_bot.roles.calibrator import CalibratorRole
     from trading_bot.roles.code_reviewer import CodeReviewerRole
+    from trading_bot.roles.decision_reflector import DecisionReflectorRole
     from trading_bot.roles.param_optimizer import ParamOptimizerRole
     from trading_bot.roles.promoter import PromoterRole
     from trading_bot.roles.strategy_architect import StrategyArchitectRole
@@ -43,6 +47,7 @@ def _build_runners(log: StructuredLogger):
     calibrator = CalibratorRole(engine=engine, config_path=CONFIG_PATH)
     architect = StrategyArchitectRole(engine=engine)
     reviewer = CodeReviewerRole(engine=engine)
+    reflector = DecisionReflectorRole(engine=engine)
 
     def _wrap(name: str, fn):
         def runner():
@@ -89,6 +94,9 @@ def _build_runners(log: StructuredLogger):
         "calibrate": _wrap(
             "calibrate", lambda: calibrator.safe_run(ctx={})
         ),
+        "decision_reflect": _wrap(
+            "decision_reflect", lambda: reflector.safe_run(ctx={})
+        ),
         "saturday_evolve": _saturday_evolve,
     }
 
@@ -111,6 +119,17 @@ def _register_lab_jobs(scheduler: BackgroundScheduler, runners: dict) -> None:
         runners["calibrate"],
         trigger=CronTrigger(hour=5, minute=0, timezone="America/New_York"),
         id="calibrate",
+        replace_existing=True,
+    )
+    # Nightly post-mortem on closed trades. Runs after the daemon's
+    # evening reconciler (21:55 ET) has settled, before pre-market
+    # premarket_rank job kicks in. Latency-tolerant — when the mailbox
+    # env flag is set, lessons are produced via the Claude Code
+    # subscription routine instead of the API.
+    scheduler.add_job(
+        runners["decision_reflect"],
+        trigger=CronTrigger(hour=3, minute=30, timezone="America/New_York"),
+        id="decision_reflect",
         replace_existing=True,
     )
     # Phase 5: Saturday weekly Architect → Reviewer pipeline.
