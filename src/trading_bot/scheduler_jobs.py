@@ -199,6 +199,19 @@ def register_jobs(
         coalesce=True,
     )
 
+    # Real-time event bus retention: nightly DELETE of events older than
+    # 7 days + WAL truncate. Single writer (daemon) so no race with the
+    # other launchd processes. Cheap — usually 0–500 row delete.
+    if "event_bus_retention" in runners:
+        scheduler.add_job(
+            runners["event_bus_retention"],
+            trigger=CronTrigger(hour=3, minute=15, timezone=et),
+            id="event_bus_retention",
+            replace_existing=True,
+            misfire_grace_time=600,
+            coalesce=True,
+        )
+
     # Phase 4: Strategy Coach — daily 06:00 ET, weekdays. Evaluates 30d
     # paper alpha vs SPY and flips fallback flag with hysteresis.
     if "strategy_coach" in runners:

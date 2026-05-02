@@ -1,5 +1,7 @@
 <section id="last_scan" class="card p-6"
-         hx-get="/fragment/last_scan" hx-trigger="every 60s" hx-swap="outerHTML">
+         hx-get="/fragment/last_scan"
+         hx-trigger="scan.completed from:body, every 120s"
+         hx-swap="outerHTML">
   <div class="flex items-baseline justify-between flex-wrap gap-2">
     <div>
       <div class="label">Most Recent Scan</div>

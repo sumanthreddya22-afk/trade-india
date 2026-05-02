@@ -48,6 +48,25 @@ def _audit_order_submitted(
     except Exception:
         # Audit must never break the trade path.
         pass
+    # Real-time bus emit (Phase 2). The Alpaca trade stream will emit
+    # the matching ``order.placed`` once the venue confirms; this event
+    # captures the *submit* side of the round-trip so the dashboard can
+    # see in-flight orders even if the websocket is briefly down.
+    try:
+        from trading_bot.event_bus import bus as _bus
+        _bus.emit(
+            "order.submitted",
+            {
+                "source": source, "symbol": symbol, "side": side,
+                "qty": str(qty), "asset_class": asset_class,
+                "order_id": order_id, "order_type": order_type,
+                "limit_price": str(limit_price) if limit_price is not None else None,
+                "stop_price": str(stop_price) if stop_price is not None else None,
+            },
+            source="alpaca_client",
+        )
+    except Exception:
+        pass
 
 # Alpaca crypto rejects plain stop orders, so we use stop-limits. The limit
 # is offset 5% past the trigger so the order has room to fill in fast moves

@@ -1,6 +1,6 @@
 <section id="activity_feed" class="card p-6"
          hx-get="/fragment/activity_feed"
-         hx-trigger="every 15s"
+         hx-trigger="decision.created from:body, lesson.created from:body, scan.completed from:body, order.filled from:body, order.submitted from:body, debate.unblock.completed from:body, role.completed from:body, role.failed from:body, activity.appended from:body, every 60s"
          hx-swap="outerHTML">
   <div class="flex items-baseline justify-between flex-wrap gap-2">
     <div>

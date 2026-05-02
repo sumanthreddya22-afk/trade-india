@@ -3,7 +3,7 @@
    needs attention right now. Driven by insights.action_items. #}
 <div id="action_required"
      hx-get="/fragment/action_required"
-     hx-trigger="every 30s"
+     hx-trigger="order.rejected from:body, role.failed from:body, role.stalled from:body, every 300s"
      hx-swap="outerHTML">
 {% set items = insights.action_items if insights else [] %}
 {% if items %}

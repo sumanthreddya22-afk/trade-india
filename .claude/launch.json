@@ -4,8 +4,11 @@
     {
       "name": "dashboard",
       "runtimeExecutable": ".venv/bin/python",
-      "runtimeArgs": ["-m", "uvicorn", "trading_bot.dashboard.app:create_app", "--factory", "--host", "127.0.0.1", "--port", "8765"],
-      "port": 8765
+      "runtimeArgs": ["-m", "uvicorn", "trading_bot.dashboard.app:create_app", "--factory", "--host", "127.0.0.1", "--port", "8766"],
+      "port": 8766,
+      "env": {
+        "TRADING_BOT_PROCESS": "dashboard"
+      }
     }
   ]
 }

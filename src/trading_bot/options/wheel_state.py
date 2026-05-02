@@ -88,6 +88,7 @@ def open_csp(
             csp_expiration=expiration, csp_credit=credit,
         ))
         s.commit()
+    _emit_cycle_event(symbol=symbol, cycle_id=cid, phase=Phase.CSP_OPEN.value)
     return cid
 
 
@@ -118,6 +119,21 @@ def close_cycle(repo: WheelStateRepo, *, cycle_id: str, realized_pnl: Decimal) -
     repo._update(cycle_id, phase=Phase.CLOSED.value,
                  closed_at=dt.datetime.now(dt.timezone.utc),
                  realized_pnl=realized_pnl)
+    _emit_cycle_event(
+        symbol=cyc.symbol, cycle_id=cycle_id, phase=Phase.CLOSED.value,
+        realized_pnl=float(realized_pnl) if realized_pnl is not None else None,
+    )
+
+
+def _emit_cycle_event(*, symbol: str, cycle_id: str, phase: str, **extra) -> None:
+    """Bus emit for wheel cycle phase transitions. Best-effort."""
+    try:
+        from trading_bot.event_bus import bus as _bus
+        payload = {"symbol": symbol, "cycle_id": cycle_id, "phase": phase}
+        payload.update({k: v for k, v in extra.items() if v is not None})
+        _bus.emit("wheel.cycle.changed", payload, source="wheel_state")
+    except Exception:
+        pass
 
 
 def increment_rolls(repo: WheelStateRepo, *, cycle_id: str) -> int:

@@ -1,5 +1,7 @@
 <section id="stats" class="card p-6"
-         hx-get="/fragment/stats" hx-trigger="every 120s" hx-swap="outerHTML">
+         hx-get="/fragment/stats"
+         hx-trigger="trade.closed from:body, every 120s"
+         hx-swap="outerHTML">
   <div class="flex items-baseline justify-between">
     <div>
       <div class="label">Track Record</div>

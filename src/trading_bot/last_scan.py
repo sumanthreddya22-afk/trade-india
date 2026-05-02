@@ -57,6 +57,27 @@ def write_last_scan(
     except Exception:
         # Best-effort — never block a scan because we couldn't write its log.
         pass
+    # Bus emit so the dashboard's _last_scan and activity_feed fragments
+    # see the new scan immediately. The file watcher (Phase 3) is a
+    # belt-and-suspenders backup in case a future scanner bypasses this
+    # helper.
+    try:
+        from trading_bot.event_bus import bus as _bus
+        action_counts: dict[str, int] = {}
+        for d in result.decisions:
+            action_counts[d.action] = action_counts.get(d.action, 0) + 1
+        _bus.emit(
+            "scan.completed",
+            {
+                "command": command, "regime": regime,
+                "universe_size": int(universe_size),
+                "n_decisions": len(result.decisions),
+                "actions": action_counts,
+            },
+            source="last_scan",
+        )
+    except Exception:
+        pass
 
 
 def read_last_scan(path: Path = LAST_SCAN_PATH) -> PersistedScan | None:

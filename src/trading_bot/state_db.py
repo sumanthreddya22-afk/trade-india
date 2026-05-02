@@ -16,6 +16,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
     event,
 )
@@ -334,6 +335,113 @@ class UnblockDebateRun(Base):
     entry_order_id = Column(String(64), nullable=True, index=True)
     closed_pnl_pct = Column(Float, nullable=True)
     synthetic = Column(Boolean, nullable=False, default=False)
+
+
+class IntelEvent(Base):
+    """Append-only audit row for a single news/filing/social mention.
+
+    The ingester collects events from each source, computes an event_hash
+    (typically SHA1 of source+url) for dedup, and inserts here. The
+    aggregator reads from this table to roll up per-symbol scores into
+    ``intel_candidates``.
+    """
+    __tablename__ = "intel_events"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(32), nullable=False, index=True)
+    asset_class = Column(String(16), nullable=False)  # stock|crypto|option_underlying
+    source = Column(String(32), nullable=False, index=True)
+    headline = Column(Text, nullable=False, default="")
+    url = Column(Text, nullable=False, default="")
+    sentiment = Column(Float, nullable=True)         # -1..+1
+    raw_score = Column(Float, nullable=True)         # source-native score (e.g. GDELT tone)
+    event_at = Column(DateTime(timezone=True), nullable=True)
+    ingested_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    event_hash = Column(String(64), nullable=False, default="")
+    __table_args__ = (
+        UniqueConstraint("symbol", "source", "event_hash", name="ux_intel_events_dedup"),
+    )
+
+
+class IntelCandidate(Base):
+    """Aggregated, score-decayed candidate. ONE row per (symbol, asset_class).
+
+    Daemon scans read this table FIRST (preferred over opportunities.md /
+    scout JSON / wheel allowlist / CORE_LIQUID_TICKERS). The intel ingestor
+    role updates rows on each tick (every ~30 min market hours, hourly
+    after-hours).
+
+    ``sources_json`` is a JSON object: {source_name: count} so the dashboard
+    can show "saw this in: 3 news, 1 SEC filing, 12 reddit". ``top_reason``
+    is the headline of the highest-weighted recent event for human-readable
+    "why is this here".
+    """
+    __tablename__ = "intel_candidates"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(32), nullable=False)
+    asset_class = Column(String(16), nullable=False)
+    score = Column(Float, nullable=False, index=True)
+    n_mentions = Column(Integer, nullable=False, default=0)
+    n_sources = Column(Integer, nullable=False, default=0)
+    first_seen = Column(DateTime(timezone=True), nullable=False)
+    last_seen = Column(DateTime(timezone=True), nullable=False, index=True)
+    top_reason = Column(Text, nullable=False, default="")
+    sources_json = Column(Text, nullable=False, default="{}")
+    sentiment_avg = Column(Float, nullable=True)
+    rolled_up_at = Column(DateTime(timezone=True), nullable=False)
+    __table_args__ = (
+        UniqueConstraint("symbol", "asset_class", name="ux_intel_candidates_symbol_class"),
+    )
+
+
+class Event(Base):
+    """Cross-process event bus row (Phase 0 of real-time dashboard).
+
+    Every producer in any process (daemon / lab / supervisor / mailbox /
+    dashboard) writes here via ``trading_bot.event_bus.bus.emit``. The
+    dashboard SSE endpoint tails this table and fans events out to
+    connected browser clients.
+
+    Append-only. Retention is enforced by a nightly job that DELETEs rows
+    older than 7 days and runs ``PRAGMA wal_checkpoint(TRUNCATE)``.
+    Payload is a small JSON blob (kept compact — never put price ticks
+    here; those have their own ephemeral channel inside the dashboard
+    process). ``process`` records which launchd process emitted the row,
+    so the dashboard can show per-process health.
+    """
+    __tablename__ = "events"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    type = Column(String(64), nullable=False, index=True)
+    payload = Column(Text, nullable=False, default="{}")
+    source = Column(String(64), nullable=False, default="")
+    process = Column(String(16), nullable=False, default="unknown")
+    created_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class ThresholdOverride(Base):
+    """Adaptive override for a single risk/wheel/debate threshold knob.
+
+    Written nightly by ``threshold_tuner``. Read at trade time by
+    ``risk_manager``, ``wheel_lane``, ``chain.pick_csp_contract``, and
+    the orchestrator's unblock-debate predicate via
+    ``trading_bot.threshold_overrides.lookup``.
+
+    Freshness gate (``max_age_hours``) is applied at the read site, not
+    here — keeping the table append-only makes it easy to audit *why*
+    a knob moved on a given day. The ``expires_at`` column is the
+    explicit kill-switch: an operator can set it in the past to disable
+    a row without deleting it.
+    """
+    __tablename__ = "threshold_overrides"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    knob = Column(String(64), nullable=False, index=True)
+    value = Column(Float, nullable=False)
+    regime = Column(String(32), nullable=True)
+    bounds_min = Column(Float, nullable=False)
+    bounds_max = Column(Float, nullable=False)
+    set_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    set_by = Column(String(64), nullable=False)  # threshold_tuner | operator | operator_kill
+    signal_summary = Column(Text, nullable=False, default="{}")
+    expires_at = Column(DateTime(timezone=True), nullable=True)
 
 
 def get_engine(db_path: str | Path = "data/state.db"):

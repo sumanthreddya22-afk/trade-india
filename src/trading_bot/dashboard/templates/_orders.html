@@ -1,5 +1,7 @@
 <div id="orders" class="card p-6"
-     hx-get="/fragment/orders" hx-trigger="every 30s" hx-swap="outerHTML">
+     hx-get="/fragment/orders"
+     hx-trigger="order.placed from:body, order.filled from:body, order.partial_fill from:body, order.canceled from:body, order.rejected from:body, position.changed from:body, every 120s"
+     hx-swap="outerHTML">
   <div class="flex items-baseline justify-between">
     <div>
       <div class="label">Live Orders</div>

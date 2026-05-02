@@ -1,5 +1,7 @@
 <div id="opportunities" class="card p-6"
-     hx-get="/fragment/opportunities" hx-trigger="every 60s" hx-swap="outerHTML">
+     hx-get="/fragment/opportunities"
+     hx-trigger="opportunities.updated from:body, every 300s"
+     hx-swap="outerHTML">
   <div class="flex items-baseline justify-between flex-wrap gap-2">
     <div>
       <div class="label" title="Top symbols the bot has flagged as worth scanning, ranked by its momentum/quality screen.">Today's Watchlist</div>

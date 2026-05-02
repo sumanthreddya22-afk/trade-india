@@ -106,6 +106,23 @@ class DecisionStore:
         with Session(self._engine) as s:
             s.add(row)
             s.commit()
+        # Real-time bus emit (Phase 2). Non-blocking; never raises.
+        try:
+            from trading_bot.event_bus import bus as _bus
+            _bus.emit(
+                "decision.created",
+                {
+                    "decision_id": decision_id,
+                    "symbol": decision.symbol,
+                    "action": decision.action,
+                    "strategy": strategy,
+                    "asset_class": asset_class,
+                    "confidence": decision.confidence,
+                },
+                source="decisions_store",
+            )
+        except Exception:
+            pass
         return decision_id
 
     def recent(self, *, limit: int = 100) -> list[DecisionRow]:

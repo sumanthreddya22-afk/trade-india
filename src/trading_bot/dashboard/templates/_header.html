@@ -13,6 +13,22 @@
         ⚠ {{ s.errors|length }} error{{ "" if s.errors|length == 1 else "s" }}
       </a>
       {% endif %}
+      {# Real-time stream pill — colors via body[data-stream-status]. Click → /api/stream/health #}
+      <a href="/api/stream/health" target="_blank" rel="noopener"
+         class="stream-pill normal-case tracking-normal"
+         title="Real-time event stream — click for /api/stream/health">
+        ⚡ <span class="label"></span>
+      </a>
+      {# Operator <-> System view toggle. ?view=system flips templates;
+         the cookie persists the preference. #}
+      <span class="inline-flex rounded-full border border-slate-700 overflow-hidden text-[11px] normal-case tracking-normal" role="tablist">
+        <a href="?view=operator"
+           class="px-2.5 py-0.5 {{ 'bg-cyan-500/15 text-cyan-300' if active_view != 'system' else 'text-slate-400 hover:text-slate-200' }}"
+           role="tab" aria-selected="{{ 'true' if active_view != 'system' else 'false' }}">Operator</a>
+        <a href="?view=system"
+           class="px-2.5 py-0.5 border-l border-slate-700 {{ 'bg-cyan-500/15 text-cyan-300' if active_view == 'system' else 'text-slate-400 hover:text-slate-200' }}"
+           role="tab" aria-selected="{{ 'true' if active_view == 'system' else 'false' }}">⚡ System</a>
+      </span>
     </div>
     <h1 class="text-3xl lg:text-4xl font-bold mt-1">Trading Bot — Today</h1>
   </div>

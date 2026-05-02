@@ -145,6 +145,18 @@ class MailboxQueue:
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, default=str))
         tmp.rename(path)
+        # Bus emit so the LLM Mailbox node + activity feed see the
+        # submission live. Submitted from the daemon/lab process; the
+        # mailbox-routine process will emit the matching `completed`.
+        try:
+            from trading_bot.event_bus import bus as _bus
+            _bus.emit(
+                "mailbox.brief.submitted",
+                {"brief_id": brief_id, "role": brief.role},
+                source="llm_mailbox",
+            )
+        except Exception:
+            pass
         return brief_id
 
     def poll(self, brief_id: str, *, timeout_seconds: float) -> Result | None:
@@ -193,6 +205,29 @@ class MailboxQueue:
         tmp = done_path.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(result, default=str))
         tmp.rename(done_path)
+        # Bus emit from the mailbox-routine process so the dashboard
+        # sees the verdict the moment it lands. Errors come through as
+        # mailbox.brief.failed when the result payload carries one.
+        try:
+            from trading_bot.event_bus import bus as _bus
+            err = (result or {}).get("error")
+            if err:
+                _bus.emit(
+                    "mailbox.brief.failed",
+                    {"brief_id": brief_id, "error": str(err)[:200]},
+                    source="llm_mailbox",
+                )
+            else:
+                _bus.emit(
+                    "mailbox.brief.completed",
+                    {
+                        "brief_id": brief_id,
+                        "model_used": (result or {}).get("model_used"),
+                    },
+                    source="llm_mailbox",
+                )
+        except Exception:
+            pass
 
         pending = self._pending_path(brief_id)
         if pending.exists():

@@ -258,7 +258,7 @@ def run_risk_debate(
     except Exception as e:  # noqa: BLE001
         log.warning("risk_debate: judge schema mismatch, failing open: %s", e)
         return None
-    return RiskDebateVerdict(
+    verdict = RiskDebateVerdict(
         recommendation=v.recommendation,
         confidence=v.confidence,
         reason=v.reason,
@@ -266,3 +266,21 @@ def run_risk_debate(
         conservative_text=conservative.text,
         neutral_text=neutral.text,
     )
+    # Real-time bus emit (Phase 2). Note: risk_debate doesn't see all the
+    # caller's context (qty, entry, etc.) at the verdict callsite; we
+    # emit the load-bearing fields. Consumer joins by symbol if needed.
+    try:
+        from trading_bot.event_bus import bus as _bus
+        _bus.emit(
+            "debate.risk.completed",
+            {
+                "symbol": symbol, "action": action,
+                "verdict": verdict.recommendation,
+                "confidence": verdict.confidence,
+                "strategy": strategy, "regime": regime,
+            },
+            source="risk_debate",
+        )
+    except Exception:
+        pass
+    return verdict

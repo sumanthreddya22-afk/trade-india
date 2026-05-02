@@ -7,6 +7,10 @@
   <script src="/static/tailwind.js"></script>
   <script src="/static/htmx.min.js"></script>
   <script src="/static/chart.umd.js"></script>
+  {# Real-time event bus bridge — opens EventSource(/api/stream) and
+     re-dispatches named events on document.body so HTMX fragments can
+     refresh on push via hx-trigger="<event> from:body, every <fallback>s". #}
+  <script defer src="/static/event_bus.js"></script>
   <style>
     :root { --bg: #0a0f1c; --card: #0f172a; --border: #1e293b; }
     body { background: linear-gradient(180deg,#070b15 0%,#0a0f1c 100%); color: #e2e8f0; font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
@@ -28,9 +32,27 @@
     /* HTMX swap pulse so a refreshing card is briefly highlighted. */
     .htmx-settling { transition: opacity .15s ease-out; }
     .htmx-swapping { opacity: .6; }
+
+    /* Real-time stream status pill. Body[data-stream-status] is set by
+       /static/event_bus.js based on the EventSource connection state. */
+    .stream-pill { display:inline-flex;align-items:center;gap:.4rem;padding:.15rem .55rem;border-radius:9999px;font-size:11px;font-weight:600;letter-spacing:.05em;border:1px solid transparent; }
+    .stream-pill::before { content:""; width:6px;height:6px;border-radius:50%; }
+    body[data-stream-status="live"] .stream-pill { background:rgba(16,185,129,.12); color:#34d399; border-color:rgba(16,185,129,.35); }
+    body[data-stream-status="live"] .stream-pill::before { background:#10b981; box-shadow:0 0 6px #10b981; animation: pulse 2s infinite; }
+    body[data-stream-status="reconn"] .stream-pill { background:rgba(245,158,11,.12); color:#fbbf24; border-color:rgba(245,158,11,.35); }
+    body[data-stream-status="reconn"] .stream-pill::before { background:#f59e0b; }
+    body[data-stream-status="down"] .stream-pill { background:rgba(244,63,94,.12); color:#fb7185; border-color:rgba(244,63,94,.35); }
+    body[data-stream-status="down"] .stream-pill::before { background:#f43f5e; }
+    body[data-stream-status="off"] .stream-pill { background:rgba(100,116,139,.12); color:#94a3b8; border-color:rgba(100,116,139,.35); }
+    body[data-stream-status="off"] .stream-pill::before { background:#64748b; }
+    .stream-pill .label::after { content: attr(data-label); }
+    body[data-stream-status="live"] .stream-pill .label::after { content: "STREAM"; }
+    body[data-stream-status="reconn"] .stream-pill .label::after { content: "RECONN"; }
+    body[data-stream-status="down"] .stream-pill .label::after { content: "OFFLINE"; }
+    body[data-stream-status="off"] .stream-pill .label::after { content: "PAUSED"; }
   </style>
 </head>
-<body class="min-h-full">
+<body class="min-h-full" data-stream-status="off">
 
 <div class="flex min-h-screen">
 
@@ -65,6 +87,7 @@
       <a href="#llm_spend" data-section="llm_spend" class="nav-item"><span>💸</span> AI spend</a>
       <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-3 mb-1">System</div>
       <a href="#role_health" data-section="role_health" class="nav-item"><span>◍</span> Background jobs</a>
+      <a href="#scheduled" data-section="scheduled" class="nav-item"><span>⏱</span> Scheduled jobs</a>
       <a href="#freshness" data-section="freshness" class="nav-item"><span>🕒</span> Data health</a>
       <a href="#email_firehose" data-section="email_firehose" class="nav-item"><span>📨</span> Inbox volume</a>
       <a href="#process_registry" data-section="process_registry" class="nav-item"><span>⚙</span> Processes</a>
@@ -138,6 +161,8 @@
       {% include "_llm_spend.html" %}
     </section>
     {% include "_proposals.html" %}
+    {% include "_threshold_overrides.html" %}
+    {% include "_intel_pool.html" %}
 
     {# ─── System Health ───────────────────────────────────────────── #}
     <div class="pt-3 pb-1">
@@ -146,6 +171,7 @@
     </div>
 
     {% include "_role_health.html" %}
+    {% include "_scheduled.html" %}
     <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
       {% include "_freshness.html" %}
       {% include "_email_firehose.html" %}

@@ -100,6 +100,27 @@ class ClosedTradeStore:
                 notes=trade.notes,
             ))
             s.commit()
+        # Real-time bus emit (Phase 2). Outside the session block — we
+        # emit only on a real insert (the early-return above skips it
+        # for idempotent re-appends). KPI / stats / since-inception
+        # fragments listen for trade.closed.
+        try:
+            from trading_bot.event_bus import bus as _bus
+            _bus.emit(
+                "trade.closed",
+                {
+                    "symbol": trade.symbol,
+                    "side": trade.side,
+                    "qty": float(trade.qty),
+                    "realized_pnl": float(trade.realized_pnl),
+                    "pnl_pct": float(trade.pnl_pct),
+                    "strategy": trade.strategy,
+                    "hold_hours": float(trade.hold_hours),
+                },
+                source="reconciliation.closed_trade_store",
+            )
+        except Exception:
+            pass
 
     def delete_by_entry_order_id(self, entry_order_id: str) -> int:
         """Remove a row by entry_order_id. Returns rowcount.

@@ -31,6 +31,29 @@ RUNS_DIR = Path(os.environ.get("TRADING_BOT_RUNS", "runs"))
 STATE_DB = Path(os.environ.get("TRADING_BOT_STATE_DB", "data/state.db"))
 
 
+def _run_event_bus_retention(db_path: Path, *, log, max_age_days: int = 7) -> None:
+    """Nightly: drop events older than ``max_age_days`` and truncate the
+    WAL so the file doesn't grow unbounded. The daemon process is the
+    only writer for this — other launchd processes never run it,
+    avoiding checkpoint contention.
+    """
+    import sqlite3 as _sql
+    from datetime import datetime, timedelta, timezone
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    try:
+        with _sql.connect(str(db_path), timeout=30.0) as conn:
+            cur = conn.execute("DELETE FROM events WHERE created_at < ?", (cutoff,))
+            deleted = cur.rowcount or 0
+            conn.commit()
+            try:
+                conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except Exception:
+                pass
+        log.event("event_bus_retention", deleted=deleted, cutoff=cutoff)
+    except Exception as e:
+        log.error("event_bus_retention_failed", error=e)
+
+
 def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
                       risk_manager, intelligence_macro, regime_detector,
                       queue_alert):
@@ -122,12 +145,13 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
         """Wheel-eligible universe.
 
         Source preference (highest → lowest):
-          1. Scout-agent JSON (`data/wheel_candidates_today.json`) when
-             present and fresh (< 36h). The nightly wheel_scout routine
-             writes this file with researched candidates + theses.
-          2. Operator allowlist (when wheel.allowlist_only=True or
-             scout JSON is stale).
-          3. Discovered cache (wheel_universe_cache, eligible=True)
+          1. intel_candidates pool (continuous internet-driven). Top
+             stocks by score, intersected with optionable.
+          2. Scout-agent JSON (``data/wheel_candidates_today.json``) when
+             present and fresh (< 36h).
+          3. Operator allowlist (when wheel.allowlist_only=True or
+             scout JSON is stale and intel is stale).
+          4. Discovered cache (wheel_universe_cache, eligible=True)
              UNION allowlist when allowlist_only=False.
 
         All paths intersect with the currently-optionable Alpaca set and
@@ -139,6 +163,23 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
         optionable = opt.list_optionable_us_equities()
         blocklist = _load_yaml_symbols(app_cfg.wheel.blocklist_path)
         allowlist = _load_yaml_symbols(app_cfg.wheel.allowlist_path)
+
+        # Layer 0: prefer continuous intel pool when fresh. Wheel reads
+        # asset_class='stock' since underlyings are equities; the
+        # optionable + blocklist intersection happens here. Stale or
+        # empty intel pool transparently falls through.
+        try:
+            from trading_bot.intel import pool as intel_pool
+            if intel_pool.is_pool_fresh(state_engine):
+                pool_entries = intel_pool.top_for_asset_class(
+                    state_engine, asset_class="stock", n=200,
+                )
+                pool_symbols = {e.symbol for e in pool_entries}
+                eligible = (pool_symbols & optionable) - blocklist
+                if eligible:
+                    return eligible
+        except Exception:
+            pass
 
         # Layer 1: prefer scout JSON when present + fresh.
         scout_symbols = _read_scout_candidates()
@@ -458,7 +499,7 @@ def _load_runners(log: StructuredLogger):
                 run_wheel_scan, run_wheel_manage,
             )
             _alpaca = AlpacaClient(_settings)
-            _risk = RiskManager(_app_cfg)
+            _risk = RiskManager(_app_cfg, engine=engine)
             _macro = _MacroSnapshotter()
             _reg = _RegimeDetectorAdapter(_settings, _app_cfg)
             _wheel_deps = _build_wheel_deps(
@@ -525,6 +566,10 @@ def _load_runners(log: StructuredLogger):
         "midday_snapshot": _wrap("midday_snapshot", lambda: cli_mod.midday_snapshot_cli.callback()),
         "daily_digest": _wrap("daily_digest", lambda: reporter.run_eod(ctx={})),
         "log_rotation": _wrap("log_rotation", lambda: rotate_logs(runs_dir=RUNS_DIR, keep_days=90)),
+        "event_bus_retention": _wrap(
+            "event_bus_retention",
+            lambda: _run_event_bus_retention(STATE_DB, log=log),
+        ),
         "strategy_coach": _wrap("strategy_coach", lambda: strategy_coach.safe_run(ctx={})),
         "hold_spy_coordinator": _wrap(
             "hold_spy_coordinator", lambda: hold_spy_coordinator.safe_run(ctx={})
@@ -548,6 +593,11 @@ def _load_runners(log: StructuredLogger):
 def main() -> int:
     log = StructuredLogger(base=RUNS_DIR, role="daemon")
 
+    # Tag bus emissions from this process. Must come before any emit so
+    # rows in the events table get process="daemon" instead of "unknown".
+    from trading_bot.event_bus import bus as _bus_mod
+    _bus_mod.set_process_tag("daemon")
+
     # Auto-apply pending migrations on boot. Idempotent — exits clean if up-to-date.
     # Set TRADING_BOT_SKIP_MIGRATIONS=1 to skip (used by integration tests that
     # set up their own schema via SQLAlchemy directly).
@@ -556,6 +606,7 @@ def main() -> int:
         return 1
 
     log.event("daemon_boot", config_path=str(CONFIG_PATH))
+    _bus_mod.emit("process.started", {"process": "daemon"}, source="daemon")
 
     if not CONFIG_PATH.exists():
         log.error(
@@ -588,11 +639,51 @@ def main() -> int:
     sched.start()
     log.event("scheduler_started", jobs=[j.id for j in sched.get_jobs()])
 
+    # Real-time Alpaca trade stream (Phase 1). Pushes order.* and
+    # position.changed events into the bus for the dashboard. Optional —
+    # if creds are missing or TRADING_BOT_TRADE_STREAM_DISABLED=1 the
+    # daemon proceeds without the stream and dashboard fragments fall
+    # back to polling.
+    trade_stream = None
+    try:
+        from trading_bot.config import Settings
+        from trading_bot.streams.alpaca_trade_stream import maybe_start
+        trade_stream = maybe_start(Settings())
+        if trade_stream is not None:
+            log.event("alpaca_trade_stream_started")
+    except Exception as e:
+        # Stream is best-effort. The daemon must keep running even if it
+        # fails — scanners + execution still work without it.
+        log.error("alpaca_trade_stream_start_failed", error=e)
+
+    # File-system watchers (Phase 3). Catches writes that bypass the
+    # bus (mailbox routine, structured logs, scout output). Same
+    # best-effort contract as the trade stream.
+    file_watchers = None
+    try:
+        from trading_bot.streams.file_watchers import maybe_start as _fw_start
+        file_watchers = _fw_start()
+        if file_watchers is not None:
+            log.event("file_watchers_started")
+    except Exception as e:
+        log.error("file_watchers_start_failed", error=e)
+
     try:
         while not stop["flag"]:
             time.sleep(1)
     finally:
+        if trade_stream is not None:
+            try:
+                trade_stream.stop()
+            except Exception as e:
+                log.error("alpaca_trade_stream_stop_failed", error=e)
+        if file_watchers is not None:
+            try:
+                file_watchers.stop()
+            except Exception as e:
+                log.error("file_watchers_stop_failed", error=e)
         sched.shutdown(wait=False)
+        _bus_mod.emit("process.stopped", {"process": "daemon"}, source="daemon")
         log.event("daemon_stopped")
 
     return 0

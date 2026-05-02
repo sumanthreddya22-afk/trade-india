@@ -84,7 +84,25 @@ def append_lesson(
             )
         )
         session.commit()
-        return True
+    # Real-time bus emit (Phase 2). After commit so consumers don't see
+    # a row id that hasn't actually landed.
+    try:
+        from trading_bot.event_bus import bus as _bus
+        _bus.emit(
+            "lesson.created",
+            {
+                "decision_id": decision_id,
+                "symbol": symbol,
+                "strategy": strategy,
+                "pnl_pct": float(pnl_pct),
+                "hold_hours": float(hold_hours),
+                "tags": tags_list,
+            },
+            source="decision_lessons",
+        )
+    except Exception:
+        pass
+    return True
 
 
 def get_lessons(

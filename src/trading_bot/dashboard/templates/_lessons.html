@@ -1,7 +1,7 @@
 <section id="lessons"
          class="card p-6"
          hx-get="/fragment/lessons"
-         hx-trigger="every 120s"
+         hx-trigger="lesson.created from:body, every 300s"
          hx-swap="outerHTML">
   <div class="flex items-baseline justify-between flex-wrap gap-2">
     <div>

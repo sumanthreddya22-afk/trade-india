@@ -1,5 +1,7 @@
 <section id="kpi" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"
-         hx-get="/fragment/kpi" hx-trigger="every 60s" hx-swap="outerHTML">
+         hx-get="/fragment/kpi"
+         hx-trigger="trade.closed from:body, position.changed from:body, order.filled from:body, every 120s"
+         hx-swap="outerHTML">
   <div class="card p-5" title="Total account value (cash + market value of all positions). The 'since start' line is cumulative P&amp;L vs the account's funding baseline — includes realized wins, realized losses, fees, slippage, and current unrealized.">
     <div class="label">Account Value</div>
     <div class="kpi-num text-emerald-400 mt-2">{{ fmt.usd(s.kpi.equity) }}</div>

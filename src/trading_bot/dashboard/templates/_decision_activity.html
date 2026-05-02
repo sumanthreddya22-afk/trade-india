@@ -1,5 +1,7 @@
 <section id="decision_activity" class="card p-6"
-         hx-get="/fragment/decision_activity" hx-trigger="every 30s" hx-swap="outerHTML">
+         hx-get="/fragment/decision_activity"
+         hx-trigger="decision.created from:body, every 60s"
+         hx-swap="outerHTML">
   <div class="flex items-baseline justify-between flex-wrap gap-2">
     <div>
       <div class="label">Decision Log</div>

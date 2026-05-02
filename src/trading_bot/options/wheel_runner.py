@@ -278,14 +278,27 @@ def _maybe_run_wheel_unblock(
     from trading_bot.unblock_debate import (
         run_unblock_debate, should_unblock_debate,
     )
+    # Adaptive thresholds — consult the overrides table first, fall back to
+    # static cfg. The orchestrator-side debate predicate uses the same
+    # pattern (see ``_maybe_run_unblock_debate``); keep them in sync.
+    from trading_bot.threshold_overrides import lookup as _lookup_override
+    try:
+        max_overage_eff = _lookup_override(deps.engine, knob="unblock_max_overage_ratio")
+        min_score_eff = _lookup_override(deps.engine, knob="unblock_min_candidate_score")
+        daily_cap_eff = _lookup_override(deps.engine, knob="unblock_daily_debate_cap")
+    except Exception:
+        max_overage_eff = min_score_eff = daily_cap_eff = None
     if not should_unblock_debate(
         rejection_reason=block_reason,
         rejection_overage_ratio=overage_ratio,
         candidate_score=score,
         daily_debate_count=daily_count,
-        max_overage_ratio=deps.cfg.unblock_max_overage_ratio,
-        min_score=deps.cfg.unblock_min_candidate_score,
-        daily_cap=deps.cfg.unblock_daily_debate_cap,
+        max_overage_ratio=(max_overage_eff if max_overage_eff is not None
+                           else deps.cfg.unblock_max_overage_ratio),
+        min_score=(min_score_eff if min_score_eff is not None
+                   else deps.cfg.unblock_min_candidate_score),
+        daily_cap=(int(daily_cap_eff) if daily_cap_eff is not None
+                   else deps.cfg.unblock_daily_debate_cap),
     ):
         return False
 
@@ -346,6 +359,26 @@ def _maybe_run_wheel_unblock(
     except Exception as e:
         _log.warning("unblock_debate persist failed for %s: %s", symbol, e)
 
+    # Real-time bus emit (Phase 2). Same payload shape as the stock/crypto
+    # path so a single SSE listener handles all unblock debates.
+    try:
+        from trading_bot.event_bus import bus as _bus
+        _bus.emit(
+            "debate.unblock.completed",
+            {
+                "asset_class": "wheel",
+                "symbol": symbol,
+                "verdict": (verdict.recommendation if verdict else "fail_closed"),
+                "confidence": (verdict.confidence if verdict else "low"),
+                "block_reason": block_reason,
+                "candidate_score": score,
+                "overage_ratio": overage_ratio,
+            },
+            source="wheel_runner.unblock_debate",
+        )
+    except Exception:
+        pass
+
     # Operator-visibility: email every debate (whether the verdict was
     # acted on or not) so the operator sees what the committee considered
     # for each ticker. Wrapped in try/except — email failures never
@@ -398,7 +431,7 @@ def run_wheel_scan(deps: WheelDeps) -> None:
     account = deps.alpaca_client.get_account()
     equity = Decimal(str(account.equity))
     existing_opt = _existing_options_value(deps)
-    lane = WheelLane(deps.cfg)
+    lane = WheelLane(deps.cfg, engine=deps.engine)
     stats = WheelScanStats(universe_size=len(eligible))
     # Write the started snapshot immediately so a hang past _emit_scan_summary
     # leaves a trace on disk for the stall-watchdog to pick up.

@@ -235,7 +235,11 @@ class TradeOrchestrator:
         self._regime = regime
         # Strategy is chosen by regime if not explicitly provided
         self._strategy = strategy or strategy_for_regime(regime)
-        self._risk = risk_manager or RiskManager(config)
+        # Wire the unblock-debate engine into RiskManager too — it's the same
+        # state.db and we want the per_trade_risk_pct / max_position_pct
+        # overrides consulted on every check. Tests that pass an explicit
+        # ``risk_manager`` keep their existing wiring untouched.
+        self._risk = risk_manager or RiskManager(config, engine=unblock_debate_engine)
         self._state_builder = state_builder
         self._decision_store = decision_store
         self._policy_version = policy_version
@@ -453,9 +457,26 @@ class TradeOrchestrator:
 
             daily_count = _count_todays_unblock_debates(self._unblock_debate_engine)
             wheel_cfg = getattr(self._cfg, "wheel", None)
-            min_score = float(getattr(wheel_cfg, "unblock_min_candidate_score", 7.0))
-            max_overage = float(getattr(wheel_cfg, "unblock_max_overage_ratio", 0.50))
-            daily_cap = int(getattr(wheel_cfg, "unblock_daily_debate_cap", 15))
+            # Adaptive thresholds: consult the overrides table FIRST. Fall
+            # back to static YAML when no fresh override exists. Same shape
+            # as the wheel-runner-side predicate so the two paths stay in
+            # lockstep.
+            try:
+                from trading_bot.threshold_overrides import lookup as _lookup_override
+                ov_min = _lookup_override(self._unblock_debate_engine,
+                                          knob="unblock_min_candidate_score")
+                ov_max = _lookup_override(self._unblock_debate_engine,
+                                          knob="unblock_max_overage_ratio")
+                ov_cap = _lookup_override(self._unblock_debate_engine,
+                                          knob="unblock_daily_debate_cap")
+            except Exception:
+                ov_min = ov_max = ov_cap = None
+            min_score = float(ov_min) if ov_min is not None else float(
+                getattr(wheel_cfg, "unblock_min_candidate_score", 7.0))
+            max_overage = float(ov_max) if ov_max is not None else float(
+                getattr(wheel_cfg, "unblock_max_overage_ratio", 0.50))
+            daily_cap = int(ov_cap) if ov_cap is not None else int(
+                getattr(wheel_cfg, "unblock_daily_debate_cap", 15))
 
             if not should_unblock_debate(
                 rejection_reason=f"{rule}: {detail}",
@@ -523,6 +544,27 @@ class TradeOrchestrator:
                 )
                 s.add(row)
                 s.commit()
+        except Exception:
+            pass
+
+        # Real-time bus emit (Phase 2). One event per debate so the
+        # _activity_feed and Unblock Debate node can light up
+        # immediately. Critical-tier: never dropped under backpressure.
+        try:
+            from trading_bot.event_bus import bus as _bus
+            _bus.emit(
+                "debate.unblock.completed",
+                {
+                    "asset_class": asset_class_label,
+                    "symbol": order.symbol,
+                    "verdict": (verdict.recommendation if verdict else "fail_closed"),
+                    "confidence": (verdict.confidence if verdict else "low"),
+                    "block_reason": f"{rule}: {detail}",
+                    "candidate_score": score,
+                    "overage_ratio": overage_ratio,
+                },
+                source="orchestrator.unblock_debate",
+            )
         except Exception:
             pass
 

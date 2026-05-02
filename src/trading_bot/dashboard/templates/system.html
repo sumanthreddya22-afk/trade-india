@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-950">
+<head>
+  <meta charset="utf-8">
+  <title>Trading Bot — System View</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="/static/tailwind.js"></script>
+  <script src="/static/htmx.min.js"></script>
+  <script defer src="/static/event_bus.js"></script>
+  <script defer src="/static/system.js"></script>
+  <link rel="stylesheet" href="/static/system.css">
+  <style>
+    :root { --bg: #0a0f1c; --card: #0f172a; --border: #1e293b; }
+    body { background: linear-gradient(180deg,#070b15 0%,#0a0f1c 100%); color: #e2e8f0; font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+    .label { font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color:#06b6d4; font-weight:600; }
+    .pulse-dot { width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 12px #10b981; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    /* Real-time stream status pill — same as operator view. */
+    .stream-pill { display:inline-flex;align-items:center;gap:.4rem;padding:.15rem .55rem;border-radius:9999px;font-size:11px;font-weight:600;letter-spacing:.05em;border:1px solid transparent; }
+    .stream-pill::before { content:""; width:6px;height:6px;border-radius:50%; }
+    body[data-stream-status="live"] .stream-pill { background:rgba(16,185,129,.12); color:#34d399; border-color:rgba(16,185,129,.35); }
+    body[data-stream-status="live"] .stream-pill::before { background:#10b981; box-shadow:0 0 6px #10b981; animation: pulse 2s infinite; }
+    body[data-stream-status="reconn"] .stream-pill { background:rgba(245,158,11,.12); color:#fbbf24; border-color:rgba(245,158,11,.35); }
+    body[data-stream-status="reconn"] .stream-pill::before { background:#f59e0b; }
+    body[data-stream-status="down"] .stream-pill { background:rgba(244,63,94,.12); color:#fb7185; border-color:rgba(244,63,94,.35); }
+    body[data-stream-status="down"] .stream-pill::before { background:#f43f5e; }
+    body[data-stream-status="off"] .stream-pill { background:rgba(100,116,139,.12); color:#94a3b8; border-color:rgba(100,116,139,.35); }
+    body[data-stream-status="off"] .stream-pill::before { background:#64748b; }
+    body[data-stream-status="live"] .stream-pill .label::after { content: "STREAM"; }
+    body[data-stream-status="reconn"] .stream-pill .label::after { content: "RECONN"; }
+    body[data-stream-status="down"] .stream-pill .label::after { content: "OFFLINE"; }
+    body[data-stream-status="off"] .stream-pill .label::after { content: "PAUSED"; }
+  </style>
+</head>
+<body class="min-h-full" data-stream-status="off">
+
+<main class="px-6 lg:px-10 py-6 max-w-[1700px] mx-auto">
+  {% include "_header.html" %}
+
+  <p class="text-xs text-slate-500 mt-2 mb-6">
+    System pipeline view — every box is an automation; arrows show data flow.
+    Green = healthy, amber = late, red = failed.
+    LLM-using boxes show their model badge. Click any box for last 10 runs + recent events.
+  </p>
+
+  {# Live incidents strip (hidden when empty). Driven by role.failed / role.stalled events. #}
+  <div id="incidents" class="hidden mb-4 card p-3 border border-rose-500/30 bg-rose-500/5 text-sm text-rose-200"></div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-6">
+    {# ── Pipeline canvas ──────────────────────────────────────────────── #}
+    <div id="system-canvas" class="space-y-5">
+      {% for zone_id, zone_label in zones %}
+        {% set zone_nodes = nodes_by_zone[zone_id] %}
+        {% if zone_nodes %}
+        <section data-zone="{{ zone_id }}"
+                 class="card p-4 {% if zone_id == 'supervision' %}supervision-zone collapsed{% endif %}">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="label">{{ zone_label }}</h3>
+            {% if zone_id == 'supervision' %}
+            <button class="text-[11px] text-slate-400 hover:text-cyan-300"
+                    data-action="toggle-zone" data-zone="{{ zone_id }}">
+              <span class="when-collapsed">+ {{ zone_nodes|length }} more</span>
+              <span class="when-expanded hidden">collapse</span>
+            </button>
+            {% endif %}
+          </div>
+          <div class="zone-body grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3"
+               {% if zone_id == 'supervision' %}hidden{% endif %}>
+            {% for n in zone_nodes %}
+              {% set health = node_health.get(n.id, 'off') %}
+              <div id="node-{{ n.id }}"
+                   data-node-id="{{ n.id }}"
+                   data-zone="{{ n.zone }}"
+                   data-health="{{ health }}"
+                   data-events="{{ ','.join(n.subscribes) }}"
+                   class="system-node {% if n.passive %}passive{% endif %}"
+                   tabindex="0">
+                <div class="flex items-start justify-between gap-1">
+                  <div class="text-sm font-semibold leading-tight">{{ n.label }}</div>
+                  <span class="health-dot" aria-hidden="true"></span>
+                </div>
+                <div class="flex items-center gap-1 mt-1 flex-wrap text-[10px]">
+                  {% if n.model_badge %}
+                    <span class="badge badge-model" title="LLM model">{{ n.model_badge }}</span>
+                  {% endif %}
+                  {% if n.mailbox %}
+                    <span class="badge badge-mailbox" title="Routed via Claude Code mailbox">✉ mbx</span>
+                  {% endif %}
+                  {% if n.process %}
+                    <span class="badge badge-process" title="launchd process">{{ n.process }}</span>
+                  {% endif %}
+                </div>
+                {% if n.cadence_label %}
+                  <div class="text-[10px] text-slate-500 mt-1">{{ n.cadence_label }}</div>
+                {% endif %}
+                <div class="text-[10px] text-slate-400 mt-1 last-activity"
+                     data-last-activity="{{ node_last.get(n.id, '') }}">
+                  {% if node_last.get(n.id) %}last {{ node_last[n.id] }}{% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </section>
+        {% endif %}
+      {% endfor %}
+    </div>
+
+    {# ── Right rail: portfolio + stream summary ──────────────────────── #}
+    <aside class="space-y-4">
+      {% include "_portfolio_rail.html" %}
+      <div class="card p-4">
+        <div class="label">Stream</div>
+        <div class="text-xs text-slate-400 mt-2">
+          Connection: <span class="stream-pill"><span class="label"></span></span>
+        </div>
+        <div class="text-xs text-slate-500 mt-2">
+          <a href="/api/stream/health" target="_blank" class="hover:text-cyan-300">/api/stream/health ↗</a>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="text-xs text-slate-600 pt-8 pb-4 text-center">
+    Trading Bot · System pipeline · 127.0.0.1 · Real-time event-driven
+  </footer>
+</main>
+
+{# Slide-up drill-down panel. Hidden by default; system.js fetches
+   /fragment/node/<id> into #drilldown-body when a node is clicked. #}
+<div id="drilldown" class="fixed inset-x-0 bottom-0 transform translate-y-full transition-transform duration-200 z-30"
+     style="will-change: transform;" aria-hidden="true">
+  <div class="card mx-auto max-w-[1400px] mb-2 mx-3 p-5 shadow-2xl border-slate-700">
+    <div id="drilldown-body" class="text-sm">
+      <div class="text-slate-400">Loading…</div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

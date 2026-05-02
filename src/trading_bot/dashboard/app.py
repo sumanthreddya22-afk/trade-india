@@ -17,6 +17,9 @@ Routes
 """
 from __future__ import annotations
 
+import asyncio
+import os
+import random
 import threading
 import time
 from dataclasses import dataclass
@@ -26,13 +29,15 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from trading_bot.config import Settings, load_config
 from trading_bot.dashboard.data import DashboardSnapshot, build_snapshot
 from trading_bot.dashboard.insights import InsightsSnapshot, build_insights
+from trading_bot.event_bus import bus as _bus_mod
+from trading_bot.event_bus.subscriber import Broadcaster, Event, get_max_event_id
 
 CONFIG_PATH = Path("strategy/config.yaml")
 WATCHLIST_PATH = Path("strategy/watchlist.yaml")
@@ -41,6 +46,27 @@ CLOSED_DB_PATH = Path("data/closed_trades.db")
 
 CACHE_TTL_SECONDS = 25
 BG_REFRESH_INTERVAL = 25
+
+# Path to the shared SQLite that holds the events table. Producers across
+# all four launchd processes write here; the SSE broadcaster tails it.
+STATE_DB_PATH = os.environ.get("TRADING_BOT_STATE_DB", "data/state.db")
+
+# Allowed Host values for the SSE endpoint. The dashboard binds 127.0.0.1
+# but a malicious browser tab on a public site could try DNS rebinding;
+# rejecting unknown Host headers is a one-line defense. The list is a
+# prefix match so port-only differences (8765, 8000, etc) still pass.
+_ALLOWED_HOSTS = ("127.0.0.1", "localhost")
+
+# Server-side reconnect hint sent in the SSE preamble. Browser will wait
+# this long (plus its own jitter) before reconnecting after a transient
+# network blip. Add jitter per-connection to avoid reconnect storms.
+_SSE_RETRY_BASE_MS = 5000
+_SSE_RETRY_JITTER_MS = 2000
+
+# Heartbeat comment cadence. EventSource will treat the connection as
+# alive as long as it sees bytes within ~30s; a comment line every 15s
+# is conservative. Bytes are tiny (`: hb\n\n`).
+_SSE_HEARTBEAT_S = 15.0
 
 # Whitelist of fragment names → partial template files. Each fragment is
 # its own HTMX refresh target.
@@ -66,11 +92,14 @@ FRAGMENTS: dict[str, str] = {
     # Strategy lab
     "lab_evolution": "_lab_evolution.html",
     "calibrator": "_calibrator.html",
+    "threshold_overrides": "_threshold_overrides.html",
+    "intel_pool": "_intel_pool.html",
     "proposals": "_proposals.html",
     "llm_spend": "_llm_spend.html",
     "wheel": "_wheel.html",
     # System health
     "role_health": "_role_health.html",
+    "scheduled": "_scheduled.html",
     "freshness": "_freshness.html",
     "email_firehose": "_email_firehose.html",  # NEW
     "process_registry": "_process_registry.html",  # NEW
@@ -214,6 +243,107 @@ def _filter_equity_range(points: list[Any], range_key: str) -> list[Any]:
 # ---------- app factory ---------------------------------------------------
 
 
+def _last_role_runs(db_path: str, role_name: str, *, limit: int = 10) -> list[Any]:
+    """Most-recent-first role_runs for one role. Returns SimpleNamespace
+    rows so the template can use dot-access."""
+    import sqlite3 as _sql
+    from types import SimpleNamespace
+    out: list[SimpleNamespace] = []
+    try:
+        with _sql.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0) as conn:
+            rows = conn.execute(
+                "SELECT role_name, started_at, finished_at, status, latency_ms, error_text "
+                "FROM role_runs WHERE role_name = ? ORDER BY started_at DESC LIMIT ?",
+                (role_name, limit),
+            ).fetchall()
+        for r in rows:
+            ts = r[1]
+            try:
+                if isinstance(ts, str):
+                    ts = datetime.fromisoformat(ts)
+                if ts and ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+            out.append(SimpleNamespace(
+                role_name=r[0], started_at=ts, finished_at=r[2],
+                status=r[3], latency_ms=r[4], error_text=r[5] or "",
+            ))
+    except Exception:
+        pass
+    return out
+
+
+def _recent_events_for(db_path: str, types: tuple[str, ...], *, limit: int = 20) -> list[Any]:
+    """Most-recent-first events filtered to ``types``."""
+    import json as _json
+    import sqlite3 as _sql
+    from types import SimpleNamespace
+    out: list[SimpleNamespace] = []
+    if not types:
+        return out
+    placeholders = ",".join(["?"] * len(types))
+    try:
+        with _sql.connect(f"file:{db_path}?mode=ro", uri=True, timeout=5.0) as conn:
+            rows = conn.execute(
+                f"SELECT type, payload, source, created_at FROM events "
+                f"WHERE type IN ({placeholders}) ORDER BY id DESC LIMIT ?",
+                (*types, limit),
+            ).fetchall()
+        for r in rows:
+            ts = r[3]
+            try:
+                if isinstance(ts, str):
+                    ts = datetime.fromisoformat(ts)
+                if ts and ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+            except Exception:
+                pass
+            try:
+                payload = _json.loads(r[1] or "{}")
+                payload_str = ", ".join(f"{k}={v}" for k, v in list(payload.items())[:6])
+            except Exception:
+                payload_str = ""
+            out.append(SimpleNamespace(
+                type=r[0], payload_str=payload_str, source=r[2], created_at=ts,
+            ))
+    except Exception:
+        pass
+    return out
+
+
+def _system_view_ctx() -> dict[str, Any]:
+    """Extra context for system.html. Computes node health + last-activity
+    once per page load; live updates come from /fragment/system_nodes
+    plus SSE flashes for sub-second feedback.
+    """
+    from trading_bot.dashboard.system_state import build_system_snapshot
+    from trading_bot.dashboard import system_topology as topo
+    snap = build_system_snapshot(STATE_DB_PATH)
+    nodes_by_zone: dict[str, list] = {z: [] for z, _ in topo.ZONES}
+    for n in topo.NODES:
+        nodes_by_zone[n.zone].append(n)
+    return {
+        "zones": topo.ZONES,
+        "nodes_by_zone": nodes_by_zone,
+        "node_health": {nid: info.get("health", "off") for nid, info in snap.items()},
+        "node_last":   {nid: info.get("last_activity_label", "") for nid, info in snap.items()},
+    }
+
+
+def _host_ok(request: Request) -> bool:
+    """DNS-rebinding defense for streaming endpoints.
+
+    The dashboard binds 127.0.0.1, but a public webpage in another tab
+    could try to make its hostname resolve to 127.0.0.1 and then fetch
+    /api/stream. Reject anything that doesn't look like localhost. Port
+    is allowed to vary so dev servers (8000, 8765, …) still work.
+    """
+    host_hdr = request.headers.get("host") or ""
+    host = host_hdr.split(":", 1)[0].strip().lower()
+    return host in _ALLOWED_HOSTS
+
+
 def _et_filter(value, fmt: str = "%b %d %-I:%M %p ET"):
     """Jinja filter — render any datetime in America/New_York with given format.
 
@@ -239,6 +369,29 @@ def create_app() -> FastAPI:
     templates.env.filters["et"] = _et_filter
     app.mount("/static", StaticFiles(directory=str(base / "static")), name="static")
 
+    # --- Real-time event bus wiring (Phase 0) ----------------------------
+    # The dashboard process is a producer too — it stamps its own emissions
+    # with process="dashboard" so cross-process emit counts are visible in
+    # /api/stream/health. The Broadcaster runs one tail loop and fans
+    # events out to all connected SSE clients.
+    _bus_mod.set_process_tag("dashboard")
+    broadcaster = Broadcaster(STATE_DB_PATH)
+    app.state.broadcaster = broadcaster
+
+    @app.on_event("startup")
+    async def _start_broadcaster() -> None:
+        await broadcaster.start()
+        # Self-emit so the dashboard's own row appears in /api/stream
+        # health by_process; also useful as a "is the loop alive" probe.
+        try:
+            _bus_mod.emit("process.started", {"process": "dashboard"}, source="dashboard")
+        except Exception:
+            pass
+
+    @app.on_event("shutdown")
+    async def _stop_broadcaster() -> None:
+        await broadcaster.stop()
+
     cache = _SnapshotCache(ttl=CACHE_TTL_SECONDS)
     # Build once eagerly so the first request is fast.
     try:
@@ -247,7 +400,8 @@ def create_app() -> FastAPI:
         pass
     _start_background_refresher(cache, BG_REFRESH_INTERVAL)
 
-    def _ctx(combined: _CombinedSnapshot, range_key: str = "1m") -> dict[str, Any]:
+    def _ctx(combined: _CombinedSnapshot, range_key: str = "1m",
+             active_view: str = "operator") -> dict[str, Any]:
         snap = combined.data
         session_code, session_label = _market_session()
         curve = _filter_equity_range(list(snap.equity_curve), range_key)
@@ -263,12 +417,63 @@ def create_app() -> FastAPI:
             "fragments": list(FRAGMENTS.keys()),
             "scan_age_seconds": _scan_age_seconds(snap),
             "lab": _lab_views(),
+            "active_view": active_view,
         }
 
     @app.get("/", response_class=HTMLResponse)
-    def index(request: Request) -> Any:
+    def index(request: Request, view: str | None = None) -> Any:
+        # Two views share this route. ?view=system|operator wins; else
+        # the dash_view cookie persists the last choice; else "operator".
+        chosen = (view or request.cookies.get("dash_view") or "operator").lower()
+        if chosen not in ("operator", "system"):
+            chosen = "operator"
         combined = cache.get()
-        return templates.TemplateResponse(request, "dashboard.html", _ctx(combined))
+        ctx = _ctx(combined, active_view=chosen)
+        if chosen == "system":
+            ctx.update(_system_view_ctx())
+            resp = templates.TemplateResponse(request, "system.html", ctx)
+        else:
+            resp = templates.TemplateResponse(request, "dashboard.html", ctx)
+        # Persist the toggle for 30 days.
+        if view in ("operator", "system"):
+            resp.set_cookie("dash_view", view, max_age=60 * 60 * 24 * 30,
+                            samesite="lax", httponly=False)
+        return resp
+
+    @app.get("/fragment/portfolio_rail", response_class=HTMLResponse)
+    def fragment_portfolio_rail(request: Request) -> Any:
+        combined = cache.get()
+        return templates.TemplateResponse(request, "_portfolio_rail.html", _ctx(combined))
+
+    @app.get("/fragment/system_nodes")
+    def fragment_system_nodes(request: Request) -> Any:
+        # JSON snapshot — lightweight, used by system.js to refresh
+        # health colors + last-activity timestamps every 30s.
+        from trading_bot.dashboard.system_state import build_system_snapshot
+        snap = build_system_snapshot(STATE_DB_PATH)
+        return JSONResponse({"nodes": snap})
+
+    @app.get("/fragment/node/{node_id}", response_class=HTMLResponse)
+    def fragment_node(request: Request, node_id: str) -> Any:
+        from trading_bot.dashboard import system_topology as topo
+        from trading_bot.dashboard.system_state import build_system_snapshot
+        n = topo.node_by_id(node_id)
+        if n is None:
+            raise HTTPException(status_code=404, detail=f"unknown node: {node_id}")
+        # Pull the same data system.js uses, plus richer per-node detail.
+        health_all = build_system_snapshot(STATE_DB_PATH)
+        health = health_all.get(node_id, {"health": "off", "last_activity_label": ""})
+        role_runs = _last_role_runs(STATE_DB_PATH, n.role_name, limit=10) if n.role_name else []
+        events = _recent_events_for(STATE_DB_PATH, n.subscribes, limit=20) if n.subscribes else []
+        ctx = {
+            "node": n,
+            "health": health,
+            "role_runs": role_runs,
+            "events": events,
+            "subscribes": list(n.subscribes),
+            "fmt": _formatters(),
+        }
+        return templates.TemplateResponse(request, "_node_drilldown.html", ctx)
 
     @app.get("/architecture", response_class=HTMLResponse)
     def architecture(request: Request) -> Any:
@@ -307,6 +512,111 @@ def create_app() -> FastAPI:
         code, label = _market_session()
         return JSONResponse({"code": code, "label": label})
 
+    # ----- Real-time SSE stream + health (Phase 0) ----------------------
+    @app.get("/api/stream")
+    async def api_stream(request: Request) -> Any:
+        if not _host_ok(request):
+            raise HTTPException(status_code=403, detail="Host header not allowed")
+        # Last-Event-ID resume: the browser sends this on auto-reconnect
+        # so we replay missed events for *this* client only.
+        last_event_id_hdr = request.headers.get("last-event-id") or request.headers.get("Last-Event-ID")
+        try:
+            last_event_id = int(last_event_id_hdr) if last_event_id_hdr else None
+        except ValueError:
+            last_event_id = None
+
+        async def event_stream():
+            cq = await broadcaster.subscribe()
+            try:
+                # Server-controlled reconnect hint, jittered per-connection
+                # so all clients don't reconnect at the same moment after a
+                # dashboard restart.
+                retry_ms = _SSE_RETRY_BASE_MS + random.randint(0, _SSE_RETRY_JITTER_MS)
+                yield f"retry: {retry_ms}\n\n".encode("utf-8")
+                # Replay missed events for this client (no impact on others).
+                if last_event_id is not None:
+                    await broadcaster.replay_for(cq, last_event_id)
+                # Initial hello so the browser knows the connection is live
+                # and so we can verify the pipe in DevTools immediately.
+                hello = Event(
+                    id=0, type="stream.hello",
+                    payload={"resumed_from": last_event_id},
+                    source="dashboard", process="dashboard",
+                    created_at=datetime.now(timezone.utc),
+                )
+                yield hello.to_sse_line().encode("utf-8")
+
+                last_send = time.monotonic()
+                while True:
+                    if await request.is_disconnected():
+                        return
+                    try:
+                        ev = await asyncio.wait_for(cq.q.get(), timeout=_SSE_HEARTBEAT_S)
+                    except asyncio.TimeoutError:
+                        # Heartbeat — comment line keeps the connection
+                        # alive through proxies and reassures the browser.
+                        yield b": hb\n\n"
+                        last_send = time.monotonic()
+                        continue
+                    yield ev.to_sse_line().encode("utf-8")
+                    last_send = time.monotonic()
+            finally:
+                await broadcaster.unsubscribe(cq)
+
+        # SSE-friendly headers: text/event-stream, no caching, no buffering.
+        headers = {
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+        return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
+
+    @app.get("/api/stream/health")
+    def api_stream_health(request: Request) -> Any:
+        if not _host_ok(request):
+            raise HTTPException(status_code=403, detail="Host header not allowed")
+        b_stats = broadcaster.stats()
+        bus_stats = _bus_mod.get_bus(STATE_DB_PATH).stats()
+        # Per-process emission counts in last hour — small, cheap.
+        per_process: dict[str, int] = {}
+        try:
+            import sqlite3
+            with sqlite3.connect(f"file:{STATE_DB_PATH}?mode=ro", uri=True, timeout=5.0) as conn:
+                rows = conn.execute(
+                    "SELECT process, COUNT(*) FROM events "
+                    "WHERE created_at > datetime('now', '-1 hour') "
+                    "GROUP BY process",
+                ).fetchall()
+                per_process = {r[0]: int(r[1]) for r in rows}
+        except Exception:
+            pass
+        return JSONResponse({
+            "clients_connected": b_stats["clients_connected"],
+            "cursor": b_stats["cursor"],
+            "lag_ms_p99": b_stats["lag_ms_p99"],
+            "events_emitted_total": bus_stats["events_emitted_total"],
+            "events_dropped_total": bus_stats["events_dropped_total"],
+            "events_written_total": bus_stats["events_written_total"],
+            "queue_depth": bus_stats["queue_depth"],
+            "by_process_last_hour": per_process,
+        })
+
+    @app.post("/api/stream/test-emit")
+    def api_stream_test_emit(request: Request, type: str = "stream.hello", payload: str = "{}") -> Any:
+        """Smoke-test endpoint: emit one event from the dashboard process so
+        you can verify end-to-end pipe in DevTools without standing up a
+        producer. Localhost-only by Host check + this endpoint is a no-op
+        if the bus failed to start (it logs and returns 200)."""
+        if not _host_ok(request):
+            raise HTTPException(status_code=403, detail="Host header not allowed")
+        import json as _json
+        try:
+            parsed = _json.loads(payload)
+        except Exception:
+            parsed = {"raw": payload}
+        ok = _bus_mod.emit(type, parsed, source="dashboard.test")
+        return JSONResponse({"emitted": ok, "type": type})
+
     return app
 
 
@@ -340,6 +650,8 @@ def _lab_views() -> dict[str, Any]:
                 "llm_spend": lab_data.llm_spend(s),
                 "role_health": lab_data.role_health(s),
                 "proposals": lab_data.recent_proposals(s, limit=5),
+                "threshold_overrides": lab_data.threshold_overrides(s),
+                "intel_pool": lab_data.intel_pool(s),
             }
     except Exception:
         # Empty fallback so templates never crash on missing schema.
@@ -352,6 +664,8 @@ def _lab_views() -> dict[str, Any]:
             "llm_spend": None,
             "role_health": [],
             "proposals": [],
+            "threshold_overrides": None,
+            "intel_pool": None,
         }
 
 
@@ -534,12 +848,25 @@ except Exception:  # pragma: no cover — defensive
     app = FastAPI(title="Trading Bot Dashboard (stub)")
 
 
-def run(host: str = "127.0.0.1", port: int = 8765, reload: bool = False) -> None:
-    """Start uvicorn. Bound to localhost only — no auth."""
+def run(host: str = "127.0.0.1", port: int = 8765, reload: bool = False, workers: int = 1) -> None:
+    """Start uvicorn. Bound to localhost only — no auth.
+
+    ``workers`` MUST be 1: the SSE broadcaster keeps per-client queues in
+    memory inside one process, and clients pinned to a different worker
+    would never see events broadcast on the first one. The assertion is
+    here at the entry point, not inside ``create_app`` (where a worker
+    can't introspect its own count).
+    """
+    if workers != 1:
+        raise RuntimeError(
+            "Trading Bot Dashboard requires workers=1 — the SSE broadcaster "
+            "uses in-process fan-out, multi-worker would silently drop events. "
+            "Run with workers=1 or split the streaming endpoint to a separate service."
+        )
     import uvicorn
 
     uvicorn.run(
         "trading_bot.dashboard.app:create_app",
         host=host, port=port, reload=reload, factory=True,
-        log_level="info",
+        log_level="info", workers=1,
     )

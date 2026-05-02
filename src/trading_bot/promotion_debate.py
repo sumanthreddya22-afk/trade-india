@@ -174,12 +174,25 @@ def run_promotion_debate(
         except Exception as e:  # noqa: BLE001
             log.warning("promotion_debate: judge schema mismatch, failing open: %s", e)
             return None
-        return DebateVerdict(
+        verdict = DebateVerdict(
             recommendation=verdict_data.recommendation,
             confidence=verdict_data.confidence,
             reason=verdict_data.reason,
             bull_text=bull.text,
             bear_text=bear.text,
         )
+        try:
+            from trading_bot.event_bus import bus as _bus
+            _bus.emit(
+                "debate.promotion.completed",
+                {
+                    "verdict": verdict.recommendation,
+                    "confidence": verdict.confidence,
+                },
+                source="promotion_debate",
+            )
+        except Exception:
+            pass
+        return verdict
     log.warning("promotion_debate: judge returned free text only, failing open")
     return None
