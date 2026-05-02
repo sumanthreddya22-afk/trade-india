@@ -160,6 +160,13 @@ class WheelConfig(BaseModel):
     # Default 5 is reasonable steady-state. Drop to 3 during cold start
     # when the bot is still accumulating IV history (first 1-2 weeks).
     iv_rank_min_history: int = Field(default=5, ge=2, le=30)
+    # Liquidity gate (passes_liquidity in chain.py reads these). Defaults
+    # are tuned for real-time market hours on liquid contracts: spread
+    # <= 10c absolute AND <= 5% relative. Loosen during cold start /
+    # after-hours / weekend testing when Alpaca's indicative chains return
+    # 0 OI and snapshot spreads are wide.
+    liquidity_max_spread_abs: float = Field(default=0.10, gt=0)
+    liquidity_max_spread_rel: float = Field(default=0.05, gt=0, le=1.0)
 
 
 class DataQualityConfig(BaseModel):

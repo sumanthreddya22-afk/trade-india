@@ -71,6 +71,8 @@ def _deps(engine):
     d.cfg.min_premium_abs = 0.20
     d.cfg.min_annualized_yield = 0.0  # Bucket C: gate exists in pickers; default off here
     d.cfg.min_open_interest = 100
+    d.cfg.liquidity_max_spread_abs = 0.10
+    d.cfg.liquidity_max_spread_rel = 0.05
     d.cfg.take_profit_pct = 0.50
     d.cfg.dte_force_close = 21
     d.cfg.delta_breach_csp = 0.45

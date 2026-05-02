@@ -28,11 +28,13 @@ def _dte(c: ChainContract, today: dt.date) -> int:
 
 
 def passes_liquidity(c: ChainContract, cfg: WheelConfig) -> bool:
-    """Bucket E: spread gate now requires BOTH absolute spread &lt;= 0.10 AND
-    relative spread &lt;= 5%. Pre-Bucket-E used OR, which let a $0.40 / $0.50
-    contract (spread=0.10, relative 22%) pass the gate purely on the
-    absolute leg. Liquid options should clear both — the AND is the
-    stricter, and intent-correct, gate.
+    """Liquidity gate: open interest floor + spread guards.
+
+    Spread requires BOTH absolute (default <= $0.10) AND relative (default
+    <= 5%). Both thresholds are config-driven (cfg.liquidity_max_spread_abs
+    / cfg.liquidity_max_spread_rel) so weekend / after-hours / cold-start
+    runs (where Alpaca's indicative feed returns 0 OI and snapshot spreads
+    are wide) can use looser values without code changes.
     """
     if c.open_interest < cfg.min_open_interest:
         return False
@@ -40,7 +42,10 @@ def passes_liquidity(c: ChainContract, cfg: WheelConfig) -> bool:
     if mid <= 0:
         return False
     spread = c.ask - c.bid
-    return spread <= 0.10 and (spread / mid) <= 0.05
+    return (
+        spread <= cfg.liquidity_max_spread_abs
+        and (spread / mid) <= cfg.liquidity_max_spread_rel
+    )
 
 
 def pick_csp_contract(

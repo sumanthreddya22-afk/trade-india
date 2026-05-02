@@ -73,7 +73,7 @@ wheel:
   sentiment_floor: -0.3
   min_premium_abs: 0.20
   min_annualized_yield: 0.12
-  min_open_interest: 100
+  min_open_interest: 0   # 2026-05-01: Alpaca indicative feed returns 0 OI; raise back to 100 once we move to a paid options data feed.
   universe_cache_hours: 24
   # 2026-05-01: scout-curated allowlist mode. The wheel iterates the 6
   # names in strategy/wheel_allowlist.yaml only, skipping the 3000+ symbol
@@ -84,3 +84,8 @@ wheel:
   # iv_rank min_history to 2 so cold-start doesn't reject every candidate
   # with iv_rank=none. Raise to 5+ once we have ~2 weeks of history.
   iv_rank_min_history: 2
+  # 2026-05-01: weekend/after-hours snapshots have wide quoted spreads.
+  # Defaults (0.10 abs, 5% rel) are tuned for real-time market hours.
+  # Loosen to capture testing data; tighten back in steady-state.
+  liquidity_max_spread_abs: 1.50
+  liquidity_max_spread_rel: 0.50
