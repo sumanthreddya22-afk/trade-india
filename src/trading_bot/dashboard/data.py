@@ -11,6 +11,7 @@ flaky) external API.
 from __future__ import annotations
 
 import decimal
+import os
 import statistics
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -49,6 +50,13 @@ class KpiBlock:
     inception_equity: Decimal | None = None
     inception_pnl: Decimal | None = None
     inception_pnl_pct: float | None = None
+    # Phase 7.3: surface the fallback gate's state on the hero row so the
+    # operator notices when strategy_coach has halted trading. None when
+    # state.db is unreachable or the table is empty.
+    fallback_active: bool | None = None
+    fallback_set_at: str | None = None  # ISO8601 UTC
+    fallback_set_by: str | None = None  # 'strategy_coach' | 'manual' | 'bootstrap'
+    fallback_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -420,6 +428,9 @@ def _build_kpi(
                 (equity / inception_equity - 1) * 100
             )
 
+    fallback_active, fallback_set_at, fallback_set_by, fallback_reason = (
+        _read_fallback_flag()
+    )
     return KpiBlock(
         equity=equity, cash=cash,
         cash_pct=cash_pct, invested_pct=invested_pct,
@@ -430,7 +441,42 @@ def _build_kpi(
         inception_pnl_pct=inception_pnl_pct,
         max_drawdown_pct=Decimal("0"),  # filled in by curve
         open_position_count=len(rows),
+        fallback_active=fallback_active,
+        fallback_set_at=fallback_set_at,
+        fallback_set_by=fallback_set_by,
+        fallback_reason=fallback_reason,
     ), rows
+
+
+def _read_fallback_flag() -> tuple[bool | None, str | None, str | None, str | None]:
+    """Read the most-recent fallback_flags row. Returns (active, set_at_iso,
+    set_by, reason). All None when state.db is unreachable or the table is
+    empty. The dashboard tile renders a 'state unknown' placeholder when None.
+    """
+    try:
+        from sqlalchemy.orm import Session as _S
+        from trading_bot.state_db import get_engine
+        from trading_bot.state_fallback import current_flag
+        eng = get_engine(os.environ.get(
+            "TRADING_BOT_STATE_DB", "data/state.db",
+        ))
+        # Read attributes inside the session so the instance isn't detached
+        # by the time we touch them.
+        with _S(eng) as s:
+            flag = current_flag(s)
+            if flag is None:
+                return None, None, None, None
+            active = bool(flag.fallback_active)
+            set_at_raw = flag.set_at
+            set_by = flag.set_by
+            reason = flag.reason
+        set_at_iso = (
+            set_at_raw.isoformat() if hasattr(set_at_raw, "isoformat")
+            else (str(set_at_raw) if set_at_raw is not None else None)
+        )
+        return active, set_at_iso, set_by, reason
+    except Exception:
+        return None, None, None, None
 
 
 def _build_equity_curve(

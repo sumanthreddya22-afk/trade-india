@@ -156,6 +156,77 @@ def _handle_stall(
                subject=email.subject, html_body=email.html_body)
 
 
+# Per-role SLA registry. Reads from each Role class's `sla_seconds`
+# attribute at supervisor boot. The watchdog flags any RoleRun whose
+# started_at is older than 2× sla_seconds and finished_at is still NULL.
+def _build_role_sla_map() -> dict[str, int]:
+    """Inspect every BaseRole subclass for its declared sla_seconds."""
+    out: dict[str, int] = {}
+    try:
+        # Importing the role modules registers them as BaseRole subclasses.
+        from trading_bot.roles.runner import BaseRole
+        from trading_bot.roles import (
+            account_sentinel, backtest_engineer, calibrator,
+            code_reviewer, crypto_scanner, decision_reflector,
+            health_pulse, hold_spy_coordinator, order_steward,
+            param_optimizer, portfolio_monitor, promoter, reporter,
+            resource_guardian, schedule_auditor, sentiment_analyst,
+            stock_scanner, strategy_architect, strategy_coach,
+            universe_curator, vip_listener, watchdog as _wd_role,
+        )
+
+        def _walk_subclasses(cls):
+            for sub in cls.__subclasses__():
+                yield sub
+                yield from _walk_subclasses(sub)
+
+        for sub in _walk_subclasses(BaseRole):
+            name = getattr(sub, "name", None)
+            sla = getattr(sub, "sla_seconds", None)
+            if name and isinstance(sla, int) and sla > 0:
+                out[name] = sla
+    except Exception:
+        pass
+    # Sensible fallback for roles missing from the map (e.g. wheel_scan
+    # is a daemon job, not a Role subclass — handled by its own watchdog).
+    return out
+
+
+def _find_stalled_roles(
+    state_db: Path, *, sla_map: dict[str, int], min_threshold_seconds: int = 120,
+) -> list[dict]:
+    """Return any RoleRun with finished_at IS NULL and started_at older
+    than max(2 × sla_seconds, min_threshold_seconds). Skips wheel_scan
+    (covered by its own watchdog in wheel_runner)."""
+    from trading_bot.state_db import RoleRun
+    from sqlalchemy.orm import Session as _S
+
+    out: list[dict] = []
+    try:
+        eng = get_engine(state_db)
+        now_utc = dt.datetime.now(dt.timezone.utc)
+        with _S(eng) as s:
+            rows = s.query(RoleRun).filter(RoleRun.finished_at.is_(None)).all()
+        for r in rows:
+            sla = sla_map.get(r.role_name, 60)
+            threshold = max(2 * sla, min_threshold_seconds)
+            started = r.started_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=dt.timezone.utc)
+            age = (now_utc - started).total_seconds()
+            if age >= threshold:
+                out.append({
+                    "role_name": r.role_name,
+                    "started_at": r.started_at.isoformat(),
+                    "age_seconds": int(age),
+                    "sla_seconds": sla,
+                    "threshold_seconds": int(threshold),
+                })
+    except Exception:
+        return []
+    return out
+
+
 def main() -> int:
     log = StructuredLogger(base=RUNS_DIR, role="supervisor")
     log.event("supervisor_boot")
@@ -183,6 +254,9 @@ def main() -> int:
     last_account_check = 0.0
     last_wheel_stall_check = 0.0
     last_wheel_stall_alert = 0.0
+    last_role_stall_check = 0.0
+    last_role_stall_alert: dict[str, float] = {}
+    role_sla_map = _build_role_sla_map()
 
     stop = {"flag": False}
 
@@ -289,6 +363,41 @@ def main() -> int:
                             last_wheel_stall_alert = now
                 except Exception as e:
                     log.error("wheel_stall_check_failed", error=e)
+
+            # 4. Generic role stall watchdog: any RoleRun with finished_at
+            # NULL and started_at older than 2× sla_seconds. Per-role alert
+            # cooldown (1 hour) prevents email storms.
+            if now - last_role_stall_check >= 60:
+                last_role_stall_check = now
+                try:
+                    stalled = _find_stalled_roles(STATE_DB, sla_map=role_sla_map)
+                    for s in stalled:
+                        rname = s["role_name"]
+                        log.event(f"{rname}_stalled", **{
+                            k: v for k, v in s.items() if k != "role_name"
+                        })
+                        last_alert = last_role_stall_alert.get(rname, 0.0)
+                        if now - last_alert >= _ALERT_COOLDOWN_SECONDS:
+                            email = build_critical_email(
+                                title=f"{rname} role stalled",
+                                detail=(
+                                    f"Role {rname} started at {s['started_at']} "
+                                    f"and has not finished in {s['age_seconds']}s "
+                                    f"(threshold {s['threshold_seconds']}s = 2× "
+                                    f"sla_seconds={s['sla_seconds']}). The "
+                                    f"daemon process is alive but this role's "
+                                    f"runner is wedged. Investigate the "
+                                    f"daemon stderr log."
+                                ),
+                            )
+                            _send_alert(
+                                log, kind=f"{rname}_stalled",
+                                to=ALERT_RECIPIENT, subject=email.subject,
+                                html_body=email.html_body,
+                            )
+                            last_role_stall_alert[rname] = now
+                except Exception as e:
+                    log.error("role_stall_check_failed", error=e)
 
         except Exception as e:
             log.error("supervisor_loop_error", error=e)
