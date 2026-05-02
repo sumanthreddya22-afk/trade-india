@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.bharath.trading.wheel-scout</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/bharathkandala/Trading/tools/run_wheel_scout.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/bharathkandala/Trading</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>/Users/bharathkandala</string>
+  </dict>
+
+  <!-- Fire once nightly at 21:00 ET (after market close). The output
+       is consumed by the next morning's wheel scans (daemon's
+       wheel_scan cron at 14:15 UTC = 09:15 ET, well before market
+       open). 21:00 ET = 01:00 UTC the following day for DST, 02:00
+       UTC during standard time — set to 02:00 UTC to cover both. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>2</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <!-- One-shot per fire. -->
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>ThrottleInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/bharathkandala/Trading/runs/_launchd/wheel-scout.stdout.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/bharathkandala/Trading/runs/_launchd/wheel-scout.stderr.log</string>
+</dict>
+</plist>

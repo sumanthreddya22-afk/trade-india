@@ -74,28 +74,81 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
         except Exception:
             return set()
 
+    def _read_scout_candidates(
+        path_str: str = "data/wheel_candidates_today.json",
+        max_age_hours: float = 36.0,
+    ) -> set[str]:
+        """Read the nightly scout's candidate list. Returns empty set when
+        the file is missing, malformed, stale (> max_age_hours from
+        as_of), or contains no candidates. The wheel falls through to
+        allowlist / discovered cache in those cases.
+        """
+        try:
+            import json as _json
+            p = Path(path_str)
+            if not p.exists():
+                return set()
+            payload = _json.loads(p.read_text())
+            as_of_str = str(payload.get("as_of", ""))
+            if not as_of_str:
+                return set()
+            try:
+                as_of = dt.datetime.fromisoformat(as_of_str)
+                if as_of.tzinfo is None:
+                    as_of = as_of.replace(tzinfo=dt.timezone.utc)
+            except Exception:
+                # Fall back to date-only parse so the scout can write
+                # YYYY-MM-DD instead of full ISO timestamp.
+                try:
+                    d = dt.date.fromisoformat(as_of_str[:10])
+                    as_of = dt.datetime.combine(
+                        d, dt.time.min, tzinfo=dt.timezone.utc,
+                    )
+                except Exception:
+                    return set()
+            now = dt.datetime.now(dt.timezone.utc)
+            if (now - as_of).total_seconds() > max_age_hours * 3600:
+                return set()
+            symbols = set()
+            for c in payload.get("candidates", []):
+                sym = c.get("symbol")
+                if sym:
+                    symbols.add(str(sym).upper())
+            return symbols
+        except Exception:
+            return set()
+
     def _eligible_set() -> set[str]:
         """Wheel-eligible universe.
 
-        Default (allowlist_only=False): discovered set (wheel_universe_cache,
-        eligible=True) UNION operator allowlist, minus blocklist, intersected
-        with currently-optionable. The discovered set is built nightly by
-        wheel_universe_builder.
+        Source preference (highest → lowest):
+          1. Scout-agent JSON (`data/wheel_candidates_today.json`) when
+             present and fresh (< 36h). The nightly wheel_scout routine
+             writes this file with researched candidates + theses.
+          2. Operator allowlist (when wheel.allowlist_only=True or
+             scout JSON is stale).
+          3. Discovered cache (wheel_universe_cache, eligible=True)
+             UNION allowlist when allowlist_only=False.
 
-        allowlist_only=True: skip discovered entirely. Eligible = allowlist
-        ∩ optionable - blocklist. Used when the operator (or a future scout
-        agent) curates a small candidate list — avoids iterating the full
-        3000+ symbol discovered cache when scope is intentionally narrow.
-
-        Bucket C: when the resulting eligible set is empty, fire a
-        daemon_critical alert so the operator notices instead of the wheel
-        silently iterating an empty set.
+        All paths intersect with the currently-optionable Alpaca set and
+        subtract the blocklist. Empty eligible set fires a daemon_critical
+        alert so the operator notices instead of silent skip.
         """
         from trading_bot.state_db import WheelUniverseCache
         from sqlalchemy.orm import Session as _S
         optionable = opt.list_optionable_us_equities()
         blocklist = _load_yaml_symbols(app_cfg.wheel.blocklist_path)
         allowlist = _load_yaml_symbols(app_cfg.wheel.allowlist_path)
+
+        # Layer 1: prefer scout JSON when present + fresh.
+        scout_symbols = _read_scout_candidates()
+        if scout_symbols:
+            eligible = (scout_symbols & optionable) - blocklist
+            if eligible:
+                return eligible
+            # Scout produced symbols but none are currently optionable —
+            # fall through to allowlist / discovered as backup.
+
         if app_cfg.wheel.allowlist_only:
             eligible = (allowlist & optionable) - blocklist
             if not eligible:
