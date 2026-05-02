@@ -42,6 +42,13 @@ def test_scan_then_assignment_then_cc_then_called_away(engine):
                          iv_rank_floor=30,
                          min_premium_abs=0.20, min_open_interest=100,
                          min_annualized_yield=0.0,  # Bucket C
+                         liquidity_max_spread_abs=0.10,
+                         liquidity_max_spread_rel=0.05,
+                         unblock_debate_enabled=False,
+                         unblock_max_overage_ratio=0.50,
+                         unblock_min_candidate_score=7.0,
+                         unblock_daily_debate_cap=15,
+                         options_max_pct=20.0,
                          take_profit_pct=0.50, dte_force_close=21,
                          delta_breach_csp=0.45, delta_breach_cc=0.55,
                          max_rolls_per_cycle=2)

@@ -167,6 +167,15 @@ class WheelConfig(BaseModel):
     # 0 OI and snapshot spreads are wide.
     liquidity_max_spread_abs: float = Field(default=0.10, gt=0)
     liquidity_max_spread_rel: float = Field(default=0.05, gt=0, le=1.0)
+    # Phase 5 unblock-committee gate. When True, borderline risk-cap and
+    # sector-cap rejections fire a 4-LLM debate that may override. Default
+    # False so behavior is unchanged until explicitly opted-in. The
+    # predicate `should_unblock_debate` further gates by overage size,
+    # candidate score, and a daily debate budget.
+    unblock_debate_enabled: bool = Field(default=False)
+    unblock_max_overage_ratio: float = Field(default=0.50, gt=0, le=2.0)
+    unblock_min_candidate_score: float = Field(default=7.0, ge=0, le=10)
+    unblock_daily_debate_cap: int = Field(default=15, ge=0, le=100)
 
 
 class DataQualityConfig(BaseModel):

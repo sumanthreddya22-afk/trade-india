@@ -29,14 +29,14 @@ from trading_bot.config import WheelConfig
 from trading_bot.intelligence_finnhub import FinnhubClient
 from trading_bot.log_structured import StructuredLogger
 from trading_bot.options.alpaca_options import OptionAlpacaClient
-from trading_bot.options.chain import ChainContract
+from trading_bot.options.chain import ChainContract, annualized_yield
 from trading_bot.options.wheel_lane import WheelInputs, WheelLane
 from trading_bot.options.wheel_state import (
     Phase, WheelStateRepo, close_cycle, increment_rolls, mark_assigned,
     open_cc, open_csp,
 )
 from trading_bot.options.symbols import parse_occ
-from trading_bot.state_db import OptionFill, WheelCycle
+from trading_bot.state_db import OptionFill, UnblockDebateRun, WheelCycle
 
 
 _log = logging.getLogger(__name__)
@@ -188,6 +188,174 @@ def _sector_cap_check(
     )
 
 
+def _alloc_overage_ratio(*, deps: WheelDeps, equity: Decimal,
+                          existing_opt: Decimal,
+                          per_symbol_collateral: Decimal) -> float:
+    """Ratio of how far over the options_max_pct cap this proposed trade
+    sits. 0.0 = exactly at cap. 0.5 = 50% over. Used by the predicate
+    to gate which rejections are worth debating."""
+    cap_pct = float(getattr(deps.cfg, "options_max_pct",
+                              getattr(getattr(deps.risk_manager, "_cfg", None),
+                                      "allocation", None) and
+                              getattr(getattr(deps.risk_manager, "_cfg", None).allocation,
+                                      "options_max_pct", 20.0) or 20.0))
+    cap_usd = float(equity) * cap_pct / 100.0
+    proposed_usd = float(existing_opt) + float(per_symbol_collateral)
+    if cap_usd <= 0:
+        return 9.99  # cap effectively zero — anything is huge over
+    return max(0.0, (proposed_usd - cap_usd) / cap_usd)
+
+
+def _sector_overage_ratio(*, symbol: str, equity: Decimal,
+                            per_symbol_collateral: Decimal,
+                            sector_exposure: dict[str, float],
+                            classifier, cap_pct: float) -> float:
+    """Ratio over the sector-cap. Same shape as _alloc_overage_ratio."""
+    sector = classifier.get(symbol)
+    current = sector_exposure.get(sector, 0.0)
+    addition = float(per_symbol_collateral) / float(equity) if equity > 0 else 0.0
+    proposed = current + addition
+    if cap_pct <= 0:
+        return 9.99
+    return max(0.0, (proposed - cap_pct) / cap_pct)
+
+
+def _candidate_score(*, contract: ChainContract, iv_rank: float | None,
+                     today: dt.date) -> float:
+    """0-10 score blending IV rank (0-50% of weight) + ann yield (0-50%).
+
+    Used by the unblock-committee predicate to gate which rejected
+    candidates are worth debating. Generic-shape "rich premium" alone
+    isn't enough; we want IV-rich AND yield-rich together.
+    """
+    iv_component = 0.0
+    if iv_rank is not None:
+        iv_component = max(0.0, min(50.0, float(iv_rank))) / 10.0  # 0-5
+    ay = annualized_yield(contract, today)  # decimal, e.g. 0.30 = 30%
+    yield_component = max(0.0, min(0.50, ay)) * 10.0  # 0-5 (cap at 50% ay)
+    return round(iv_component + yield_component, 2)
+
+
+def _count_todays_unblock_debates(engine) -> int:
+    """Count debates fired today across all asset classes — used by the
+    daily cap predicate to bound LLM spend."""
+    try:
+        with Session(engine) as s:
+            today_utc_start = dt.datetime.combine(
+                dt.datetime.now(dt.timezone.utc).date(),
+                dt.time.min, tzinfo=dt.timezone.utc,
+            )
+            return s.query(UnblockDebateRun).filter(
+                UnblockDebateRun.run_at >= today_utc_start
+            ).count()
+    except Exception:
+        return 0
+
+
+def _maybe_run_wheel_unblock(
+    deps: WheelDeps,
+    *,
+    symbol: str,
+    contract: ChainContract,
+    block_reason: str,
+    overage_ratio: float,
+    today: dt.date,
+    iv_rank: float | None,
+    operational_context: str,
+) -> bool:
+    """Returns True if the gate should be OVERRIDDEN (proceed to place);
+    False to RESPECT the gate (skip).
+
+    Default-deny: any error / disabled flag / failed predicate / committee
+    'reject' → returns False so existing skip behavior is preserved.
+    """
+    if not deps.cfg.unblock_debate_enabled:
+        return False
+
+    score = _candidate_score(contract=contract, iv_rank=iv_rank, today=today)
+    daily_count = _count_todays_unblock_debates(deps.engine)
+
+    from trading_bot.unblock_debate import (
+        run_unblock_debate, should_unblock_debate,
+    )
+    if not should_unblock_debate(
+        rejection_reason=block_reason,
+        rejection_overage_ratio=overage_ratio,
+        candidate_score=score,
+        daily_debate_count=daily_count,
+        max_overage_ratio=deps.cfg.unblock_max_overage_ratio,
+        min_score=deps.cfg.unblock_min_candidate_score,
+        daily_cap=deps.cfg.unblock_daily_debate_cap,
+    ):
+        return False
+
+    proposal = (
+        f"  symbol:           {symbol}\n"
+        f"  contract:         {contract.contract_symbol}\n"
+        f"  action:           sell-to-open CSP\n"
+        f"  strike:           {contract.strike}\n"
+        f"  expiration:       {contract.expiration}\n"
+        f"  bid:              {contract.bid}\n"
+        f"  ask:              {contract.ask}\n"
+        f"  delta:            {contract.delta}\n"
+        f"  iv:               {contract.implied_volatility}\n"
+        f"  ann_yield_est:    {annualized_yield(contract, today):.4f}\n"
+    )
+    fundamentals = (
+        f"  iv_rank:          {iv_rank}\n"
+        f"  candidate_score:  {score} (0-10)\n"
+        f"  collateral_usd:   {float(contract.strike) * 100}\n"
+    )
+
+    verdict = run_unblock_debate(
+        deps.engine,
+        proposal_summary=proposal,
+        block_reason=block_reason,
+        overage_ratio=overage_ratio,
+        fundamentals=fundamentals,
+        operational_context=operational_context,
+        # lessons_block left empty until the lesson loop is wired
+    )
+
+    # Persist the row whether verdict is None, place, or reject — full audit.
+    try:
+        with Session(deps.engine) as s:
+            row = UnblockDebateRun(
+                run_at=_now(),
+                asset_class="wheel",
+                symbol=symbol,
+                candidate_score=score,
+                block_reason=block_reason,
+                overage_ratio=overage_ratio,
+                verdict=(verdict.recommendation if verdict else "fail_closed"),
+                confidence=(verdict.confidence if verdict else "low"),
+                judge_reason=(verdict.reason if verdict else "no verdict (fail-closed)"),
+                aggressive_text=(verdict.aggressive_text if verdict else ""),
+                conservative_text=(verdict.conservative_text if verdict else ""),
+                neutral_text=(verdict.neutral_text if verdict else ""),
+                synthetic=False,
+            )
+            s.add(row)
+            s.commit()
+    except Exception as e:
+        _log.warning("unblock_debate persist failed for %s: %s", symbol, e)
+
+    if verdict is None:
+        _audit_log.event(
+            "wheel_unblock_fail_closed", symbol=symbol,
+            block_reason=block_reason, overage_ratio=overage_ratio,
+        )
+        return False
+
+    _audit_log.event(
+        "wheel_unblock_verdict", symbol=symbol,
+        verdict=verdict.recommendation, confidence=verdict.confidence,
+        block_reason=block_reason, overage_ratio=overage_ratio,
+        candidate_score=score,
+    )
+    return verdict.recommendation == "place"
+
+
 def run_wheel_scan(deps: WheelDeps) -> None:
     """Single per-scan flow, mirrors the equity orchestrator:
         universe → per-symbol intel → lane.passes_preflight (cheap gates,
@@ -286,26 +454,73 @@ def run_wheel_scan(deps: WheelDeps) -> None:
             per_symbol_collateral=per_symbol_collateral,
         )
         if not ok:
-            stats.risk_alloc_rejected += 1
-            stats.risk_alloc_reasons[_norm_reason(reason)] += 1
-            _emit(deps, kind="wheel_allocation_cap", severity="bad",
-                  title=f"wheel skipped {symbol}: {reason}",
-                  detail_html=f"<p>{symbol}: {reason}</p>",
-                  dedup_key=f"alloc_cap_{symbol}_{today}")
-            continue
+            # Compute overage ratio for the unblock-committee predicate:
+            # how far over the cap is THIS proposed trade. Cap is captured
+            # from the AppConfig the risk manager carries (options_max_pct,
+            # %); proposed = (existing + this trade) / equity.
+            overage_ratio_alloc = _alloc_overage_ratio(
+                deps=deps, equity=equity, existing_opt=existing_opt,
+                per_symbol_collateral=per_symbol_collateral,
+            )
+            override = _maybe_run_wheel_unblock(
+                deps, symbol=symbol, contract=contract,
+                block_reason=str(reason),
+                overage_ratio=overage_ratio_alloc,
+                today=today, iv_rank=intel.iv_rank,
+                operational_context=(
+                    f"  equity_usd:      {equity}\n"
+                    f"  existing_opt:    {existing_opt}\n"
+                    f"  cap_setting:     options_max_pct\n"
+                ),
+            )
+            if not override:
+                stats.risk_alloc_rejected += 1
+                stats.risk_alloc_reasons[_norm_reason(reason)] += 1
+                _emit(deps, kind="wheel_allocation_cap", severity="bad",
+                      title=f"wheel skipped {symbol}: {reason}",
+                      detail_html=f"<p>{symbol}: {reason}</p>",
+                      dedup_key=f"alloc_cap_{symbol}_{today}")
+                continue
+            # Override path: log and proceed to sector-cap check (which
+            # may itself fire another debate).
+            _emit(deps, kind="wheel_unblock_override", severity="info",
+                  title=f"unblock: override risk-cap for {symbol}",
+                  detail_html=f"<p>committee voted override for {symbol}: {reason}</p>",
+                  dedup_key=f"unblock_alloc_{symbol}_{today}")
         sector_ok, sector_reason = _sector_cap_check(
             symbol=symbol, prospective_collateral=per_symbol_collateral,
             equity=equity, sector_exposure=sector_exposure,
             classifier=sector_classifier, cap_pct=sector_cap_pct,
         )
         if not sector_ok:
-            stats.sector_cap_rejected += 1
-            stats.sector_cap_reasons[_norm_reason(sector_reason)] += 1
-            _emit(deps, kind="wheel_allocation_cap", severity="bad",
-                  title=f"wheel skipped {symbol}: {sector_reason}",
-                  detail_html=f"<p>{symbol}: {sector_reason}</p>",
-                  dedup_key=f"sector_cap_{symbol}_{today}")
-            continue
+            overage_ratio_sector = _sector_overage_ratio(
+                symbol=symbol, equity=equity,
+                per_symbol_collateral=per_symbol_collateral,
+                sector_exposure=sector_exposure,
+                classifier=sector_classifier, cap_pct=sector_cap_pct,
+            )
+            override = _maybe_run_wheel_unblock(
+                deps, symbol=symbol, contract=contract,
+                block_reason=str(sector_reason),
+                overage_ratio=overage_ratio_sector,
+                today=today, iv_rank=intel.iv_rank,
+                operational_context=(
+                    f"  equity_usd:    {equity}\n"
+                    f"  cap_setting:   sector_cap_pct={sector_cap_pct}\n"
+                ),
+            )
+            if not override:
+                stats.sector_cap_rejected += 1
+                stats.sector_cap_reasons[_norm_reason(sector_reason)] += 1
+                _emit(deps, kind="wheel_allocation_cap", severity="bad",
+                      title=f"wheel skipped {symbol}: {sector_reason}",
+                      detail_html=f"<p>{symbol}: {sector_reason}</p>",
+                      dedup_key=f"sector_cap_{symbol}_{today}")
+                continue
+            _emit(deps, kind="wheel_unblock_override", severity="info",
+                  title=f"unblock: override sector-cap for {symbol}",
+                  detail_html=f"<p>committee voted override for {symbol}: {sector_reason}</p>",
+                  dedup_key=f"unblock_sector_{symbol}_{today}")
         # Bucket E: limit at MID, not bid. Selling at the bid rarely fills
         # on liquid options because everyone else is also crossing the
         # spread; mid is the marketable-but-fair price for an STO.

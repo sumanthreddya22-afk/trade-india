@@ -306,6 +306,36 @@ class DecisionLesson(Base):
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class UnblockDebateRun(Base):
+    """One row per unblock-committee debate. Persisted whether or not the
+    verdict was acted upon — gives the dashboard + lesson loop a complete
+    audit trail of where the LLM committee considered overriding a gate.
+
+    When the verdict was 'place' AND the order subsequently filled,
+    ``entry_order_id`` is back-filled by the reconciler joining on
+    ``symbol`` + a small time window. ``closed_pnl_pct`` is the realized
+    outcome once the trade closes — populated by the decision_reflector
+    when reflecting on unblock-class lessons.
+    """
+    __tablename__ = "unblock_debate_runs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    asset_class = Column(String(16), nullable=False, index=True)  # stock|crypto|wheel
+    symbol = Column(String(32), nullable=False, index=True)
+    candidate_score = Column(Float, nullable=True)
+    block_reason = Column(Text, nullable=False, default="")
+    overage_ratio = Column(Float, nullable=True)
+    verdict = Column(String(16), nullable=False)  # place|reject
+    confidence = Column(String(16), nullable=False)  # high|medium|low
+    judge_reason = Column(Text, nullable=False, default="")
+    aggressive_text = Column(Text, nullable=False, default="")
+    conservative_text = Column(Text, nullable=False, default="")
+    neutral_text = Column(Text, nullable=False, default="")
+    entry_order_id = Column(String(64), nullable=True, index=True)
+    closed_pnl_pct = Column(Float, nullable=True)
+    synthetic = Column(Boolean, nullable=False, default=False)
+
+
 def get_engine(db_path: str | Path = "data/state.db"):
     engine = create_engine(f"sqlite:///{db_path}", future=True)
 
