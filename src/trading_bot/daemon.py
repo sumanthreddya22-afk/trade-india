@@ -166,7 +166,10 @@ def _build_wheel_deps(*, settings, app_cfg, state_engine, alpaca_client,
         last_iv = _read_last_iv(state_engine, symbol)
         if last_iv is None:
             return None
-        return compute_iv_rank(state_engine, symbol, current_iv=last_iv, min_history=5)
+        return compute_iv_rank(
+            state_engine, symbol, current_iv=last_iv,
+            min_history=app_cfg.wheel.iv_rank_min_history,
+        )
 
     return WheelDeps(
         cfg=app_cfg.wheel, engine=state_engine, option_alpaca=opt,

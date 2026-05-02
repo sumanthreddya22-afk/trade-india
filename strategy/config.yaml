@@ -67,7 +67,7 @@ wheel:
   delta_breach_csp: 0.45
   delta_breach_cc: 0.55
   max_rolls_per_cycle: 2
-  iv_rank_floor: 30.0
+  iv_rank_floor: 0.0   # 2026-05-01: cold-start. Disabled until we have ~10d IV history; raise back to 30 once iv_rank is meaningful.
   vix_floor: 15.0
   vix_ceiling: 30.0
   sentiment_floor: -0.3
@@ -79,3 +79,8 @@ wheel:
   # names in strategy/wheel_allowlist.yaml only, skipping the 3000+ symbol
   # discovered universe. Flip back to false to restore broad scanning.
   allowlist_only: true
+  # 2026-05-01: cold-start cap. Bot started capturing IV on 2026-04-29 so
+  # most symbols have only 1-3 rows in option_iv_history. Lower the
+  # iv_rank min_history to 2 so cold-start doesn't reject every candidate
+  # with iv_rank=none. Raise to 5+ once we have ~2 weeks of history.
+  iv_rank_min_history: 2

@@ -155,6 +155,11 @@ class WheelConfig(BaseModel):
     # scout agent) explicitly curates a small candidate list. Default
     # False preserves prior behavior of unioning allowlist + discovered.
     allowlist_only: bool = Field(default=False)
+    # Minimum days of IV history required to compute IV rank. Names with
+    # fewer rows return iv_rank=None and the wheel preflight skips them.
+    # Default 5 is reasonable steady-state. Drop to 3 during cold start
+    # when the bot is still accumulating IV history (first 1-2 weeks).
+    iv_rank_min_history: int = Field(default=5, ge=2, le=30)
 
 
 class DataQualityConfig(BaseModel):
