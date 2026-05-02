@@ -225,6 +225,8 @@ class TradeOrchestrator:
         approved_venue_url: str | None = None,
         risk_debate_enabled: bool = False,
         risk_debate_engine=None,
+        unblock_debate_enabled: bool = False,
+        unblock_debate_engine=None,
     ) -> None:
         self._cfg = config
         self._market = market_data
@@ -250,6 +252,13 @@ class TradeOrchestrator:
         # fails open if the LLM is unavailable.
         self._risk_debate_enabled = risk_debate_enabled
         self._risk_debate_engine = risk_debate_engine
+        # Phase 5.5/5.6 — Unblock committee on the OPPOSITE direction:
+        # when the deterministic risk gate REJECTS a trade, the committee
+        # may override and let it through. Fail-CLOSED (opposite of
+        # risk_debate's fail-open). Requires a SQLAlchemy engine in
+        # unblock_debate_engine for persisting the audit row.
+        self._unblock_debate_enabled = unblock_debate_enabled
+        self._unblock_debate_engine = unblock_debate_engine
 
     def _load_restricted_list(self) -> set[str]:
         if self._restricted_list_path is None:
@@ -395,6 +404,148 @@ class TradeOrchestrator:
         if verdict.recommendation == "reject" and verdict.confidence in ("high", "medium"):
             return f"risk_debate({verdict.confidence}): {verdict.reason}"
         return None
+
+    def _maybe_run_unblock_debate(
+        self, *, order, sig, state, account,
+        rule: str, detail: str, asset_class_label: str,
+    ) -> bool:
+        """Phase 5.5/5.6 — when a deterministic risk gate REJECTS a trade,
+        give the unblock committee a chance to override. Returns True if
+        the gate should be overridden (proceed to place); False to respect
+        the rejection (default).
+
+        Default-deny: any error / disabled flag / missing engine / failed
+        predicate / committee 'reject' / fail-closed verdict → returns
+        False so the existing rejection behavior is preserved. The
+        committee never invents trades; it only re-evaluates ones the
+        deterministic logic already considered.
+        """
+        if not self._unblock_debate_enabled:
+            return False
+        if self._unblock_debate_engine is None:
+            return False
+
+        try:
+            from trading_bot.unblock_debate import (
+                run_unblock_debate, should_unblock_debate,
+            )
+            from trading_bot.options.wheel_runner import _count_todays_unblock_debates
+
+            # Build the brief — orchestrator-flavored, slightly different
+            # shape from the wheel-flavored brief but same prompt structure.
+            equity_d = account.equity if account is not None else None
+            risk_dollars = (sig.entry_price - sig.stop_loss_price) * sig.qty
+
+            # Heuristic candidate score: signal-strength proxy. We don't
+            # have IV-rank for equities; use sentiment + regime alignment
+            # as the conviction proxy. Range 0-10.
+            sentiment = float(getattr(sig, "sentiment_score", 0.0) or 0.0)
+            sentiment_component = max(0.0, min(5.0, (sentiment + 1.0) * 2.5))
+            # 5pt for "the signal exists at all" — this is a borderline
+            # rejection on a candidate the strategy *did* select.
+            score = round(5.0 + sentiment_component, 2)
+
+            # Overage ratio is hard to compute generically across all
+            # rule kinds (per_trade_risk_pct vs daily_loss vs sector_cap
+            # all have different mechanics). Use a conservative default
+            # that admits any non-extreme rejection: 0.30 (within 50% cap).
+            overage_ratio = 0.30
+
+            daily_count = _count_todays_unblock_debates(self._unblock_debate_engine)
+            wheel_cfg = getattr(self._cfg, "wheel", None)
+            min_score = float(getattr(wheel_cfg, "unblock_min_candidate_score", 7.0))
+            max_overage = float(getattr(wheel_cfg, "unblock_max_overage_ratio", 0.50))
+            daily_cap = int(getattr(wheel_cfg, "unblock_daily_debate_cap", 15))
+
+            if not should_unblock_debate(
+                rejection_reason=f"{rule}: {detail}",
+                rejection_overage_ratio=overage_ratio,
+                candidate_score=score,
+                daily_debate_count=daily_count,
+                max_overage_ratio=max_overage,
+                min_score=min_score,
+                daily_cap=daily_cap,
+            ):
+                return False
+
+            proposal = (
+                f"  symbol:           {order.symbol}\n"
+                f"  action:           buy ({asset_class_label})\n"
+                f"  qty:              {sig.qty}\n"
+                f"  entry_price:      {sig.entry_price}\n"
+                f"  stop_loss_price:  {sig.stop_loss_price}\n"
+                f"  per_trade_risk:   {risk_dollars}\n"
+                f"  signal_reason:    {getattr(sig, 'reason', '?')}\n"
+            )
+            fundamentals = (
+                f"  sentiment:        {sentiment}\n"
+                f"  regime:           {self._regime}\n"
+                f"  candidate_score:  {score} (0-10)\n"
+                f"  strategy:         {self._strategy_name()}\n"
+            )
+            operational_context = (
+                f"  equity_usd:               {equity_d}\n"
+                f"  consecutive_losing_days:  {state.consecutive_losing_days}\n"
+                f"  size_multiplier:          {getattr(state, 'size_multiplier', None)}\n"
+            )
+
+            verdict = run_unblock_debate(
+                self._unblock_debate_engine,
+                proposal_summary=proposal,
+                block_reason=f"{rule}: {detail}",
+                overage_ratio=overage_ratio,
+                fundamentals=fundamentals,
+                operational_context=operational_context,
+                use_mailbox=False,  # synchronous in-loop scan
+            )
+        except Exception:
+            return False  # any error in the debate path → respect the gate
+
+        # Persist + email regardless of verdict.
+        try:
+            from sqlalchemy.orm import Session
+            from trading_bot.state_db import UnblockDebateRun
+            with Session(self._unblock_debate_engine) as s:
+                row = UnblockDebateRun(
+                    run_at=datetime.now(timezone.utc),
+                    asset_class=asset_class_label,
+                    symbol=order.symbol,
+                    candidate_score=score,
+                    block_reason=f"{rule}: {detail}",
+                    overage_ratio=overage_ratio,
+                    verdict=(verdict.recommendation if verdict else "fail_closed"),
+                    confidence=(verdict.confidence if verdict else "low"),
+                    judge_reason=(verdict.reason if verdict else "no verdict (fail-closed)"),
+                    aggressive_text=(verdict.aggressive_text if verdict else ""),
+                    conservative_text=(verdict.conservative_text if verdict else ""),
+                    neutral_text=(verdict.neutral_text if verdict else ""),
+                    synthetic=False,
+                )
+                s.add(row)
+                s.commit()
+        except Exception:
+            pass
+
+        try:
+            from trading_bot.email_unblock_debate import (
+                DebateEmailContext, send_debate_email,
+            )
+            send_debate_email(DebateEmailContext(
+                asset_class=asset_class_label, symbol=order.symbol,
+                block_reason=f"{rule}: {detail}",
+                overage_ratio=overage_ratio,
+                candidate_score=score,
+                proposal_summary=proposal,
+                fundamentals=fundamentals,
+                operational_context=operational_context,
+                verdict=verdict,
+            ))
+        except Exception:
+            pass
+
+        if verdict is None:
+            return False
+        return verdict.recommendation == "place"
 
     def _news_intel_gate(self, symbol: str, asset_class: str) -> str | None:
         """Per-trade news/intel gates. Returns skip reason or None.
@@ -693,14 +844,34 @@ class TradeOrchestrator:
                 self._risk.check(order, account=account, positions=positions,
                                  state=state, regime=self._regime)
             except RiskRuleViolation as e:
+                # Phase 5.5/5.6 — give the unblock committee a chance to
+                # override on borderline rejections. Fail-CLOSED: any
+                # error / disabled flag / rejected verdict → original
+                # rejection stands.
+                override = self._maybe_run_unblock_debate(
+                    order=order, sig=sig, state=state, account=account,
+                    rule=e.rule, detail=e.detail,
+                    asset_class_label=entry.asset_class,
+                )
+                if not override:
+                    self._emit(
+                        Decision(
+                            symbol=symbol, action="rejected_by_risk",
+                            reason=f"{e.rule}: {e.detail}",
+                        ),
+                        asset_class=ac, decisions=decisions,
+                    )
+                    continue
+                # Override path — proceed past the gate. Note in the
+                # decision audit so dashboard can see this came from a
+                # committee override.
                 self._emit(
                     Decision(
-                        symbol=symbol, action="rejected_by_risk",
-                        reason=f"{e.rule}: {e.detail}",
+                        symbol=symbol, action="unblock_override",
+                        reason=f"committee overrode {e.rule}: {e.detail}",
                     ),
                     asset_class=ac, decisions=decisions,
                 )
-                continue
 
             # Optional adversarial risk review. Fail-open: if LLM is
             # unavailable or the verdict is None, the trade proceeds as

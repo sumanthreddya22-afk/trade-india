@@ -73,6 +73,13 @@ def _build_orchestrator(
     """
     from trading_bot.decisions_store import DecisionStore
     from trading_bot.orchestrator import TradeOrchestrator
+    from trading_bot.state_db import get_engine
+    # Phase 5.5/5.6 — pass the state.db engine so the unblock committee
+    # can persist debate rows. Hook is opt-in via wheel.unblock_debate_enabled
+    # (same flag controls wheel + orchestrator hooks for now).
+    unblock_enabled = bool(getattr(getattr(cfg, "wheel", None),
+                                   "unblock_debate_enabled", False))
+    state_engine = get_engine(STATE_DB_PATH) if unblock_enabled else None
     return TradeOrchestrator(
         config=cfg, market_data=market, alpaca=alpaca,
         journal=journal, regime=regime,
@@ -80,6 +87,8 @@ def _build_orchestrator(
         decision_store=DecisionStore(STATE_DB_PATH),
         restricted_list_path=RESTRICTED_LIST_PATH,
         approved_venue_url=settings.alpaca_base_url,
+        unblock_debate_enabled=unblock_enabled,
+        unblock_debate_engine=state_engine,
     )
 
 ACTIVE_UNIVERSE_TOP_N_STOCKS = int(os.environ.get("TRADING_BOT_SCAN_TOP_N", "100"))
