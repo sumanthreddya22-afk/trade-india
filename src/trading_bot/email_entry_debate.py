@@ -216,9 +216,22 @@ def send_entry_debate_email(
             app_password=settings.gmail_app_password,
             to=cfg.email.to,
         )
+        # Dedup per (symbol, outcome, verdict) so the same place-or-skip
+        # outcome on the same symbol within the cooldown window
+        # (default 60 min) collapses to a single email. The MSFT
+        # place→skip pair within 1s — different verdicts → different
+        # dedup keys — both still fire on the first scan; subsequent
+        # scans within the hour suppress the duplicates.
+        verdict_key = (
+            f"{ctx.verdict.recommendation}_{ctx.verdict.confidence}"
+        )
         send_logged(
             sender=sender, subject=email.subject, html_body=email.html_body,
             kind="entry_debate", recipient=cfg.email.to,
+            dedup_key=(
+                f"entry_{ctx.asset_class}_{ctx.symbol}_"
+                f"{ctx.outcome}_{verdict_key}"
+            ),
         )
         return True
     except Exception as e:

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from click.testing import CliRunner
 
 
-def test_bot_status_runs_and_calls_email():
+def test_bot_status_runs_and_calls_email(tmp_path):
     from trading_bot.cli import main
 
     # Equity intentionally != $100k so the empty-paper-account guard
@@ -17,7 +17,26 @@ def test_bot_status_runs_and_calls_email():
     )
     fake_positions = []
 
-    with patch("trading_bot.cli.AlpacaClient") as MockClient, patch(
+    # Isolate EmailLogStore to a temp DB so the per-kind cooldown layer
+    # (default 18h for kind="status") doesn't suppress the send when an
+    # earlier test in the same run sent a status email — or when the
+    # operator's actual data/state.db has one from production.
+    import sqlalchemy as _sa
+    log_db = tmp_path / "email_log.db"
+    _eng = _sa.create_engine(f"sqlite:///{log_db}")
+    with _eng.begin() as _c:
+        _c.execute(_sa.text(
+            "CREATE TABLE emails_sent (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "sent_at DATETIME NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL, "
+            "recipient TEXT NOT NULL, outcome TEXT NOT NULL)"
+        ))
+
+    from trading_bot.email_log import EmailLogStore as _RealStore
+    def _store_factory(*a, **kw):
+        return _RealStore(db_path=str(log_db))
+
+    with patch("trading_bot.email_log.EmailLogStore", side_effect=_store_factory), \
+         patch("trading_bot.cli.AlpacaClient") as MockClient, patch(
         "trading_bot.cli.EmailSender"
     ) as MockEmail, patch("trading_bot.cli.Settings") as MockSettings, patch(
         "trading_bot.cli.load_config"

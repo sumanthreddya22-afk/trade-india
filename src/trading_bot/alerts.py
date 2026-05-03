@@ -33,11 +33,13 @@ from trading_bot.email_shell import (
 
 
 _THROTTLE_MIN = 20
-# Phase 7 noise cap: don't re-send the same dedup_key within this window
-# even if alerts_pending was drained between fires. 4h is generous enough
-# to silence the per-cron-tick wheel skipped emails while still
-# re-alerting if a state change persists across a quarter-day.
-_PERSIST_DEDUP_HOURS = 4.0
+# 2026-05-03: bumped from 4h → 24h after the operator was buried under
+# eight identical "Universe fallback: opportunities_stale" warnings in
+# 32h (every 4h is too aggressive — an unattended alert that's still
+# unattended four hours later is rarely useful). 24h means one warning
+# per day per dedup_key — re-fires after the operator's morning review
+# window if the underlying state hasn't been resolved.
+_PERSIST_DEDUP_HOURS = 24.0
 _KEY_LAST_SENT = "last_alert_sent_at"
 
 

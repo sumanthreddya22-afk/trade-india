@@ -687,9 +687,14 @@ def daily_digest() -> None:
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    send_logged(sender=sender, subject=email.subject, html_body=email.html_body,
-                kind="digest", recipient=cfg.email.to)
-    click.echo(f"[daily-digest] sent to {cfg.email.to}")
+    # Once-per-day dedup: first send wins, repeats within the kind's
+    # default cooldown (18h) are auto-suppressed.
+    outcome = send_logged(
+        sender=sender, subject=email.subject, html_body=email.html_body,
+        kind="digest", recipient=cfg.email.to,
+        dedup_key=f"daily_digest_{today.isoformat()}",
+    )
+    click.echo(f"[daily-digest] {outcome} to {cfg.email.to}")
 
 
 @main.command("reconcile")
@@ -805,8 +810,11 @@ def full_run() -> None:
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    send_logged(sender=sender, subject=f"Trading Bot — Daily Report ({regime})",
-                html_body=_email_fr.html_body, kind="digest", recipient=cfg.email.to)
+    send_logged(
+        sender=sender, subject=f"Trading Bot — Daily Report ({regime})",
+        html_body=_email_fr.html_body, kind="digest", recipient=cfg.email.to,
+        dedup_key=f"full_run_daily_{_dt_fr.date.today().isoformat()}",
+    )
     click.echo(f"[email] sent to {cfg.email.to}")
 
 
@@ -1020,9 +1028,12 @@ def rich_report(period: str) -> None:
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    send_logged(sender=sender,
-                subject=f"Trading Bot — {period.upper()} Rich Report ({regime})",
-                html_body=_email_rr.html_body, kind="digest", recipient=cfg.email.to)
+    send_logged(
+        sender=sender,
+        subject=f"Trading Bot — {period.upper()} Rich Report ({regime})",
+        html_body=_email_rr.html_body, kind="digest", recipient=cfg.email.to,
+        dedup_key=f"rich_report_{period}_{_dt_rr.date.today().isoformat()}",
+    )
     click.echo(f"[rich-report:{period}] sent ({len(result.decisions)} decisions, "
                f"VIX={intel.macro.vix}, {len(events)} events)")
 
@@ -1145,8 +1156,11 @@ def eod_report() -> None:
     sender = EmailSender(
         user=settings.gmail_user, app_password=settings.gmail_app_password, to=cfg.email.to
     )
-    send_logged(sender=sender, subject=f"Trading Bot — EOD Report ({regime})",
-                html_body=_email_eod.html_body, kind="digest", recipient=cfg.email.to)
+    send_logged(
+        sender=sender, subject=f"Trading Bot — EOD Report ({regime})",
+        html_body=_email_eod.html_body, kind="digest", recipient=cfg.email.to,
+        dedup_key=f"eod_report_{_dt_eod.date.today().isoformat()}",
+    )
     click.echo(f"[eod-report] sent to {cfg.email.to} (regime={regime}, "
                f"VIX={intel.macro.vix}, {len(events)} events)")
 

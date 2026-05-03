@@ -100,7 +100,9 @@ def test_dedup_key_prevents_double_queue(state_db):
 def test_persistent_dedup_blocks_repeat_within_window(state_db):
     """Regression for the 'wheel skipped X' email storm: even after the
     in-flight queue is drained, the same dedup_key shouldn't fire again
-    for ~4 hours. Without this, every cron tick re-emails the operator."""
+    for the persistent-dedup window (24h on 2026-05-03 — bumped from 4h
+    after the operator was buried under per-4h universe-fallback alerts).
+    Without this, every cron tick re-emails the operator."""
     from trading_bot.alerts import AlertEvent, AlertStore, queue_alert
     sent = []
     store = AlertStore(state_db)
@@ -117,14 +119,14 @@ def test_persistent_dedup_blocks_repeat_within_window(state_db):
     queue_alert(e, store=store, sender_send=_mock_send(sent), now=base)
     assert len(sent) == 1
 
-    # 2nd fire — same dedup_key, drained-but-recently-sent → suppressed
+    # 2nd fire — same dedup_key within window → suppressed
     queue_alert(e, store=store, sender_send=_mock_send(sent),
-                now=base + dt.timedelta(hours=2))
+                now=base + dt.timedelta(hours=12))
     assert len(sent) == 1  # no second email
 
-    # 3rd fire — past the 4-hour persistent dedup window → re-emails
+    # 3rd fire — past the 24h persistent dedup window → re-emails
     queue_alert(e, store=store, sender_send=_mock_send(sent),
-                now=base + dt.timedelta(hours=5))
+                now=base + dt.timedelta(hours=25))
     assert len(sent) == 2  # window expired, alert flows again
 
 
