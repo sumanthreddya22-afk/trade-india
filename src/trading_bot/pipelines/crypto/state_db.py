@@ -232,6 +232,42 @@ class ThresholdOverrideCrypto(Base):
     superseded_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class EntryDebateRunCrypto(Base):
+    """Phase 1G follow-on — crypto entry-debate audit table.
+
+    One row per debated candidate. Mirrors the shared
+    ``trading_bot.state_db.EntryDebateRun`` shape but per-pipeline so
+    crypto entry-debate history doesn't mix with stocks history.
+    Two-call shape: ``aggressive_text`` / ``conservative_text`` /
+    ``neutral_text`` come from one Sonnet call; ``judge_reason`` is
+    the Opus audit-of-record. ``adjusted_qty`` lets the judge size
+    down from the proposed quantity when reviewers raised valid
+    concerns about sizing.
+    """
+    __tablename__ = "entry_debate_runs_crypto"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    symbol = Column(String(32), nullable=False, index=True)
+    candidate_score = Column(Float, nullable=True)
+    intel_top_reason = Column(Text, nullable=False, default="")
+    sentiment_avg = Column(Float, nullable=True)
+    regime = Column(String(32), nullable=True)
+    proposed_qty = Column(Float, nullable=True)
+    proposed_entry_price = Column(Float, nullable=True)
+    proposed_stop_price = Column(Float, nullable=True)
+    proposed_target_price = Column(Float, nullable=True)
+    verdict = Column(String(16), nullable=False)        # place | skip | defer_restale
+    confidence = Column(String(16), nullable=False)
+    adjusted_qty = Column(Float, nullable=True)         # may differ from proposed
+    judge_reason = Column(Text, nullable=False, default="")
+    aggressive_text = Column(Text, nullable=False, default="")
+    conservative_text = Column(Text, nullable=False, default="")
+    neutral_text = Column(Text, nullable=False, default="")
+    entry_order_id = Column(String(64), nullable=True)
+    prompt_version = Column(String(64), nullable=False, default="")
+    synthetic = Column(Boolean, nullable=False, default=False)
+
+
 class IntelStreamEventCrypto(Base):
     """Express-lane crypto stream events (Phase 1G).
 

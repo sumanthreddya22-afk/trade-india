@@ -553,6 +553,85 @@ def create_app() -> FastAPI:
     def architecture(request: Request) -> Any:
         return templates.TemplateResponse(request, "architecture.html", {})
 
+    def _persona_card_payload(p: Any) -> dict:
+        """Render a Persona dataclass into the dict shape the desk_roster
+        template consumes. Adds a ``display_label`` (e.g. 'Sasha Volkov ·
+        On-Chain Forensic Analyst, 8yr') and the persona's id so the
+        template can build click-to-bio links.
+        """
+        from trading_bot.shared.personas._base import display_label
+        return {
+            "id": p.id,
+            "full_name": p.full_name,
+            "role_title": p.role_title,
+            "years_experience": p.years_experience,
+            "firm_pedigree": p.firm_pedigree,
+            "specialties": list(p.specialties),
+            "default_stance": p.default_stance,
+            "pipeline": p.pipeline,
+            "debate_role": p.debate_role,
+            "model_tier": p.model_tier,
+            "prompt_version": p.prompt_version,
+            "display_label": display_label(p),
+        }
+
+    @app.get("/desk", response_class=HTMLResponse)
+    def trading_desk_roster(request: Request) -> Any:
+        """Phase 1G — Trading Desk Roster page.
+
+        Reads PERSONA dicts from every persona module across
+        ``shared/personas/`` and ``pipelines/{stocks,crypto,options}/personas/``
+        and renders a roster grouped by pipeline. Click a name → full
+        biography + lifetime accuracy stats (placeholder until Phase 1D
+        plumbs in per-persona winrates).
+        """
+        from trading_bot.shared.personas._base import discover, display_label
+        groups: dict[str, list[dict]] = {"shared": [], "stocks": [],
+                                         "crypto": [], "options": []}
+
+        # shared/personas
+        try:
+            from trading_bot.shared import personas as shared_personas
+            for p in discover(shared_personas):
+                groups["shared"].append(_persona_card_payload(p))
+        except Exception:
+            pass
+
+        # crypto pipeline personas
+        try:
+            from trading_bot.pipelines.crypto import personas as crypto_personas
+            for p in discover(crypto_personas):
+                groups["crypto"].append(_persona_card_payload(p))
+        except Exception:
+            pass
+
+        # stocks-pipeline personas (lives at trading_bot.personas during
+        # the Option-4 hybrid; Option 2 strangler-fig will move it later)
+        try:
+            from trading_bot import personas as stocks_personas
+            for p in discover(stocks_personas):
+                groups["stocks"].append(_persona_card_payload(p))
+        except Exception:
+            pass
+
+        # options-pipeline personas (Phase 3 — empty until built)
+        try:
+            from trading_bot.pipelines.options import personas as options_personas  # type: ignore[import-not-found]
+            for p in discover(options_personas):
+                groups["options"].append(_persona_card_payload(p))
+        except Exception:
+            pass
+
+        # Sort each pipeline's roster by debate_role for visual stability.
+        for k in groups:
+            groups[k].sort(key=lambda c: (c["debate_role"], c["full_name"]))
+
+        ctx = {
+            "groups": groups,
+            "total": sum(len(v) for v in groups.values()),
+        }
+        return templates.TemplateResponse(request, "desk_roster.html", ctx)
+
     @app.get("/refresh", response_class=HTMLResponse)
     def refresh(request: Request) -> Any:
         combined = cache.force_refresh()
