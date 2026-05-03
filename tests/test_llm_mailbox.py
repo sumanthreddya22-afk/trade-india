@@ -189,8 +189,14 @@ def _routing(enabled: bool, timeout: float = 0.3) -> MailboxRouting:
     return MailboxRouting(enabled=enabled, timeout_seconds=timeout, model_class="reflector")
 
 
-def test_disabled_routing_falls_through_to_inner(tmp_path):
-    """When enabled=False, the wrapper is a transparent passthrough."""
+def test_disabled_routing_falls_through_to_inner(tmp_path, monkeypatch):
+    """When enabled=False, the wrapper is a transparent passthrough.
+
+    Uses TRADING_BOT_LLM_PREFER_API=1 so the inner client is the
+    AnthropicClient under test (default is now ClaudeCliTransport via
+    the subscription bridge).
+    """
+    monkeypatch.setenv("TRADING_BOT_LLM_PREFER_API", "1")
     fake_engine = MagicMock()
     inner_resp = AnthropicResponse(text="api answer", input_tokens=1,
                                    output_tokens=2, request_id="req-1",
@@ -211,8 +217,9 @@ def test_disabled_routing_falls_through_to_inner(tmp_path):
     assert MailboxQueue(base=tmp_path).stats()["pending"] == 0
 
 
-def test_enabled_routing_falls_back_on_timeout(tmp_path):
+def test_enabled_routing_falls_back_on_timeout(tmp_path, monkeypatch):
     """When mailbox times out, the wrapper calls the API and returns that."""
+    monkeypatch.setenv("TRADING_BOT_LLM_PREFER_API", "1")
     fake_engine = MagicMock()
     inner_resp = AnthropicResponse(text="api fallback", input_tokens=1,
                                    output_tokens=2, request_id="req-2",
@@ -232,9 +239,10 @@ def test_enabled_routing_falls_back_on_timeout(tmp_path):
     assert MailboxQueue(base=tmp_path).stats()["pending"] == 1
 
 
-def test_enabled_routing_returns_mailbox_result_when_present(tmp_path):
+def test_enabled_routing_returns_mailbox_result_when_present(tmp_path, monkeypatch):
     """When the routine writes a result before timeout, the wrapper returns
     it without calling the inner API client."""
+    monkeypatch.setenv("TRADING_BOT_LLM_PREFER_API", "1")
     fake_engine = MagicMock()
     mb = MailboxQueue(base=tmp_path)
 
@@ -273,9 +281,10 @@ def test_enabled_routing_returns_mailbox_result_when_present(tmp_path):
     assert out.model == "claude-opus-4-7"
 
 
-def test_complete_structured_returns_structured_result(tmp_path):
+def test_complete_structured_returns_structured_result(tmp_path, monkeypatch):
     """The structured path packs the routine's structured output into
     StructuredResponse with used_structured=True."""
+    monkeypatch.setenv("TRADING_BOT_LLM_PREFER_API", "1")
     fake_engine = MagicMock()
     mb = MailboxQueue(base=tmp_path)
 
@@ -317,7 +326,8 @@ def test_complete_structured_returns_structured_result(tmp_path):
     assert out.model == "claude-opus-4-7"
 
 
-def test_routine_error_in_result_falls_back_to_api(tmp_path):
+def test_routine_error_in_result_falls_back_to_api(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRADING_BOT_LLM_PREFER_API", "1")
     """If the routine writes a result with error!=null, the wrapper falls
     back to direct API rather than returning the broken result."""
     fake_engine = MagicMock()

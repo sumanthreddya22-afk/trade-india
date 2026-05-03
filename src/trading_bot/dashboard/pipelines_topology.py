@@ -176,14 +176,11 @@ _STOCKS_STAGES: Tuple[Stage, ...] = (
         table_name="scout_debate_runs",
         icon="🔭",
         kind="scout",
-        # Legacy stocks debate uses MailboxBackedClient → AnthropicAPI.
-        # Crypto/options use the Claude CLI subprocess transport (Max 5x).
-        # Until migrated, stocks scout debate is skipped silently every
-        # tick with "no anthropic creds".
-        blocked_note=(
-            "needs migration to shared.llm_transport (currently uses "
-            "MailboxBackedClient → ANTHROPIC_API_KEY which isn't set)"
-        ),
+        # As of 2026-05-03 the legacy MailboxBackedClient now delegates to
+        # ClaudeCliTransport (subscription) by default, so the stocks
+        # debates ride the same transport as crypto + options. No
+        # blocked_note here — wait for first run, then health logic
+        # determines whether it's actually firing.
     ),
     Stage(
         id="stocks-entry",
@@ -199,7 +196,7 @@ _STOCKS_STAGES: Tuple[Stage, ...] = (
         table_name="entry_debate_runs",
         icon="🎯",
         kind="entry",
-        blocked_note="same legacy LLM transport gap as scout debate above",
+
     ),
     Stage(
         id="stocks-risk-gate",
@@ -228,7 +225,7 @@ _STOCKS_STAGES: Tuple[Stage, ...] = (
         table_name="unblock_debate_runs",
         icon="🗳",
         kind="entry",
-        blocked_note="same legacy LLM transport gap as scout debate above",
+
     ),
     Stage(
         id="stocks-broker",
@@ -286,7 +283,7 @@ _STOCKS_STAGES: Tuple[Stage, ...] = (
         table_name="hold_debate_runs",
         icon="🛡",
         kind="hold",
-        blocked_note="same legacy LLM transport gap as scout debate above",
+
     ),
     Stage(
         id="stocks-reconcile",
@@ -470,7 +467,7 @@ _CRYPTO_STAGES: Tuple[Stage, ...] = (
         count_label="streamer ticks today",
         icon="👁",
         kind="monitor",
-        blocked_note="CryptoStreamerRole class exists but is NOT registered in the daemon scheduler",
+        # crypto_streamer registered 2026-05-03 — wait for first run.
     ),
     Stage(
         id="crypto-hold",
