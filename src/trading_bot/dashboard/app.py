@@ -376,22 +376,23 @@ async def _maybe_start_market_data_stream(app, broadcaster, cache) -> None:
 
 
 def _system_view_ctx() -> dict[str, Any]:
-    """Extra context for system.html. Computes node health + last-activity
-    once per page load; live updates come from /fragment/system_nodes
-    plus SSE flashes for sub-second feedback.
+    """Extra context for system.html.
+
+    Renders three pipeline columns (stocks / crypto / options), each as
+    a linear chain of stages. Per-stage state (live counts + role health
+    + named bot operators) comes from
+    ``pipelines_state.build_pipelines_state``.
     """
-    from trading_bot.dashboard.system_state import build_system_snapshot
-    from trading_bot.dashboard import system_topology as topo
-    snap = build_system_snapshot(STATE_DB_PATH)
-    nodes_by_zone: dict[str, list] = {z: [] for z, _ in topo.ZONES}
-    for n in topo.NODES:
-        nodes_by_zone[n.zone].append(n)
-    return {
-        "zones": topo.ZONES,
-        "nodes_by_zone": nodes_by_zone,
-        "node_health": {nid: info.get("health", "off") for nid, info in snap.items()},
-        "node_last":   {nid: info.get("last_activity_label", "") for nid, info in snap.items()},
-    }
+    from trading_bot.dashboard.pipelines_state import build_pipelines_state
+    try:
+        pipelines = build_pipelines_state(STATE_DB_PATH)
+    except Exception as e:
+        # Fall back to empty list so the template renders an explicit
+        # "DB unavailable" message rather than a 500.
+        import logging as _log
+        _log.getLogger(__name__).warning("system view ctx build failed: %s", e)
+        pipelines = []
+    return {"pipelines": pipelines}
 
 
 def _host_ok(request: Request) -> bool:
