@@ -516,6 +516,11 @@ class ActivityLine:
     level: str            # "info" | "warn" | "error"
     event: str            # short event tag
     detail: str           # one-line readable summary
+    # Phase 2 — named operators that staffed this run, when the event maps
+    # to a known role with personas. Each item is {name, debate_role,
+    # title, pipeline}. Empty list when the event is non-LLM (data fetch,
+    # log rotation).
+    actors: list[dict] = field(default_factory=list)
 
 
 _ACTIVITY_VERBS = {
@@ -583,9 +588,42 @@ def _iter_activity_rows(runs_dir: Path, role: str) -> Any:
                 continue
 
 
+def _event_to_role_name(event: str) -> str | None:
+    """Map a daemon log event tag to a role_name (the APScheduler key).
+
+    Activity events look like ``crypto_scan_finish``, ``crypto_scanner_finish``,
+    ``portfolio_watch_start``, etc. The role name is the prefix before
+    the trailing ``_start`` / ``_finish`` / ``_failed`` / ``_skipped``.
+    Some legacy events use ``<thing>_scanner_finish`` (with the extra
+    "_scanner" suffix); strip that too so the lookup matches role-runner
+    keys.
+    """
+    if not event:
+        return None
+    for suffix in ("_finish", "_start", "_failed", "_skipped"):
+        if event.endswith(suffix):
+            base = event[: -len(suffix)]
+            # ``stock_scanner`` log → ``intel_scan`` role; ``crypto_scanner``
+            # → ``crypto_scan``. Map the legacy alias.
+            alias = {
+                "stock_scanner": "intel_scan",
+                "crypto_scanner": "crypto_scan",
+            }.get(base)
+            return alias or base
+    return None
+
+
 def build_activity_feed(
     *, runs_dir: str | Path = "runs", role: str = "daemon", limit: int = 80,
 ) -> list[ActivityLine]:
+    # Late import so a circular dependency in role_persona_map cannot
+    # break the activity feed builder.
+    try:
+        from trading_bot.shared.role_persona_map import operators_payload
+    except Exception:
+        def operators_payload(_role_name: str) -> list[dict]:  # type: ignore[misc]
+            return []
+
     out: list[ActivityLine] = []
     for row in _iter_activity_rows(Path(runs_dir), role):
         if len(out) >= limit:
@@ -618,11 +656,24 @@ def build_activity_feed(
             subject = row.get("subject") or ""
             kind = row.get("kind") or ""
             detail = f"{subject}" + (f" ({kind})" if kind else "")
+
+        # Phase 2 — attach actor names when the event maps to a role
+        # whose operators are known. Skip on _start so the same names
+        # don't appear twice in the feed (start + finish).
+        actors: list[dict] = []
+        if event.endswith(("_finish", "_failed")):
+            role_name = _event_to_role_name(event)
+            if role_name:
+                try:
+                    actors = operators_payload(role_name)
+                except Exception:
+                    actors = []
         out.append(ActivityLine(
             when_label=when,
             level="error" if event.endswith("_failed") or level == "error"
                   else ("warn" if level == "warn" else "info"),
             event=verb, detail=detail[:160],
+            actors=actors,
         ))
     return out
 

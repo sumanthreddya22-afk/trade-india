@@ -48,6 +48,25 @@
             <span class="text-[12px] font-mono text-slate-300 truncate">{{ r.role_name }}</span>
             <span class="text-sm font-semibold font-mono {{ tone_text }}">{{ "%.0f"|format(rate) }}%</span>
           </div>
+          {# Phase 2 — named bot operators per role. Renders the people the bot
+             is "running on behalf of" for this scheduled job. Empty list →
+             rendered as "automated · no LLM" so a data fetcher still has a
+             label. #}
+          {% if r.operators %}
+            <div class="mt-1.5 flex flex-wrap gap-1" title="Operators staffing this job">
+              {% for op in r.operators %}
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-900/70 border border-slate-700/60 text-[10px]"
+                      title="{{ op.name }} · {{ op.title }} ({{ op.pipeline }} · {{ op.debate_role }})">
+                  <span class="text-slate-200 font-medium">{{ op.name.split(' ')[0] }} {{ op.name.split(' ')[-1][0] }}.</span>
+                  {% if op.debate_role.endswith('_judge') %}
+                    <span class="ml-1 text-amber-300/80">⚖</span>
+                  {% endif %}
+                </span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="mt-1.5 text-[10px] text-slate-600 italic">automated · no LLM</div>
+          {% endif %}
           <div class="text-[10px] text-slate-500 mt-1 flex justify-between">
             <span>{{ r.runs_today }} today</span>
             <span>

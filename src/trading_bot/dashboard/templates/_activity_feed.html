@@ -28,6 +28,22 @@
             <div class="min-w-0 flex-1">
               <div class="text-slate-200">{{ line.event }}</div>
               {% if line.detail %}<div class="text-xs text-slate-500 mt-0.5 break-words">{{ line.detail }}</div>{% endif %}
+              {# Phase 2 — show the bot operator names when the event maps
+                 to a known role. Compact "Sasha V., Lena P. → Diane P." with
+                 a scale icon on the judge. #}
+              {% if line.actors %}
+                <div class="text-[10px] text-slate-500 mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
+                  {% for op in line.actors %}
+                    <span class="inline-flex items-center"
+                          title="{{ op.name }} · {{ op.title }} ({{ op.pipeline }} · {{ op.debate_role }})">
+                      {% if op.debate_role.endswith('_judge') %}
+                        <span class="text-amber-300/80 mr-0.5">⚖</span>
+                      {% endif %}
+                      <span class="text-slate-400">{{ op.name }}</span>
+                    </span>
+                  {% endfor %}
+                </div>
+              {% endif %}
             </div>
           </li>
         {% endfor %}

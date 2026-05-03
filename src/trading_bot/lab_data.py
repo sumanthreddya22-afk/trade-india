@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import desc
@@ -406,6 +406,10 @@ class RoleHealthRow:
     last_run_at: dt.datetime | None
     last_status: str
     last_error: str | None
+    # Phase 2 — named operators that staff this background job. Empty
+    # list when the role runs no LLM (data fetchers, reconcilers).
+    # Populated from shared.role_persona_map.
+    operators: list[dict] = field(default_factory=list)
 
 
 def role_health(session: Session) -> list[RoleHealthRow]:
@@ -436,6 +440,15 @@ def role_health(session: Session) -> list[RoleHealthRow]:
     for r in rows:
         by_role.setdefault(r.role_name, []).append(r)
 
+    # Late import so a circular dependency in role_persona_map cannot
+    # break the rest of lab_data — the role_health card degrades to
+    # operators=[] in that case.
+    try:
+        from trading_bot.shared.role_persona_map import operators_payload
+    except Exception:
+        def operators_payload(_role_name: str) -> list[dict]:  # type: ignore[misc]
+            return []
+
     out: list[RoleHealthRow] = []
     for name, runs in by_role.items():
         n_30 = len(runs)
@@ -449,6 +462,10 @@ def role_health(session: Session) -> list[RoleHealthRow]:
                 n_today += 1
         n_ok = sum(1 for r in runs if r.status == "ok")
         latest = runs[0]
+        try:
+            operators = operators_payload(name)
+        except Exception:
+            operators = []
         out.append(
             RoleHealthRow(
                 role_name=name,
@@ -462,6 +479,7 @@ def role_health(session: Session) -> list[RoleHealthRow]:
                     if latest.status != "ok"
                     else None
                 ),
+                operators=operators,
             )
         )
     out.sort(key=lambda r: r.role_name)
