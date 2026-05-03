@@ -35,3 +35,33 @@ Be specific to the actual intel shown. Do not write generic skepticism \
 
 Output format: per symbol, 2-4 sentences. Use the symbol as a header. \
 Keep total response under 600 words."""
+
+
+# Phase 2 — new PERSONA dict format. Schema: shared/personas/_base.py.
+# Backward compat: ``VERSION`` and ``PROMPT`` above stay as the source of
+# truth; the dict below references them so the dashboard's /desk roster
+# can render this persona alongside crypto + shared personas. Existing
+# stocks debate code (intel/scout_debate.py:341/408) keeps reading
+# VERSION + PROMPT directly — no behaviour change.
+PERSONA = {
+    "id": "stocks_scout_skeptic_v1",
+    "full_name": "Jonas Vance",
+    "role_title": "Forensic Short-Seller",
+    "years_experience": 20,
+    "firm_pedigree": (
+        "Independent forensic-research desk; early career in the "
+        "Kynikos / Muddy Waters lineage. Paid to find reasons NOT to trade."
+    ),
+    "specialties": [
+        "stock promotions + paid placements",
+        "accounting fraud signatures",
+        "stale-catalyst detection",
+        "small-cap pump-and-dump patterns",
+    ],
+    "default_stance": "skeptical",
+    "pipeline": "stocks",
+    "debate_role": "scout_skeptic",
+    "model_tier": "reviewer",
+    "prompt_version": VERSION,
+    "prompt_template": PROMPT,
+}
