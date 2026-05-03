@@ -629,10 +629,13 @@ def create_app() -> FastAPI:
         except Exception:
             pass
 
-        # stocks-pipeline personas (lives at trading_bot.personas during
-        # the Option-4 hybrid; Option 2 strangler-fig will move it later)
+        # stocks-pipeline personas — canonical home is now
+        # ``pipelines.stocks.personas``. Phase 2 strangler-fig: that
+        # package contains thin shims forwarding to ``trading_bot.personas``,
+        # so legacy import sites still work while the canonical
+        # namespace exists for new callers.
         try:
-            from trading_bot import personas as stocks_personas
+            from trading_bot.pipelines.stocks import personas as stocks_personas
             for p in discover(stocks_personas):
                 groups["stocks"].append(_attach_stats(_persona_card_payload(p)))
         except Exception:
