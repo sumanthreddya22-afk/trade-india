@@ -38,6 +38,10 @@ class Stage:
     table_name: Optional[str] = None              # for "rows in DB" badge
     icon: str = "▢"                               # small glyph
     kind: str = "automated"                       # automated | scout | entry | hold | wheel | lesson | state
+    # Operator-visible note about a known gap on this stage. Renders
+    # under the description in italic amber when set. Examples:
+    # "needs ANTHROPIC_API_KEY", "wired but not yet scheduled", etc.
+    blocked_note: str = ""
 
 
 @dataclass(frozen=True)
@@ -145,6 +149,14 @@ _STOCKS_STAGES: Tuple[Stage, ...] = (
         table_name="scout_debate_runs",
         icon="🔭",
         kind="scout",
+        # Legacy stocks debate uses MailboxBackedClient → AnthropicAPI.
+        # Crypto/options use the Claude CLI subprocess transport (Max 5x).
+        # Until migrated, stocks scout debate is skipped silently every
+        # tick with "no anthropic creds".
+        blocked_note=(
+            "needs migration to shared.llm_transport (currently uses "
+            "MailboxBackedClient → ANTHROPIC_API_KEY which isn't set)"
+        ),
     ),
     Stage(
         id="stocks-entry",
@@ -160,6 +172,7 @@ _STOCKS_STAGES: Tuple[Stage, ...] = (
         table_name="entry_debate_runs",
         icon="🎯",
         kind="entry",
+        blocked_note="same legacy LLM transport gap as scout debate above",
     ),
     Stage(
         id="stocks-hold",
@@ -175,6 +188,7 @@ _STOCKS_STAGES: Tuple[Stage, ...] = (
         table_name="hold_debate_runs",
         icon="🛡",
         kind="hold",
+        blocked_note="same legacy LLM transport gap as scout debate above",
     ),
     Stage(
         id="stocks-lesson",
@@ -212,6 +226,10 @@ _CRYPTO_STAGES: Tuple[Stage, ...] = (
         table_name="intel_events_crypto",
         icon="📡",
         kind="automated",
+        blocked_note=(
+            "tier-1 sources (whale_alert / etherscan / cryptopanic) "
+            "skip silently when their API keys are unset"
+        ),
     ),
     Stage(
         id="crypto-streams",
@@ -360,6 +378,7 @@ _OPTIONS_STAGES: Tuple[Stage, ...] = (
         table_name="wheel_debate_runs_options",
         icon="🎡",
         kind="wheel",
+        blocked_note="dry-run mode (executor=None) until operator validates audit chain",
     ),
     Stage(
         id="options-state",

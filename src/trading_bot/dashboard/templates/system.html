@@ -175,6 +175,15 @@
                 </p>
               {% endif %}
 
+              {# Known-gap note — hand-curated in pipelines_topology.py to
+                 surface why a stage is silently failing (e.g. legacy LLM
+                 transport, missing API keys, dry-run mode). #}
+              {% if st.stage.blocked_note %}
+                <p class="text-[10px] text-amber-400/80 mt-1 italic leading-snug">
+                  ⚠ blocked: {{ st.stage.blocked_note }}
+                </p>
+              {% endif %}
+
               {# Operators (named bots) — only shown for LLM stages #}
               {% if st.operators %}
                 <div class="mt-2 -mx-1 flex flex-wrap">
