@@ -103,6 +103,19 @@
                   <code class="bg-slate-900/60 px-2 py-0.5 rounded">{{ p.debate_role }}</code>
                   <span>{{ p.prompt_version }}</span>
                 </div>
+                {% if p.model %}
+                  {% set _m = p.model %}
+                  {% if 'opus' in _m %}{% set _mlabel = 'Opus 4.7' %}{% set _mbg = 'rgba(245,158,11,.18)' %}{% set _mfg = '#fcd34d' %}
+                  {% elif 'sonnet' in _m %}{% set _mlabel = 'Sonnet 4.6' %}{% set _mbg = 'rgba(99,102,241,.18)' %}{% set _mfg = '#a5b4fc' %}
+                  {% elif 'haiku' in _m %}{% set _mlabel = 'Haiku 4.5' %}{% set _mbg = 'rgba(14,165,233,.18)' %}{% set _mfg = '#7dd3fc' %}
+                  {% else %}{% set _mlabel = _m %}{% set _mbg = 'rgba(100,116,139,.18)' %}{% set _mfg = '#cbd5e1' %}{% endif %}
+                  <div class="mt-2 text-[11px]" title="model id: {{ _m }}">
+                    <span class="text-slate-500">model:</span>
+                    <span style="background: {{ _mbg }}; color: {{ _mfg }};
+                                 padding: 1px 6px; border-radius: 4px;
+                                 font-family: ui-monospace,monospace;">{{ _mlabel }}</span>
+                  </div>
+                {% endif %}
 
                 {% if p.accuracy %}
                   {% set acc = p.accuracy %}

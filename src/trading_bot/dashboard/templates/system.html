@@ -72,6 +72,16 @@
           font-size: 11px; color: #cbd5e1; }
     .op-judge { color: #fcd34d; border-color: rgba(245,158,11,.4); }
     .op-judge .icon { color: #fbbf24; }
+    /* Tiny model badge inside the chip — shows what tier the bot rides */
+    .op .model {
+      font-size: 9px; line-height: 1; padding: 1px 4px; margin-left: 2px;
+      border-radius: 4px; font-family: ui-monospace, SFMono-Regular, monospace;
+      letter-spacing: .02em; opacity: .85;
+    }
+    .op .model-opus   { background: rgba(245,158,11,.18); color: #fcd34d; }
+    .op .model-sonnet { background: rgba(99,102,241,.18); color: #a5b4fc; }
+    .op .model-haiku  { background: rgba(14,165,233,.18); color: #7dd3fc; }
+    .op .model-other  { background: rgba(100,116,139,.18); color: #cbd5e1; }
 
     /* Connector arrow between stages — drawn with a single thin line */
     .arrow {
@@ -198,10 +208,16 @@
               {% if st.operators %}
                 <div class="mt-2 -mx-1 flex flex-wrap">
                   {% for op in st.operators %}
+                    {% set _m = op.model or '' %}
+                    {% if 'opus' in _m %}{% set _mclass = 'model-opus' %}{% set _mlabel = 'Opus' %}
+                    {% elif 'sonnet' in _m %}{% set _mclass = 'model-sonnet' %}{% set _mlabel = 'Sonnet' %}
+                    {% elif 'haiku' in _m %}{% set _mclass = 'model-haiku' %}{% set _mlabel = 'Haiku' %}
+                    {% else %}{% set _mclass = 'model-other' %}{% set _mlabel = '?' %}{% endif %}
                     <span class="op {% if op.is_judge %}op-judge{% endif %}"
-                          title="{{ op.name }} · {{ op.title }} ({{ op.debate_role }})">
+                          title="{{ op.name }} · {{ op.title }} ({{ op.debate_role }}) · model={{ _m or 'unknown' }}">
                       {% if op.is_judge %}<span class="icon">⚖</span>{% endif %}
                       <span>{{ op.name }}</span>
+                      {% if _m %}<span class="model {{ _mclass }}">{{ _mlabel }}</span>{% endif %}
                     </span>
                   {% endfor %}
                 </div>

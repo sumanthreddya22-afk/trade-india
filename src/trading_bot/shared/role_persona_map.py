@@ -173,6 +173,10 @@ class OperatorInfo:
     role_title: str
     pipeline: str
     debate_role: str
+    # The Claude model this operator's debate calls actually use, resolved
+    # via shared.llm_transport.model_for_role(debate_role). Surfaced on the
+    # dashboard so the operator can audit which agent rides which tier.
+    model: str = ""
 
 
 _PERSONA_REGISTRY: Optional[Dict[str, OperatorInfo]] = None
@@ -186,6 +190,12 @@ def _build_registry() -> Dict[str, OperatorInfo]:
     even when one persona module has a syntax error.
     """
     registry: Dict[str, OperatorInfo] = {}
+
+    try:
+        from trading_bot.shared.llm_transport import model_for_role
+    except Exception:
+        def model_for_role(_role: str) -> str:  # type: ignore[misc]
+            return ""
 
     persona_packages = (
         "trading_bot.personas",                      # legacy stocks (still source of truth)
@@ -219,12 +229,14 @@ def _build_registry() -> Dict[str, OperatorInfo]:
             persona_id = persona.get("id")
             if not persona_id:
                 continue
+            debate_role = str(persona.get("debate_role", ""))
             registry[str(persona_id)] = OperatorInfo(
                 persona_id=str(persona_id),
                 full_name=str(persona.get("full_name", "")),
                 role_title=str(persona.get("role_title", "")),
                 pipeline=str(persona.get("pipeline", "")),
-                debate_role=str(persona.get("debate_role", "")),
+                debate_role=debate_role,
+                model=model_for_role(debate_role) if debate_role else "",
             )
     return registry
 
@@ -274,6 +286,7 @@ def operators_payload(role_name: str) -> List[Dict[str, str]]:
             "title": op.role_title,
             "pipeline": op.pipeline,
             "debate_role": op.debate_role,
+            "model": op.model,
         }
         for op in operators_for_role(role_name)
     ]

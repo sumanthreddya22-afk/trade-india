@@ -267,6 +267,7 @@ def build_pipelines_state(
                         "title": info.role_title,
                         "debate_role": info.debate_role,
                         "is_judge": info.debate_role.endswith("_judge"),
+                        "model": info.model,
                     })
                 stage_states.append(StageState(
                     stage=stage,

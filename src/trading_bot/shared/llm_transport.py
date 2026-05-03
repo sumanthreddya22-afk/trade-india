@@ -160,6 +160,39 @@ def rate_limit_status() -> Optional[datetime]:
 
 
 # ---------------------------------------------------------------------------
+# CLI binary discovery
+# ---------------------------------------------------------------------------
+
+
+_CLI_FALLBACK_LOCATIONS = (
+    "/opt/homebrew/bin/claude",          # Apple-silicon Homebrew (current)
+    "/usr/local/bin/claude",             # Intel Homebrew
+    str(Path.home() / ".npm-global/bin/claude"),
+    str(Path.home() / ".local/bin/claude"),
+    str(Path.home() / "node_modules/.bin/claude"),
+)
+
+
+def _resolve_cli_path(cli_path: str) -> str:
+    """If ``cli_path`` is a bare name not on PATH, look it up in known
+    install locations. Returns an absolute path when one is found, else
+    the original (so the caller still raises ``CliNotAvailable`` with a
+    clear error). This is what makes the transport survive launchd's
+    minimal ``/usr/bin:/bin`` PATH.
+    """
+    if os.path.sep in cli_path:
+        return cli_path
+    import shutil
+    found = shutil.which(cli_path)
+    if found:
+        return found
+    for candidate in _CLI_FALLBACK_LOCATIONS:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return cli_path
+
+
+# ---------------------------------------------------------------------------
 # Response dataclass — shape-compatible with anthropic_client.AnthropicResponse
 # ---------------------------------------------------------------------------
 
@@ -199,7 +232,7 @@ class ClaudeCliTransport:
         engine: Any = None,
     ) -> None:
         self.role_name = role_name
-        self.cli_path = cli_path
+        self.cli_path = _resolve_cli_path(cli_path)
         self.default_max_tokens = default_max_tokens
         self.default_timeout = default_timeout_seconds
         self.engine = engine

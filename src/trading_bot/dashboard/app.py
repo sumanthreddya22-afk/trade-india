@@ -561,6 +561,7 @@ def create_app() -> FastAPI:
         template can build click-to-bio links.
         """
         from trading_bot.shared.personas._base import display_label
+        from trading_bot.shared.llm_transport import model_for_role
         return {
             "id": p.id,
             "full_name": p.full_name,
@@ -572,6 +573,7 @@ def create_app() -> FastAPI:
             "pipeline": p.pipeline,
             "debate_role": p.debate_role,
             "model_tier": p.model_tier,
+            "model": model_for_role(p.debate_role) if p.debate_role else "",
             "prompt_version": p.prompt_version,
             "display_label": display_label(p),
         }

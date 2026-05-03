@@ -34,12 +34,18 @@
               {% if line.actors %}
                 <div class="text-[10px] text-slate-500 mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
                   {% for op in line.actors %}
+                    {% set _m = op.model or '' %}
+                    {% if 'opus' in _m %}{% set _mlabel = 'Opus' %}{% set _mcolor = 'text-amber-300/80' %}
+                    {% elif 'sonnet' in _m %}{% set _mlabel = 'Sonnet' %}{% set _mcolor = 'text-indigo-300/80' %}
+                    {% elif 'haiku' in _m %}{% set _mlabel = 'Haiku' %}{% set _mcolor = 'text-sky-300/80' %}
+                    {% else %}{% set _mlabel = '' %}{% set _mcolor = 'text-slate-500' %}{% endif %}
                     <span class="inline-flex items-center"
-                          title="{{ op.name }} · {{ op.title }} ({{ op.pipeline }} · {{ op.debate_role }})">
+                          title="{{ op.name }} · {{ op.title }} ({{ op.pipeline }} · {{ op.debate_role }}) · model={{ _m or 'unknown' }}">
                       {% if op.debate_role.endswith('_judge') %}
                         <span class="text-amber-300/80 mr-0.5">⚖</span>
                       {% endif %}
                       <span class="text-slate-400">{{ op.name }}</span>
+                      {% if _mlabel %}<span class="ml-1 text-[9px] {{ _mcolor }} font-mono">{{ _mlabel }}</span>{% endif %}
                     </span>
                   {% endfor %}
                 </div>
