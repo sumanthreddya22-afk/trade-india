@@ -334,3 +334,17 @@ def register_jobs(
             id="options_scanner", replace_existing=True,
             misfire_grace_time=600, coalesce=True,
         )
+
+    # Phase 3 — Options Wheel-Entry Debate: fuse legacy WheelLane chain
+    # proposals with the new wheel_debate (Aurelio/Beatrice/Yusuf →
+    # Catherine). Fires daily at 10:20 ET, five minutes after the
+    # legacy wheel_scan, so the elevated/proposed pipeline has time to
+    # land. Dry-run by default — operator opts into live submission via
+    # the runner's executor parameter.
+    if cadence.wheel_scan_enabled and "wheel_entry_debate" in runners:
+        scheduler.add_job(
+            runners["wheel_entry_debate"],
+            trigger=CronTrigger(hour=10, minute=20, day_of_week="mon-fri", timezone=et),
+            id="wheel_entry_debate", replace_existing=True,
+            misfire_grace_time=600, coalesce=True,
+        )

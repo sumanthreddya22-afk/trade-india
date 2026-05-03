@@ -488,6 +488,11 @@ def _load_runners(log: StructuredLogger):
     wheel_universe_build_runner = lambda: log.event(
         "wheel_universe_build_stub", reason="wheel disabled or wiring failed"
     )
+    # Phase 3 wheel-entry debate runner — dry-run by default; never
+    # crashes the daemon when wiring isn't complete.
+    wheel_entry_debate_runner = lambda: log.event(
+        "wheel_entry_debate_stub", reason="wheel disabled or wiring failed"
+    )
     reconcile_options_callable = None
     try:
         from trading_bot.shared.config import Settings, load_config
@@ -518,6 +523,63 @@ def _load_runners(log: StructuredLogger):
             wheel_universe_build_runner = _build_universe_builder_runner(
                 settings=_settings, app_cfg=_app_cfg, state_engine=engine,
             )
+
+            # Phase 3 wheel-entry debate runner. Wraps the existing
+            # WheelLane proposal builder + the new wheel_debate
+            # (Aurelio/Beatrice/Yusuf → Catherine). Dry-run by default
+            # (executor=None); the legacy ``wheel_scan`` job continues
+            # to handle the production order path until the operator
+            # opts the new path into live submission.
+            def _wheel_entry_debate_runner() -> None:
+                import datetime as dt
+                from trading_bot.pipelines.options.wheel_runner import (
+                    WheelEntryDeps, run_wheel_entry,
+                )
+                from trading_bot.options.wheel_lane import WheelLane
+
+                # Reuse the wheel deps' chain/spot/iv_rank/sentiment
+                # closures so we never duplicate the data plumbing.
+                lane = WheelLane(_app_cfg.wheel, engine=engine)
+
+                def _chain_for(symbol: str):
+                    today = dt.date.today()
+                    expiration_gte = today + dt.timedelta(days=_app_cfg.wheel.dte_min)
+                    expiration_lte = today + dt.timedelta(days=_app_cfg.wheel.dte_max)
+                    try:
+                        return _opt.get_chain(
+                            symbol,
+                            expiration_gte=expiration_gte,
+                            expiration_lte=expiration_lte,
+                        )
+                    except Exception:
+                        return []
+
+                deps = WheelEntryDeps(
+                    engine=engine,
+                    wheel_lane=lane,
+                    chain_for=_chain_for,
+                    spot_for=_wheel_deps.spot_for,
+                    iv_rank_for=_wheel_deps.iv_rank_for,
+                    sentiment_for=_wheel_deps.sentiment_for,
+                    regime_now=lambda: _reg.detect(),
+                    vix_now=lambda: getattr(_macro.snapshot(), "vix", None),
+                    today=lambda: dt.date.today(),
+                )
+                # Dry-run: executor=None. Production switch lands in a
+                # later phase when the operator validates the audit
+                # trail and flips an enable flag.
+                result = run_wheel_entry(deps, executor=None)
+                log.event(
+                    "wheel_entry_debate_finish",
+                    debated=result.debated,
+                    placed=result.placed,
+                    skipped=result.skipped,
+                    deferred=result.deferred,
+                    skipped_in_lane=result.skipped_in_lane,
+                    error=result.error or "",
+                )
+
+            wheel_entry_debate_runner = _wheel_entry_debate_runner
 
             # reconcile_options runs after the equity reconciler so option
             # cycle state is reconciled in the same pass.
@@ -586,6 +648,11 @@ def _load_runners(log: StructuredLogger):
         # Phase 3 — options scout pipeline (sources → roll-up → scout debate).
         # Wired daily at 9:30 ET via scheduler_jobs.
         "options_scanner": _wrap("options_scanner", lambda: options_scanner.safe_run(ctx={})),
+        # Phase 3 — options wheel-entry debate. Wired daily at 10:20 ET
+        # via scheduler_jobs (5 min after legacy wheel_scan). Dry-run
+        # by default; switches to live when operator validates the
+        # audit chain.
+        "wheel_entry_debate": _wrap("wheel_entry_debate", wheel_entry_debate_runner),
         # Bucket G: nightly self-review at 17:00 ET. Read-only — sends a
         # summary email; does not mutate state. Wired via cli_mod so the
         # operator can also run it manually with `bot nightly-review`.

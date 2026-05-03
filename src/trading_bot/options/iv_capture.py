@@ -77,9 +77,19 @@ def run_iv_capture(deps: IvCaptureDeps) -> int:
 def _upsert_iv_for_today(
     engine: Engine, symbol: str, atm_iv: float, day: dt.date,
 ) -> None:
-    """At most one row per (symbol, calendar day). Replace if it exists."""
+    """At most one row per (symbol, calendar day). Replace if it exists.
+
+    ``recorded_at`` is anchored to the captured ``day`` (12:00 UTC) rather
+    than wall-clock now() so the (symbol, date) idempotency holds even
+    when ``day`` is back-dated for tests or replays. Production callers
+    pass today=date.today(), so the anchor lands on today as expected.
+    """
     day_start = dt.datetime.combine(day, dt.time.min, tzinfo=dt.timezone.utc)
     day_end = day_start + dt.timedelta(days=1)
+    # Anchor the new row at noon of the captured day. The pre-existing
+    # query/dashboard reads use ``recorded_at`` for "most recent IV by
+    # date" — same-day comparisons work either way.
+    recorded_at = day_start + dt.timedelta(hours=12)
     with Session(engine) as s:
         existing = s.query(OptionIvHistory).filter(
             and_(
@@ -92,7 +102,7 @@ def _upsert_iv_for_today(
             s.delete(row)
         s.add(OptionIvHistory(
             symbol=symbol,
-            recorded_at=dt.datetime.now(dt.timezone.utc),
+            recorded_at=recorded_at,
             atm_iv_30d=atm_iv,
         ))
         s.commit()

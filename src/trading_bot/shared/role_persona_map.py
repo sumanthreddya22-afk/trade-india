@@ -114,9 +114,11 @@ ROLE_OPERATORS: Dict[str, List[str]] = {
     # ── Options pipeline ──
     "wheel_scan": _OPTIONS_WHEEL,
     "wheel_manage": _OPTIONS_WHEEL,
+    "wheel_entry_debate": _OPTIONS_WHEEL,
     "iv_capture": [],
     "wheel_universe_build": [],
-    "options_scout": _OPTIONS_SCOUT,    # for future scout_runner role
+    "options_scout": _OPTIONS_SCOUT,
+    "options_scanner": _OPTIONS_SCOUT,
 
     # ── Cross-pipeline coordinators / non-LLM ──
     "verify_stops": [],
