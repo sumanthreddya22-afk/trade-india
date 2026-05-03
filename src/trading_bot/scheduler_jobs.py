@@ -321,3 +321,16 @@ def register_jobs(
             id="wheel_manage", replace_existing=True,
             misfire_grace_time=300, coalesce=True,
         )
+
+    # Phase 3 — Options Scanner: poll earnings + skew, roll candidates,
+    # run scout debate. Fires daily at 9:30 ET (after the open + before
+    # the legacy wheel_scan at 10:15 so scout-elevated underlyings can
+    # influence wheel selection in a future fusion). Off when wheel
+    # itself is disabled.
+    if cadence.wheel_scan_enabled and "options_scanner" in runners:
+        scheduler.add_job(
+            runners["options_scanner"],
+            trigger=CronTrigger(hour=9, minute=30, day_of_week="mon-fri", timezone=et),
+            id="options_scanner", replace_existing=True,
+            misfire_grace_time=600, coalesce=True,
+        )

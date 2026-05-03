@@ -400,6 +400,7 @@ def _load_runners(log: StructuredLogger):
     from trading_bot.roles.health_pulse import HealthPulseRole
     from trading_bot.roles.stock_scanner import StockScannerRole
     from trading_bot.roles.crypto_scanner import CryptoScannerRole
+    from trading_bot.roles.options_scanner import OptionsScannerRole
     from trading_bot.roles.portfolio_monitor import PortfolioMonitorRole
     from trading_bot.roles.order_steward import OrderStewardRole
     from trading_bot.roles.sentiment_analyst import SentimentAnalystRole
@@ -429,6 +430,7 @@ def _load_runners(log: StructuredLogger):
     health_pulse = HealthPulseRole(engine=engine, heartbeat_path=HEARTBEAT_PATH, version=config_version)
     stock_scanner = StockScannerRole(engine=engine)
     crypto_scanner = CryptoScannerRole(engine=engine)
+    options_scanner = OptionsScannerRole(engine=engine)
     portfolio_monitor = PortfolioMonitorRole(engine=engine)
     order_steward = OrderStewardRole(engine=engine)
     sentiment_analyst = SentimentAnalystRole(engine=engine)
@@ -581,6 +583,9 @@ def _load_runners(log: StructuredLogger):
         "wheel_manage": _wrap("wheel_manage", wheel_manage_runner),
         "iv_capture": _wrap("iv_capture", iv_capture_runner),
         "wheel_universe_build": _wrap("wheel_universe_build", wheel_universe_build_runner),
+        # Phase 3 — options scout pipeline (sources → roll-up → scout debate).
+        # Wired daily at 9:30 ET via scheduler_jobs.
+        "options_scanner": _wrap("options_scanner", lambda: options_scanner.safe_run(ctx={})),
         # Bucket G: nightly self-review at 17:00 ET. Read-only — sends a
         # summary email; does not mutate state. Wired via cli_mod so the
         # operator can also run it manually with `bot nightly-review`.
