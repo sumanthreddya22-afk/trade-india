@@ -25,6 +25,16 @@
     .specialty-chip { display: inline-block; padding: 2px 8px; margin: 2px;
                        background: #0f172a; border: 1px solid #1e293b;
                        border-radius: 4px; font-size: 11px; color: #94a3b8; }
+    .accuracy-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+                    margin-top: 8px; font-size: 11px; }
+    .stat-pill { display: inline-flex; align-items: center; gap: 4px;
+                  padding: 2px 8px; border-radius: 4px;
+                  background: #0b1322; border: 1px solid #1e293b;
+                  color: #94a3b8; }
+    .stat-pill.hit-strong { color: #86efac; border-color: rgba(34,197,94,.3); }
+    .stat-pill.hit-weak { color: #fca5a5; border-color: rgba(239,68,68,.3); }
+    .stat-pill.hit-mid { color: #fde68a; border-color: rgba(245,158,11,.3); }
+    .stat-pill.no-data { color: #475569; font-style: italic; }
     a { color: #22d3ee; }
   </style>
 </head>
@@ -93,6 +103,41 @@
                   <code class="bg-slate-900/60 px-2 py-0.5 rounded">{{ p.debate_role }}</code>
                   <span>{{ p.prompt_version }}</span>
                 </div>
+
+                {% if p.accuracy %}
+                  {% set acc = p.accuracy %}
+                  <div class="accuracy-row">
+                    {% if acc.hit_rate_pct is not none %}
+                      {% set hr = acc.hit_rate_pct %}
+                      {% if hr >= 60 %}
+                        <span class="stat-pill hit-strong">hit {{ hr }}%</span>
+                      {% elif hr >= 40 %}
+                        <span class="stat-pill hit-mid">hit {{ hr }}%</span>
+                      {% else %}
+                        <span class="stat-pill hit-weak">hit {{ hr }}%</span>
+                      {% endif %}
+                      <span class="stat-pill" title="verdicts with known outcome / total">
+                        {{ acc.n_outcomes_known }}/{{ acc.n_verdicts }} known
+                      </span>
+                    {% elif acc.n_verdicts > 0 %}
+                      <span class="stat-pill" title="judge verdicts cast (outcome data not yet joined)">
+                        {{ acc.n_verdicts }} verdicts
+                      </span>
+                    {% endif %}
+                    <span class="stat-pill" title="debate runs participated in (last 30d)">
+                      {{ acc.n_runs }} runs
+                    </span>
+                    {% if acc.last_run_at %}
+                      <span class="stat-pill" title="most recent debate participation">
+                        last {{ acc.last_run_at[:10] }}
+                      </span>
+                    {% endif %}
+                  </div>
+                {% else %}
+                  <div class="accuracy-row">
+                    <span class="stat-pill no-data">no debates yet</span>
+                  </div>
+                {% endif %}
               </article>
             {% endfor %}
           </div>

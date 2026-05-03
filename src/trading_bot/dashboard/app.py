@@ -581,19 +581,43 @@ def create_app() -> FastAPI:
 
         Reads PERSONA dicts from every persona module across
         ``shared/personas/`` and ``pipelines/{stocks,crypto,options}/personas/``
-        and renders a roster grouped by pipeline. Click a name → full
-        biography + lifetime accuracy stats (placeholder until Phase 1D
-        plumbs in per-persona winrates).
+        and renders a roster grouped by pipeline. Each card carries
+        per-persona accuracy stats (n_runs, hit-rate %, last-run-at)
+        joined from the debate audit tables across pipelines.
         """
         from trading_bot.shared.personas._base import discover, display_label
+        from trading_bot.shared.persona_accuracy import compute_persona_stats
+
+        # Compute stats once per request — the dashboard's per-second cache
+        # absorbs traffic, and the audit tables stay small (months not
+        # years of debate rows).
+        stats_by_key: dict[tuple[str, str], Any] = {}
+        try:
+            from trading_bot.state_db import get_engine as _get_engine
+            _state_db = os.environ.get("TRADING_BOT_STATE_DB", "data/state.db")
+            stats_by_key = compute_persona_stats(
+                _get_engine(_state_db), lookback_days=30,
+            )
+        except Exception:
+            # Empty fallback so the roster page still renders when the
+            # audit tables are unavailable.
+            stats_by_key = {}
+
         groups: dict[str, list[dict]] = {"shared": [], "stocks": [],
                                          "crypto": [], "options": []}
+
+        def _attach_stats(card: dict) -> dict:
+            """Merge accuracy payload (or null) into a persona card."""
+            key = (card["pipeline"], card["debate_role"])
+            stats = stats_by_key.get(key)
+            card["accuracy"] = stats.to_dict() if stats is not None else None
+            return card
 
         # shared/personas
         try:
             from trading_bot.shared import personas as shared_personas
             for p in discover(shared_personas):
-                groups["shared"].append(_persona_card_payload(p))
+                groups["shared"].append(_attach_stats(_persona_card_payload(p)))
         except Exception:
             pass
 
@@ -601,7 +625,7 @@ def create_app() -> FastAPI:
         try:
             from trading_bot.pipelines.crypto import personas as crypto_personas
             for p in discover(crypto_personas):
-                groups["crypto"].append(_persona_card_payload(p))
+                groups["crypto"].append(_attach_stats(_persona_card_payload(p)))
         except Exception:
             pass
 
@@ -610,7 +634,7 @@ def create_app() -> FastAPI:
         try:
             from trading_bot import personas as stocks_personas
             for p in discover(stocks_personas):
-                groups["stocks"].append(_persona_card_payload(p))
+                groups["stocks"].append(_attach_stats(_persona_card_payload(p)))
         except Exception:
             pass
 
@@ -618,7 +642,7 @@ def create_app() -> FastAPI:
         try:
             from trading_bot.pipelines.options import personas as options_personas  # type: ignore[import-not-found]
             for p in discover(options_personas):
-                groups["options"].append(_persona_card_payload(p))
+                groups["options"].append(_attach_stats(_persona_card_payload(p)))
         except Exception:
             pass
 
