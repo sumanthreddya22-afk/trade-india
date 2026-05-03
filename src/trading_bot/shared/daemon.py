@@ -656,6 +656,26 @@ def main() -> int:
         # fails — scanners + execution still work without it.
         log.error("alpaca_trade_stream_start_failed", error=e)
 
+    # Coinbase Advanced Trade WebSocket (Phase 1G+). Pushes material
+    # crypto price moves into intel_stream_events_crypto so the
+    # express-lane dispatcher can fire scout/hold debates within ~60s.
+    # Off by default (coinbase_ws_enabled=False) so paper deployments
+    # without crypto interest don't open extra sockets.
+    coinbase_ws_stream = None
+    try:
+        from trading_bot.shared.config import Settings as _CbSettings
+        from trading_bot.state_db import get_engine as _cb_get_engine
+        from trading_bot.pipelines.crypto.streams.coinbase_ws_stream import (
+            maybe_start as _cb_maybe_start,
+        )
+        coinbase_ws_stream = _cb_maybe_start(
+            _CbSettings(), _cb_get_engine(STATE_DB),
+        )
+        if coinbase_ws_stream is not None:
+            log.event("coinbase_ws_stream_started")
+    except Exception as e:
+        log.error("coinbase_ws_stream_start_failed", error=e)
+
     # File-system watchers (Phase 3). Catches writes that bypass the
     # bus (mailbox routine, structured logs, scout output). Same
     # best-effort contract as the trade stream.
@@ -677,6 +697,11 @@ def main() -> int:
                 trade_stream.stop()
             except Exception as e:
                 log.error("alpaca_trade_stream_stop_failed", error=e)
+        if coinbase_ws_stream is not None:
+            try:
+                coinbase_ws_stream.stop()
+            except Exception as e:
+                log.error("coinbase_ws_stream_stop_failed", error=e)
         if file_watchers is not None:
             try:
                 file_watchers.stop()

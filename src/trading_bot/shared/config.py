@@ -43,6 +43,17 @@ class Settings(BaseSettings):
     # Etherscan free tier: 5 req/sec, 100k req/day. Used for ERC-20
     # large-transfer poll as Whale Alert backup.
     etherscan_api_key: str = ""
+    # Phase 1G+ — Coinbase Advanced Trade WebSocket (public market-data
+    # channels: ticker, market_trades, heartbeats). Public feed needs no
+    # API key. Optional comma-separated product_id list and a feature
+    # flag to gate startup; both default to a safe small set so a paper
+    # deployment doesn't accidentally subscribe to everything.
+    coinbase_ws_enabled: bool = False
+    coinbase_ws_product_ids: str = "BTC-USD,ETH-USD,SOL-USD"
+    # Threshold (%) for ticker → StreamEvent emission. The WS feed
+    # broadcasts every price tick; we only want material moves on the
+    # express-lane. Default 3% from the last emitted baseline per symbol.
+    coinbase_ws_min_pct_move: float = 3.0
 
     @field_validator("bot_mode")
     @classmethod

@@ -142,7 +142,9 @@
       "Bash(python3 -c \"import reportlab; print\\(reportlab.Version\\)\")",
       "Bash(git mv *)",
       "Bash(python3 -c \"from alpaca.trading.requests import StopOrderRequest; help\\(StopOrderRequest\\)\")",
-      "Bash(git -C /Users/bharathkandala/Trading log --oneline -20)"
+      "Bash(git -C /Users/bharathkandala/Trading log --oneline -20)",
+      "Bash(/Users/bharathkandala/Trading/tools/run_mailbox_routine.sh*)",
+      "Bash(python -m src.trading_bot.dashboard.app)"
     ]
   }
 }
