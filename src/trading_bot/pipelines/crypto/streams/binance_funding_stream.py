@@ -97,6 +97,13 @@ def binance_funding_payload_to_events(
     return out
 
 
+# Process-wide latch: Binance returns HTTP 451 to US IPs. The block is
+# permanent so we only log once and short-circuit subsequent polls. If
+# the operator wires a VPN and wants to re-enable, restart the daemon
+# (clears the latch) — there is no signal here that the geo block lifted.
+_GEO_BLOCKED = False
+
+
 def poll_binance_funding(
     engine: Any,
     *,
@@ -105,10 +112,20 @@ def poll_binance_funding(
     now: Optional[dt.datetime] = None,
 ) -> int:
     """Poll Binance funding rates and ingest material-funding StreamEvents."""
+    global _GEO_BLOCKED
     now = now or dt.datetime.now(dt.timezone.utc)
+    if _GEO_BLOCKED:
+        return 0
     try:
         payload = (fetcher or _default_fetcher)() or []
     except Exception as e:  # noqa: BLE001
+        if _is_geo_block(e):
+            _GEO_BLOCKED = True
+            logger.info(
+                "poll_binance_funding: Binance returned 451 (US geo-block) — "
+                "suppressing further polls until daemon restart"
+            )
+            return 0
         logger.warning("poll_binance_funding fetch failed: %s", e)
         return 0
 
@@ -127,3 +144,12 @@ def _default_fetcher() -> List[dict]:
     resp = requests.get(BINANCE_PREMIUM_INDEX_URL, timeout=10)
     resp.raise_for_status()
     return resp.json() or []
+
+
+def _is_geo_block(exc: BaseException) -> bool:
+    """Return True if ``exc`` is the HTTP 451 Unavailable-For-Legal-Reasons
+    that Binance returns to US IPs. We treat 451 as terminal for this
+    process — no point retrying every minute when the block is permanent.
+    """
+    msg = str(exc)
+    return "451" in msg and "binance" in msg.lower()

@@ -33,6 +33,10 @@ from trading_bot.pipelines.crypto.sources._base import (
 
 logger = logging.getLogger(__name__)
 
+# Same per-process latch as binance_funding_stream — Binance permanently
+# 451s US IPs, so log once and short-circuit on repeated polls.
+_GEO_BLOCKED = False
+
 BINANCE_PREMIUM_INDEX_URL = "https://fapi.binance.com/fapi/v1/premiumIndex"
 
 DEFAULT_TRACKED_SYMBOLS = (
@@ -68,9 +72,20 @@ def collect_binance_funding(
     if not targets:
         return SourceResult(source="binance_funding", extra={"reason": "no symbols configured"})
 
+    global _GEO_BLOCKED
+    if _GEO_BLOCKED:
+        return SourceResult(source="binance_funding", extra={"reason": "geo_blocked"})
     try:
         rows = (fetcher or _default_fetcher)(targets) or []
     except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if "451" in msg and "binance" in msg.lower():
+            _GEO_BLOCKED = True
+            logger.info(
+                "binance_funding: Binance returned 451 (US geo-block) — "
+                "suppressing further polls until daemon restart"
+            )
+            return SourceResult(source="binance_funding", extra={"reason": "geo_blocked"})
         logger.warning("binance_funding fetch failed: %s", e)
         return SourceResult(source="binance_funding", error=str(e))
 

@@ -107,9 +107,9 @@ class CryptoStreamerRole(BaseRole):
                 logger.warning("crypto_streamer: broker unavailable (%s)", e)
                 return []
         try:
-            positions = self._broker.list_positions()
+            positions = self._broker.get_positions()
         except Exception as e:  # noqa: BLE001
-            logger.warning("crypto_streamer: list_positions failed: %s", e)
+            logger.warning("crypto_streamer: get_positions failed: %s", e)
             return []
         return [
             p.symbol for p in positions
@@ -150,9 +150,9 @@ class CryptoStreamerRole(BaseRole):
         if self._broker is None:
             return None
         try:
-            positions = self._broker.list_positions()
+            positions = self._broker.get_positions()
         except Exception as e:  # noqa: BLE001
-            logger.warning("crypto_streamer: list_positions failed: %s", e)
+            logger.warning("crypto_streamer: get_positions failed: %s", e)
             return None
         for p in positions:
             if p.symbol.upper() == symbol.upper():

@@ -25,6 +25,7 @@ dependencies = [
     "anthropic>=0.40.0",
     "yfinance>=0.2.40",
     "websocket-client>=1.7",
+    "feedparser>=6.0",
 ]
 
 [project.optional-dependencies]
