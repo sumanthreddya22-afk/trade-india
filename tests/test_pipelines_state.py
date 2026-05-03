@@ -135,7 +135,7 @@ def test_build_marks_stage_ok_after_role_run(state_db):
     now = dt.datetime.now(dt.timezone.utc)
     with Session(eng) as session:
         session.add(RoleRun(
-            role_name="crypto_scanner",
+            role_name="crypto_intel_ingestor",
             started_at=now - dt.timedelta(minutes=2),
             finished_at=now - dt.timedelta(minutes=1),
             status="ok",
@@ -166,7 +166,7 @@ def test_llm_stage_ok_only_when_debate_landed(state_db):
     now = dt.datetime.now(dt.timezone.utc)
     with Session(eng) as session:
         session.add(RoleRun(
-            role_name="crypto_scanner",
+            role_name="crypto_intel_ingestor",
             started_at=now - dt.timedelta(minutes=2),
             finished_at=now - dt.timedelta(minutes=1),
             status="ok", latency_ms=100, error_text=None,

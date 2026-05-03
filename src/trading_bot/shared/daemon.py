@@ -400,6 +400,8 @@ def _load_runners(log: StructuredLogger):
     from trading_bot.roles.health_pulse import HealthPulseRole
     from trading_bot.roles.stock_scanner import StockScannerRole
     from trading_bot.roles.crypto_scanner import CryptoScannerRole
+    from trading_bot.roles.crypto_intel_ingestor import CryptoIntelIngestorRole
+    from trading_bot.roles.crypto_streamer import CryptoStreamerRole
     from trading_bot.roles.options_scanner import OptionsScannerRole
     from trading_bot.roles.portfolio_monitor import PortfolioMonitorRole
     from trading_bot.roles.order_steward import OrderStewardRole
@@ -430,6 +432,17 @@ def _load_runners(log: StructuredLogger):
     health_pulse = HealthPulseRole(engine=engine, heartbeat_path=HEARTBEAT_PATH, version=config_version)
     stock_scanner = StockScannerRole(engine=engine)
     crypto_scanner = CryptoScannerRole(engine=engine)
+    crypto_intel_ingestor = CryptoIntelIngestorRole(engine=engine)
+    # CryptoStreamerRole reads broker positions to know which symbols are
+    # held; passing alpaca_client lazily so missing creds don't break boot.
+    try:
+        from trading_bot.shared.config import Settings as _CSet
+        _crypto_streamer_settings = _CSet()
+    except Exception:
+        _crypto_streamer_settings = None
+    crypto_streamer = CryptoStreamerRole(
+        engine=engine, settings=_crypto_streamer_settings,
+    )
     options_scanner = OptionsScannerRole(engine=engine)
     portfolio_monitor = PortfolioMonitorRole(engine=engine)
     order_steward = OrderStewardRole(engine=engine)
@@ -611,6 +624,19 @@ def _load_runners(log: StructuredLogger):
         "heartbeat": _heartbeat,
         "intel_scan": _wrap("intel_scan", lambda: stock_scanner.safe_run(ctx={})),
         "crypto_scan": _wrap("crypto_scan", lambda: crypto_scanner.safe_run(ctx={})),
+        # Crypto intel ingest — collects from RSS / public-API sources,
+        # rolls into candidates, runs scout debate. Closes the orphan
+        # where pipelines/crypto/sources existed but no role called it.
+        "crypto_intel_ingest": _wrap(
+            "crypto_intel_ingest",
+            lambda: crypto_intel_ingestor.safe_run(ctx={}),
+        ),
+        # Crypto streamer — express-lane stream poll (whale_alert /
+        # binance_funding / etherscan_whales / defillama) → scout / hold
+        # trigger.
+        "crypto_stream": _wrap(
+            "crypto_stream", lambda: crypto_streamer.safe_run(ctx={}),
+        ),
         "portfolio_watch": _wrap("portfolio_watch", lambda: portfolio_monitor.safe_run(ctx={})),
         "verify_stops": _wrap("verify_stops", lambda: order_steward.safe_run(ctx={})),
         "news_warm": _wrap("news_warm", lambda: sentiment_analyst.safe_run(ctx={})),

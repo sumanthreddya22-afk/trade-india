@@ -61,6 +61,33 @@ def register_jobs(
         coalesce=True,
     )
 
+    # Crypto Intel Ingest: every 30 min, 24/7. Runs the source collectors
+    # (coindesk RSS / cointelegraph RSS / apewisdom / binance_funding /
+    # defillama / whale_alert if keyed) → roll-up → scout debate. Closes
+    # the gap where pipelines/crypto/sources had no production runner.
+    if "crypto_intel_ingest" in runners:
+        scheduler.add_job(
+            runners["crypto_intel_ingest"],
+            trigger=IntervalTrigger(minutes=30),
+            id="crypto_intel_ingestor",
+            replace_existing=True,
+            misfire_grace_time=600,
+            coalesce=True,
+        )
+
+    # Crypto Streamer: every minute, 24/7. Polls the express-lane stream
+    # adapters (whale_alert REST, defillama, etherscan whales, binance
+    # funding) and dispatches express scout/hold debates within ~60s.
+    if "crypto_stream" in runners:
+        scheduler.add_job(
+            runners["crypto_stream"],
+            trigger=IntervalTrigger(minutes=1),
+            id="crypto_streamer",
+            replace_existing=True,
+            misfire_grace_time=120,
+            coalesce=True,
+        )
+
     # Portfolio Monitor: every N min during market hours
     pm_min = cadence.portfolio_monitor_minutes
     scheduler.add_job(

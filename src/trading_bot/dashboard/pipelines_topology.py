@@ -37,7 +37,7 @@ class Stage:
     count_label: str = ""                         # what the integer means
     table_name: Optional[str] = None              # for "rows in DB" badge
     icon: str = "▢"                               # small glyph
-    kind: str = "automated"                       # automated | scout | entry | hold | wheel | lesson | state
+    kind: str = "automated"                       # automated | scout | entry | hold | wheel | lesson | state | universe | risk | broker | steward | monitor | reconcile | audit
     # Operator-visible note about a known gap on this stage. Renders
     # under the description in italic amber when set. Examples:
     # "needs ANTHROPIC_API_KEY", "wired but not yet scheduled", etc.
@@ -111,6 +111,20 @@ _OPTIONS_LESSON = ("options_lesson_analyst_v1",)
 
 _STOCKS_STAGES: Tuple[Stage, ...] = (
     Stage(
+        id="stocks-universe",
+        label="Universe Build",
+        description="Pre-market rank (07:30 ET) + Polygon grouped refresh. Builds the daily watchlist.",
+        role_name="universe_curator",
+        count_query="""
+            SELECT COUNT(*) FROM role_runs
+            WHERE role_name='universe_curator' AND status='ok'
+              AND started_at >= datetime('now', '-1 day')
+        """,
+        count_label="universe builds today",
+        icon="🌐",
+        kind="universe",
+    ),
+    Stage(
         id="stocks-sources",
         label="Intel Sources",
         description="SEC EDGAR · Alpaca News · ApeWisdom · GDELT · Finnhub · VIP feeds",
@@ -134,6 +148,19 @@ _STOCKS_STAGES: Tuple[Stage, ...] = (
         table_name="intel_candidates",
         icon="⚖",
         kind="automated",
+    ),
+    Stage(
+        id="stocks-cb-gate",
+        label="Circuit-Breaker Gate",
+        description="Pre-trade halt on macro shock / VIX spike / daily-loss limit. Trips bypass entry debate entirely.",
+        role_name=None,  # synchronous gate inside the orchestrator
+        count_query="""
+            SELECT COUNT(*) FROM circuit_breaker_events
+            WHERE tripped_at >= datetime('now', '-7 day')
+        """,
+        count_label="trips this week",
+        icon="🚦",
+        kind="risk",
     ),
     Stage(
         id="stocks-scout",
@@ -175,6 +202,77 @@ _STOCKS_STAGES: Tuple[Stage, ...] = (
         blocked_note="same legacy LLM transport gap as scout debate above",
     ),
     Stage(
+        id="stocks-risk-gate",
+        label="Risk Manager",
+        description="Sector cap · gross/net cap · daily-loss limit · per-trade risk%",
+        role_name=None,
+        count_query="""
+            SELECT COUNT(*) FROM decisions
+            WHERE timestamp_utc >= datetime('now', '-1 day')
+              AND action LIKE 'rejected_by_risk%'
+        """,
+        count_label="risk rejects today",
+        icon="🛂",
+        kind="risk",
+    ),
+    Stage(
+        id="stocks-unblock",
+        label="Unblock Debate",
+        description="Borderline risk-cap rejections fire a 4-LLM committee that may override.",
+        role_name=None,
+        count_query="""
+            SELECT COUNT(*) FROM unblock_debate_runs
+            WHERE run_at >= datetime('now', '-1 day')
+        """,
+        count_label="debates today",
+        table_name="unblock_debate_runs",
+        icon="🗳",
+        kind="entry",
+        blocked_note="same legacy LLM transport gap as scout debate above",
+    ),
+    Stage(
+        id="stocks-broker",
+        label="Broker Submit",
+        description="Alpaca place_order_with_stop_loss + trade_journal write.",
+        role_name=None,
+        count_query="""
+            SELECT COUNT(*) FROM decisions
+            WHERE timestamp_utc >= datetime('now', '-1 day')
+              AND action='placed_order'
+        """,
+        count_label="orders placed today",
+        icon="📨",
+        kind="broker",
+    ),
+    Stage(
+        id="stocks-steward",
+        label="Order Steward",
+        description="Verify-stops sweep every :20/:50 — attaches missing stop-losses.",
+        role_name="order_steward",
+        count_query="""
+            SELECT COUNT(*) FROM role_runs
+            WHERE role_name='order_steward' AND status='ok'
+              AND started_at >= datetime('now', '-1 day')
+        """,
+        count_label="sweeps today",
+        icon="🛟",
+        kind="steward",
+    ),
+    Stage(
+        id="stocks-monitor",
+        label="Position Monitor",
+        description="Walks every held position — fires hold-debate triggers when thresholds cross.",
+        role_name="portfolio_monitor",
+        count_query="""
+            SELECT COUNT(*) FROM role_runs
+            WHERE role_name='portfolio_monitor' AND status='ok'
+              AND started_at >= datetime('now', '-1 day')
+        """,
+        count_label="checks today",
+        icon="👁",
+        kind="monitor",
+    ),
+    Stage(
         id="stocks-hold",
         label="Hold Debate",
         description="On position triggers: hold / tighten stop / exit now.",
@@ -189,6 +287,34 @@ _STOCKS_STAGES: Tuple[Stage, ...] = (
         icon="🛡",
         kind="hold",
         blocked_note="same legacy LLM transport gap as scout debate above",
+    ),
+    Stage(
+        id="stocks-reconcile",
+        label="Reconciliation",
+        description="Diff broker positions against trade_journal. Mark closed trades.",
+        role_name="reconciler",
+        count_query="""
+            SELECT COUNT(*) FROM role_runs
+            WHERE role_name='reconciler' AND status='ok'
+              AND started_at >= datetime('now', '-1 day')
+        """,
+        count_label="reconciles today",
+        icon="🧾",
+        kind="reconcile",
+    ),
+    Stage(
+        id="stocks-audit",
+        label="Decision Audit",
+        description="Every decision (placed / rejected / skipped) appended to decisions table.",
+        role_name=None,
+        count_query="""
+            SELECT COUNT(*) FROM decisions
+            WHERE timestamp_utc >= datetime('now', '-1 day')
+        """,
+        count_label="decisions today",
+        table_name="decisions",
+        icon="📜",
+        kind="audit",
     ),
     Stage(
         id="stocks-lesson",
@@ -217,7 +343,7 @@ _CRYPTO_STAGES: Tuple[Stage, ...] = (
         id="crypto-sources",
         label="Intel Sources",
         description="Whale Alert · CryptoPanic · CoinDesk · CoinTelegraph · Etherscan · Funding · Skews · Snapshot",
-        role_name="crypto_scanner",
+        role_name="crypto_intel_ingestor",
         count_query="""
             SELECT COUNT(*) FROM intel_events_crypto
             WHERE ingested_at >= datetime('now', '-1 day')
@@ -227,8 +353,10 @@ _CRYPTO_STAGES: Tuple[Stage, ...] = (
         icon="📡",
         kind="automated",
         blocked_note=(
-            "tier-1 sources (whale_alert / etherscan / cryptopanic) "
-            "skip silently when their API keys are unset"
+            "tier-1 sources (whale_alert / etherscan / cryptopanic) skip "
+            "silently when their API keys are unset. Tier-2/3 keyless "
+            "sources (coindesk_rss / cointelegraph_rss / apewisdom / "
+            "binance_funding / defillama) work without keys."
         ),
     ),
     Stage(
@@ -249,7 +377,7 @@ _CRYPTO_STAGES: Tuple[Stage, ...] = (
         id="crypto-aggregator",
         label="Aggregator",
         description="Per-symbol score + adversarial flags + chain context",
-        role_name="crypto_scanner",
+        role_name="crypto_intel_ingestor",
         count_query="SELECT COUNT(*) FROM intel_candidates_crypto",
         count_label="candidates pooled",
         table_name="intel_candidates_crypto",
@@ -260,7 +388,7 @@ _CRYPTO_STAGES: Tuple[Stage, ...] = (
         id="crypto-scout",
         label="Scout Debate",
         description="Two-call: skeptic + analyst → judge. Elevate or dismiss.",
-        role_name="crypto_scanner",
+        role_name="crypto_intel_ingestor",
         persona_ids=_CRYPTO_SCOUT,
         count_query="""
             SELECT COUNT(*) FROM scout_debate_runs_crypto
@@ -287,6 +415,64 @@ _CRYPTO_STAGES: Tuple[Stage, ...] = (
         kind="entry",
     ),
     Stage(
+        id="crypto-cb-gate",
+        label="Circuit-Breaker Gate",
+        description="BTC crash · funding extreme · stablecoin depeg · liquidation cascade. Halts new entries; hold-exits always allowed.",
+        role_name=None,
+        count_query="""
+            SELECT COUNT(*) FROM circuit_breaker_events_crypto
+            WHERE tripped_at >= datetime('now', '-7 day')
+        """,
+        count_label="trips this week",
+        icon="🚦",
+        kind="risk",
+    ),
+    Stage(
+        id="crypto-risk-gate",
+        label="Risk Manager",
+        description="Per-trade risk% · gross/net cap · daily-loss limit (shared with stocks).",
+        role_name=None,
+        count_query="""
+            SELECT COUNT(*) FROM decisions
+            WHERE timestamp_utc >= datetime('now', '-1 day')
+              AND action LIKE 'rejected_by_risk%'
+              AND COALESCE(asset_class,'') = 'crypto'
+        """,
+        count_label="risk rejects today",
+        icon="🛂",
+        kind="risk",
+    ),
+    Stage(
+        id="crypto-broker",
+        label="Broker Submit",
+        description="Alpaca crypto submit + stop-loss attach + trade_journal write.",
+        role_name=None,
+        count_query="""
+            SELECT COUNT(*) FROM decisions
+            WHERE timestamp_utc >= datetime('now', '-1 day')
+              AND action='placed_order'
+              AND COALESCE(asset_class,'') = 'crypto'
+        """,
+        count_label="orders placed today",
+        icon="📨",
+        kind="broker",
+    ),
+    Stage(
+        id="crypto-monitor",
+        label="Position Monitor",
+        description="Per-position triggers (big drop / sentiment flip / whale exit) → fire hold debate.",
+        role_name="crypto_streamer",  # not yet registered
+        count_query="""
+            SELECT COUNT(*) FROM role_runs
+            WHERE role_name='crypto_streamer' AND status='ok'
+              AND started_at >= datetime('now', '-1 day')
+        """,
+        count_label="streamer ticks today",
+        icon="👁",
+        kind="monitor",
+        blocked_note="CryptoStreamerRole class exists but is NOT registered in the daemon scheduler",
+    ),
+    Stage(
         id="crypto-hold",
         label="Hold Debate",
         description="On position triggers: hold / tighten stop / flatten.",
@@ -300,6 +486,20 @@ _CRYPTO_STAGES: Tuple[Stage, ...] = (
         table_name="hold_debate_runs_crypto",
         icon="🛡",
         kind="hold",
+    ),
+    Stage(
+        id="crypto-reconcile",
+        label="Reconciliation",
+        description="Shared with stocks reconciler — closed trades roll up to closed_trades.db.",
+        role_name="reconciler",
+        count_query="""
+            SELECT COUNT(*) FROM role_runs
+            WHERE role_name='reconciler' AND status='ok'
+              AND started_at >= datetime('now', '-1 day')
+        """,
+        count_label="reconciles today",
+        icon="🧾",
+        kind="reconcile",
     ),
     Stage(
         id="crypto-lesson",
@@ -324,6 +524,18 @@ _CRYPTO_STAGES: Tuple[Stage, ...] = (
 # ---------------------------------------------------------------------------
 
 _OPTIONS_STAGES: Tuple[Stage, ...] = (
+    Stage(
+        id="options-universe",
+        label="Universe Build",
+        description="Wheel-eligible builder (21:30 ET nightly): Alpaca optionable × Finnhub fundamentals.",
+        role_name="wheel_universe_build",
+        count_query="""
+            SELECT COUNT(*) FROM wheel_universe_cache WHERE eligible=1
+        """,
+        count_label="wheel-eligible names",
+        icon="🌐",
+        kind="universe",
+    ),
     Stage(
         id="options-sources",
         label="Intel Sources",
@@ -381,6 +593,34 @@ _OPTIONS_STAGES: Tuple[Stage, ...] = (
         blocked_note="dry-run mode (executor=None) until operator validates audit chain",
     ),
     Stage(
+        id="options-cb-gate",
+        label="Circuit-Breaker Gate",
+        description="VIX spike · term inversion · earnings cluster · liquidity crisis. Halts new entries; existing-cycle management always allowed.",
+        role_name=None,
+        count_query="""
+            SELECT COUNT(*) FROM circuit_breaker_events_options
+            WHERE tripped_at >= datetime('now', '-7 day')
+        """,
+        count_label="trips this week",
+        icon="🚦",
+        kind="risk",
+    ),
+    Stage(
+        id="options-broker",
+        label="Broker Submit",
+        description="Alpaca options submit_short_put / short_call → wheel-cycle anchor.",
+        role_name=None,
+        count_query="""
+            SELECT COUNT(*) FROM wheel_debate_runs_options
+            WHERE run_at >= datetime('now', '-1 day')
+              AND verdict='place' AND entry_order_id IS NOT NULL
+        """,
+        count_label="orders placed today",
+        icon="📨",
+        kind="broker",
+        blocked_note="dry-run mode (executor=None) until operator validates audit chain",
+    ),
+    Stage(
         id="options-state",
         label="Wheel State Machine",
         description="cash → CSP → assigned → CC → called away → cash",
@@ -393,6 +633,34 @@ _OPTIONS_STAGES: Tuple[Stage, ...] = (
         table_name="wheel_cycles_options",
         icon="⚙",
         kind="state",
+    ),
+    Stage(
+        id="options-monitor",
+        label="Cycle Manager",
+        description="Reads open cycles every 30 min — rolls / closes for profit / accepts assignment.",
+        role_name="wheel_manage",
+        count_query="""
+            SELECT COUNT(*) FROM role_runs
+            WHERE role_name='wheel_manage' AND status='ok'
+              AND started_at >= datetime('now', '-1 day')
+        """,
+        count_label="manage ticks today",
+        icon="👁",
+        kind="monitor",
+    ),
+    Stage(
+        id="options-reconcile",
+        label="Reconciliation",
+        description="Reconcile broker option positions against contract_positions_options + wheel cycle state.",
+        role_name="reconciler",
+        count_query="""
+            SELECT COUNT(*) FROM role_runs
+            WHERE role_name='reconciler' AND status='ok'
+              AND started_at >= datetime('now', '-1 day')
+        """,
+        count_label="reconciles today",
+        icon="🧾",
+        kind="reconcile",
     ),
     Stage(
         id="options-lesson",

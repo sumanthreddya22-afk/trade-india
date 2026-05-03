@@ -37,14 +37,24 @@
              border: 1px solid #1e293b; background: rgba(11,18,34,.6);
              transition: border-color .15s ease; }
     .stage:hover { border-color: #334155; }
-    .stage.scout, .stage.entry, .stage.hold, .stage.wheel, .stage.lesson {
+    .stage.scout, .stage.entry, .stage.hold, .stage.wheel, .stage.lesson,
+    .stage.universe, .stage.risk, .stage.broker, .stage.steward,
+    .stage.monitor, .stage.reconcile, .stage.audit, .stage.state {
        border-left-width: 3px;
     }
-    .stage.scout  { border-left-color: #38bdf8; }
-    .stage.entry  { border-left-color: #f97316; }
-    .stage.hold   { border-left-color: #fb7185; }
-    .stage.wheel  { border-left-color: #d946ef; }
-    .stage.lesson { border-left-color: #34d399; }
+    .stage.universe   { border-left-color: #94a3b8; }
+    .stage.scout      { border-left-color: #38bdf8; }
+    .stage.entry      { border-left-color: #f97316; }
+    .stage.hold       { border-left-color: #fb7185; }
+    .stage.wheel      { border-left-color: #d946ef; }
+    .stage.lesson     { border-left-color: #34d399; }
+    .stage.risk       { border-left-color: #fbbf24; }
+    .stage.broker     { border-left-color: #a78bfa; }
+    .stage.steward    { border-left-color: #67e8f9; }
+    .stage.monitor    { border-left-color: #facc15; }
+    .stage.reconcile  { border-left-color: #818cf8; }
+    .stage.audit      { border-left-color: #64748b; }
+    .stage.state      { border-left-color: #c4b5fd; }
 
     /* Health dots */
     .h-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }

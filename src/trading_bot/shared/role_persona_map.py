@@ -107,6 +107,10 @@ ROLE_OPERATORS: Dict[str, List[str]] = {
     # ── Crypto pipeline ──
     "crypto_scan": _CRYPTO_SCOUT,
     "crypto_scanner": _CRYPTO_SCOUT,
+    "crypto_intel_ingestor": _CRYPTO_SCOUT,
+    "crypto_intel_ingest": _CRYPTO_SCOUT,
+    "crypto_streamer": [],          # express-lane poll, dispatches to scout
+    "crypto_stream": [],
     # The crypto pipeline runs hold + entry debates from the same
     # scanner role; we list scout here because that's the dominant
     # workload and the table renders one set of operators per row.
