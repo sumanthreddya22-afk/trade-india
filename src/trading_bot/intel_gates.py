@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 import requests
 
-from trading_bot.config import Settings
+from trading_bot.shared.config import Settings
 from trading_bot.intelligence_apewisdom import ApeWisdomClient
 from trading_bot.intelligence_finnhub import FinnhubClient, FinnhubUnavailable
 

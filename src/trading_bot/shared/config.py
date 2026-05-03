@@ -25,6 +25,24 @@ class Settings(BaseSettings):
     # need it fail fast with a clear error if missing.
     polygon_api_key: str = ""
     finnhub_api_key: str = ""
+    # CryptoPanic free tier (200 req/day). Aggregates 100+ crypto news
+    # sources with community sentiment voting. Empty key = source skipped
+    # silently — never blocks ingestion.
+    cryptopanic_api_key: str = ""
+    # Phase A — diversified stock-news sources.
+    # NewsAPI.org free tier (100 req/day). Broad publisher set used for
+    # daily backfill of top watchlist symbols. Empty = source skipped.
+    newsapi_key: str = ""
+    # Reddit's free anonymous API requires a contactable User-Agent.
+    # Operator email per memory; bumped on schema/behaviour changes.
+    reddit_user_agent: str = "TradingBot/1.0 (+bharath8887@gmail.com)"
+    # Phase 1A — crypto pipeline source API keys.
+    # Whale Alert free tier covers BTC + ETH transfers > $1M (no key needed
+    # for very small queries; key gets you better limits + altcoins).
+    whale_alert_api_key: str = ""
+    # Etherscan free tier: 5 req/sec, 100k req/day. Used for ERC-20
+    # large-transfer poll as Whale Alert backup.
+    etherscan_api_key: str = ""
 
     @field_validator("bot_mode")
     @classmethod
@@ -127,6 +145,19 @@ class StrategyConfig(BaseModel):
     # use cases (e.g., small/mid-caps where 10+ sells in 90d is unusual).
     insider_cluster_enabled: bool = Field(default=False)
     insider_cluster_threshold: int = Field(default=20, ge=1, le=200)
+    # Entry-debate gate (Phase 6). When True, every BUY signal that survives
+    # the deterministic risk check fires a 4-LLM committee debate before the
+    # order is placed. Mailbox-routed (Claude Code subscription, not API
+    # spend) and fail-soft: a debate failure skips the trade AND queues an
+    # operator alert.
+    entry_debate_enabled: bool = Field(default=False)
+    entry_debate_daily_cap: int = Field(default=50, ge=0, le=500)
+    # When the regime detector says sideways/trending_down, allow Momentum
+    # entries IF the symbol's intel_score is at or above this threshold.
+    # Risk_off remains a hard wall regardless of intel score.
+    intel_score_regime_override_threshold: float = Field(
+        default=5.0, ge=0.0, le=100.0,
+    )
 
 
 class WheelConfig(BaseModel):

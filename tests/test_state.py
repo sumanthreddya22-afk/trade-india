@@ -1,7 +1,7 @@
 from decimal import Decimal
 from pathlib import Path
 
-from trading_bot.alpaca_client import Position
+from trading_bot.shared.alpaca_client import Position
 from trading_bot.state import (
     WatchlistEntry,
     has_open_position,

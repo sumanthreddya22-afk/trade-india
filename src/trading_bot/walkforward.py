@@ -124,7 +124,7 @@ def _ensure_bars_warmed(
     auto-backfill. Symbols whose Alpaca fetch fails are dropped from the
     returned list so the simulator doesn't waste fold time on empty bars.
     """
-    from trading_bot.config import Settings
+    from trading_bot.shared.config import Settings
     from trading_bot.market_data import MarketDataClient
 
     missing: list[str] = []
@@ -150,7 +150,7 @@ def _run_simulator(
     from pathlib import Path
     from trading_bot.backtest.bar_store import BarStore
     from trading_bot.backtest.simulator import Backtester, fetch_vix_history
-    from trading_bot.config import load_config
+    from trading_bot.shared.config import load_config
 
     if template_name != "momentum":
         raise ValueError(f"Unknown template: {template_name}")

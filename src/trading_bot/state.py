@@ -3,7 +3,7 @@ from pathlib import Path
 
 import yaml
 
-from trading_bot.alpaca_client import Position
+from trading_bot.shared.alpaca_client import Position
 from trading_bot.exceptions import ConfigError
 
 

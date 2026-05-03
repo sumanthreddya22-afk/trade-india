@@ -2,7 +2,7 @@
 import datetime as dt
 from unittest.mock import MagicMock
 
-from trading_bot.config import WheelConfig
+from trading_bot.shared.config import WheelConfig
 from trading_bot.options.chain import ChainContract
 from trading_bot.options.wheel_lane import WheelInputs, WheelLane
 

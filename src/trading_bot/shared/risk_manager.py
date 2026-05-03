@@ -2,14 +2,14 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
-from trading_bot.alpaca_client import (
+from trading_bot.shared.alpaca_client import (
     AccountSnapshot,
     AssetClass,
     OrderRequest,
     OrderSide,
     Position,
 )
-from trading_bot.config import AppConfig
+from trading_bot.shared.config import AppConfig
 from trading_bot.exceptions import RiskRuleViolation
 
 
@@ -33,10 +33,18 @@ class RiskState:
 
 
 class RiskManager:
-    """Gates EVERY trade. No bypass."""
+    """Gates EVERY trade. No bypass.
 
-    def __init__(self, config: AppConfig) -> None:
+    Adaptive thresholds: when constructed with a SQLAlchemy ``engine``,
+    ``per_trade_risk_pct`` and ``max_position_pct`` are read from the
+    ``threshold_overrides`` table FIRST (with the safety bounds clamp),
+    falling back to the static YAML config when no fresh override
+    exists. Tests that pass no engine see the legacy static behavior.
+    """
+
+    def __init__(self, config: AppConfig, *, engine=None) -> None:
         self._cfg = config
+        self._engine = engine
 
     def check(
         self,
@@ -62,12 +70,34 @@ class RiskManager:
         # size_multiplier scales per-trade-risk and max-position caps; defaults
         # to 1.0 when set by callers that pre-date Bucket A.
         sm = state.size_multiplier if state.size_multiplier > 0 else Decimal("1")
-        self._check_per_trade_risk(order, account, size_multiplier=sm)
-        self._check_max_position(order, account, size_multiplier=sm)
+        self._check_per_trade_risk(order, account, size_multiplier=sm, regime=regime)
+        self._check_max_position(order, account, size_multiplier=sm, regime=regime)
         self._check_concentration(order, positions, account)
         self._check_asset_class_caps(order, positions, account, regime)
         self._check_gross_net(order, positions, account)
         self._check_daily_weekly_limits(state)
+
+    def _per_trade_risk_pct(self, regime: str | None = None) -> float:
+        if self._engine is not None:
+            try:
+                from trading_bot.threshold_overrides import lookup
+                v = lookup(self._engine, knob="per_trade_risk_pct", regime=regime)
+                if v is not None:
+                    return float(v)
+            except Exception:
+                pass  # any failure → fall back to static — safety, not silence
+        return float(self._cfg.risk.per_trade_risk_pct)
+
+    def _max_position_pct(self, regime: str | None = None) -> float:
+        if self._engine is not None:
+            try:
+                from trading_bot.threshold_overrides import lookup
+                v = lookup(self._engine, knob="max_position_pct", regime=regime)
+                if v is not None:
+                    return float(v)
+            except Exception:
+                pass
+        return float(self._cfg.risk.max_position_pct)
 
     def _check_gross_net(
         self,
@@ -112,7 +142,12 @@ class RiskManager:
     # ---- individual rule helpers ----
 
     def _check_per_trade_risk(
-        self, o: OrderRequest, a: AccountSnapshot, *, size_multiplier: Decimal
+        self,
+        o: OrderRequest,
+        a: AccountSnapshot,
+        *,
+        size_multiplier: Decimal,
+        regime: str | None = None,
     ) -> None:
         # risk = (entry - stop) * qty for buy, (stop - entry) * qty for sell
         if o.side == OrderSide.BUY:
@@ -126,7 +161,7 @@ class RiskManager:
             )
         risk_dollars = per_share_risk * o.qty
         risk_pct = (risk_dollars / a.equity) * Decimal("100")
-        base_limit = Decimal(str(self._cfg.risk.per_trade_risk_pct))
+        base_limit = Decimal(str(self._per_trade_risk_pct(regime=regime)))
         effective_limit = base_limit * size_multiplier
         if risk_pct > effective_limit:
             detail = f"risk {risk_pct:.2f}% exceeds limit {effective_limit}%"
@@ -137,11 +172,16 @@ class RiskManager:
             raise RiskRuleViolation(rule="per_trade_risk_pct", detail=detail)
 
     def _check_max_position(
-        self, o: OrderRequest, a: AccountSnapshot, *, size_multiplier: Decimal
+        self,
+        o: OrderRequest,
+        a: AccountSnapshot,
+        *,
+        size_multiplier: Decimal,
+        regime: str | None = None,
     ) -> None:
         notional = o.limit_price * o.qty
         pct = (notional / a.equity) * Decimal("100")
-        base_limit = Decimal(str(self._cfg.risk.max_position_pct))
+        base_limit = Decimal(str(self._max_position_pct(regime=regime)))
         effective_limit = base_limit * size_multiplier
         if pct > effective_limit:
             detail = f"position {pct:.2f}% exceeds limit {effective_limit}%"

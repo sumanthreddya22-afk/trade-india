@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from trading_bot.alpaca_client import AccountSnapshot, OrderResult, Position
+from trading_bot.shared.alpaca_client import AccountSnapshot, OrderResult, Position
 from trading_bot.decisions_store import DecisionStore
 from trading_bot.orchestrator import ScanResult, TradeOrchestrator
 from trading_bot.state import WatchlistEntry
@@ -27,7 +27,7 @@ from trading_bot.strategy import Signal, SignalAction
 # can run standalone without pulling in fixtures from another module.
 
 def _config():
-    from trading_bot.config import (
+    from trading_bot.shared.config import (
         AllocationConfig, AppConfig, EmailConfig, RegimeAllocation,
         RiskConfig, StorageConfig, StrategyConfig,
     )
@@ -153,7 +153,7 @@ class TestPersistsDecisions:
         assert placed[0].stop_loss_order_id == "o-1-stop"
 
     def test_rejected_by_risk_is_persisted(self, watchlist, monkeypatch, store):
-        from trading_bot.risk_manager import RiskManager
+        from trading_bot.shared.risk_manager import RiskManager
         from trading_bot.exceptions import RiskRuleViolation
 
         market = MagicMock(); market.get_daily_bars.return_value = _bars()

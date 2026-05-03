@@ -5,20 +5,20 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from trading_bot.alpaca_client import (
+from trading_bot.shared.alpaca_client import (
     AlpacaClient,
     AssetClass,
     OrderRequest,
     OrderSide,
 )
-from trading_bot.config import AppConfig
+from trading_bot.shared.config import AppConfig
 from trading_bot.exceptions import AlpacaClientError, RiskRuleViolation
 from trading_bot.market_data import (
     MIN_BARS_FOR_INDICATORS,
     MarketDataClient,
     compute_indicators,
 )
-from trading_bot.risk_manager import RiskManager, RiskState
+from trading_bot.shared.risk_manager import RiskManager, RiskState
 from trading_bot.state import WatchlistEntry, has_open_position
 from trading_bot.strategy import MomentumStrategy, SignalAction, strategy_for_regime
 from trading_bot.trade_journal import TradeJournal, TradeRecord
@@ -227,6 +227,11 @@ class TradeOrchestrator:
         risk_debate_engine=None,
         unblock_debate_enabled: bool = False,
         unblock_debate_engine=None,
+        entry_debate_enabled: bool = False,
+        entry_debate_engine=None,
+        entry_debate_daily_cap: int = 50,
+        intel_score_regime_override_threshold: float = 5.0,
+        intel_lookup_engine=None,
     ) -> None:
         self._cfg = config
         self._market = market_data
@@ -263,6 +268,26 @@ class TradeOrchestrator:
         # unblock_debate_engine for persisting the audit row.
         self._unblock_debate_enabled = unblock_debate_enabled
         self._unblock_debate_engine = unblock_debate_engine
+        # Phase 6 — pre-trade entry debate. Fires on EVERY BUY signal that
+        # passes the deterministic risk gate. Mailbox-routed (cheap) and
+        # FAIL-SOFT: a debate failure (no creds, mailbox down, schema
+        # mismatch) skips the trade AND queues an alert so the operator
+        # knows the LLM gate was unreachable.
+        self._entry_debate_enabled = entry_debate_enabled
+        self._entry_debate_engine = entry_debate_engine
+        self._entry_debate_daily_cap = entry_debate_daily_cap
+        # Per-ticker intel-aware strategy resolution. When the orchestrator-
+        # level regime returns no strategy (sideways/trending_down), a high
+        # per-ticker intel_score can still unlock Momentum for that one
+        # ticker. risk_off remains a hard wall regardless of intel.
+        self._intel_score_regime_override_threshold = intel_score_regime_override_threshold
+        # Engine for intel pool lookups. Defaults to the unblock-debate
+        # engine since they're both the state.db engine in production.
+        self._intel_lookup_engine = (
+            intel_lookup_engine
+            if intel_lookup_engine is not None
+            else unblock_debate_engine
+        )
 
     def _load_restricted_list(self) -> set[str]:
         if self._restricted_list_path is None:
@@ -280,7 +305,7 @@ class TradeOrchestrator:
     def _attach_audit(self, decision: "Decision") -> "Decision":
         """If the decision lacks audit metadata, attach a fresh audit object
         derived from orchestrator state (regime, strategy, policy_version)."""
-        from trading_bot.audit import build_audit
+        from trading_bot.shared.audit import build_audit
         if decision.audit.timestamp_utc:
             return decision  # caller already attached an audit
         a = build_audit(
@@ -589,6 +614,177 @@ class TradeOrchestrator:
             return False
         return verdict.recommendation == "place"
 
+    def _resolve_strategy_for_ticker(
+        self, *, symbol: str, asset_class: str,
+    ) -> tuple[object | None, float | None]:
+        """Pick the strategy for one ticker. Returns (strategy, intel_score).
+
+        The orchestrator-level ``self._strategy`` already encodes the
+        regime-default. When that's set, use it (existing behavior).
+        When it's None (sideways / trending_down / risk_off), look up the
+        ticker's intel score and re-resolve via ``strategy_for_regime``
+        with the score; that may unlock Momentum for high-intel tickers
+        in non-trending regimes (risk_off still returns None).
+
+        Returns ``(None, intel_score)`` when no strategy is enabled.
+        """
+        # Look up intel score regardless of orchestrator-level strategy so
+        # the audit trail captures it for every ticker, not just overrides.
+        intel_score: float | None = None
+        if self._intel_lookup_engine is not None:
+            try:
+                from trading_bot.intel.pool import lookup_score
+                intel_score = lookup_score(
+                    self._intel_lookup_engine, symbol, asset_class,
+                )
+            except Exception:
+                intel_score = None
+
+        if self._strategy is not None:
+            return self._strategy, intel_score
+
+        # Per-ticker re-resolution path.
+        try:
+            from trading_bot.strategy import strategy_for_regime
+            ticker_strategy = strategy_for_regime(
+                self._regime,
+                intel_score=intel_score,
+                intel_score_threshold=self._intel_score_regime_override_threshold,
+            )
+        except Exception:
+            ticker_strategy = None
+        return ticker_strategy, intel_score
+
+    def _run_entry_debate(
+        self, *, symbol: str, asset_class_label: str,
+        sig, intel_score: float | None, indicators_text: str,
+        operational_context: str, account, proposal_summary: str,
+    ):
+        """Fire the pre-trade entry committee. Returns the verdict (or
+        ``None`` on any error → caller treats None as fail-soft skip).
+
+        Persists every debate (regardless of verdict) to ``entry_debate_runs``
+        and emits ``"debate.entry.completed"`` on the event bus. Same
+        bookkeeping pattern as ``_maybe_run_unblock_debate``. The
+        ``proposal_summary`` text is passed in (instead of built here) so the
+        caller can reuse the same string when sending the outcome email.
+        """
+        from trading_bot.entry_debate import (
+            count_todays_entry_debates, run_entry_debate, should_entry_debate,
+        )
+        if not self._entry_debate_enabled:
+            return None
+        if self._entry_debate_engine is None:
+            return None
+        try:
+            daily_count = count_todays_entry_debates(self._entry_debate_engine)
+            if not should_entry_debate(
+                daily_debate_count=daily_count,
+                daily_cap=self._entry_debate_daily_cap,
+            ):
+                return ("over_cap", None)
+            proposal = proposal_summary
+            top_reason = ""
+            if self._intel_lookup_engine is not None:
+                try:
+                    from trading_bot.intel.pool import lookup as _intel_lookup
+                    pe = _intel_lookup(self._intel_lookup_engine, symbol, asset_class_label)
+                    if pe is not None:
+                        top_reason = pe.top_reason
+                except Exception:
+                    pass
+            # Phase D — inject the latest lessons block (if fresh) so the
+            # entry debate's reasoning sees recent realised outcomes.
+            try:
+                from trading_bot.lesson_loop import latest_lesson_block
+                lessons_block = latest_lesson_block(self._entry_debate_engine)
+            except Exception:
+                lessons_block = ""
+            verdict = run_entry_debate(
+                self._entry_debate_engine,
+                proposal_summary=proposal,
+                intel_score=intel_score,
+                intel_top_reason=top_reason,
+                signal_reason=getattr(sig, "reason", "") or "",
+                regime=self._regime,
+                indicators=indicators_text,
+                operational_context=operational_context,
+                lessons_block=lessons_block,
+                use_mailbox=True,
+            )
+        except Exception:
+            verdict = None  # any setup error → fail-soft
+
+        # Persist (even when verdict is None — the audit row records the failure).
+        try:
+            from sqlalchemy.orm import Session
+            from trading_bot.state_db import EntryDebateRun
+            with Session(self._entry_debate_engine) as s:
+                row = EntryDebateRun(
+                    run_at=datetime.now(timezone.utc),
+                    asset_class=asset_class_label,
+                    symbol=symbol,
+                    intel_score=intel_score,
+                    signal_reason=getattr(sig, "reason", "") or "",
+                    regime=self._regime,
+                    verdict=(verdict.recommendation if verdict else "fail_soft"),
+                    confidence=(verdict.confidence if verdict else "low"),
+                    judge_reason=(verdict.reason if verdict else "no verdict (fail-soft)"),
+                    aggressive_text=(verdict.aggressive_text if verdict else ""),
+                    conservative_text=(verdict.conservative_text if verdict else ""),
+                    neutral_text=(verdict.neutral_text if verdict else ""),
+                    synthetic=False,
+                )
+                s.add(row)
+                s.commit()
+        except Exception:
+            pass
+
+        # Real-time bus emit so the dashboard's Entry Debate node lights up.
+        try:
+            from trading_bot.event_bus import bus as _bus
+            _bus.emit(
+                "debate.entry.completed",
+                {
+                    "asset_class": asset_class_label,
+                    "symbol": symbol,
+                    "verdict": (verdict.recommendation if verdict else "fail_soft"),
+                    "confidence": (verdict.confidence if verdict else "low"),
+                    "intel_score": intel_score,
+                    "regime": self._regime,
+                },
+                source="orchestrator.entry_debate",
+            )
+        except Exception:
+            pass
+
+        return verdict
+
+    def _send_entry_debate_email_safe(
+        self, *, verdict, outcome: str, symbol: str,
+        asset_class_label: str, intel_score: float | None,
+        signal_reason: str, regime: str, proposal_summary: str,
+        indicators: str, operational_context: str,
+        entry_order_id: str = "", place_error: str = "",
+    ) -> None:
+        """Send the entry-debate transcript email. Wrapped in try/except —
+        an SMTP failure must never crash the scan or block other tickers."""
+        try:
+            from trading_bot.email_entry_debate import (
+                EntryDebateEmailContext, send_entry_debate_email,
+            )
+            ctx = EntryDebateEmailContext(
+                asset_class=asset_class_label, symbol=symbol,
+                intel_score=intel_score, signal_reason=signal_reason,
+                regime=regime, proposal_summary=proposal_summary,
+                indicators=indicators, operational_context=operational_context,
+                verdict=verdict, outcome=outcome,
+                entry_order_id=entry_order_id, place_error=place_error,
+            )
+            send_entry_debate_email(ctx)
+        except Exception:
+            pass
+
     def _news_intel_gate(self, symbol: str, asset_class: str) -> str | None:
         """Per-trade news/intel gates. Returns skip reason or None.
 
@@ -655,10 +851,14 @@ class TradeOrchestrator:
         state = self._build_state()
         decisions: list[Decision] = []
 
-        if self._strategy is None:
-            # Regime has no enabled strategy (e.g. sideways/risk_off after
-            # the Plan-5b backtest disabled mean_reversion). Skip entries;
-            # existing positions still managed by their bracket orders.
+        # Phase 6: removed unconditional early-bail when self._strategy is
+        # None. The per-ticker loop now does intel-aware re-resolution so
+        # a single high-intel ticker can still trade in sideways /
+        # trending_down even when the orchestrator-level regime returned
+        # no strategy. risk_off remains a hard wall (see strategy_for_regime).
+        # Pre-Phase-6 short-circuit kept here only for risk_off so the
+        # zero-trade case stays cheap (no per-ticker bar fetches).
+        if self._strategy is None and self._regime == "risk_off":
             for entry in watchlist:
                 self._emit(
                     Decision(
@@ -693,6 +893,33 @@ class TradeOrchestrator:
                         symbol=entry.symbol, action="escalate_to_human",
                         reason=f"approved_venue_check failed: {approved_venue_reason}",
                         compliance=ComplianceFlags(approved_venue=False),
+                    ),
+                    asset_class=entry.asset_class, decisions=decisions,
+                )
+            return ScanResult(decisions=decisions, timestamp=datetime.now(timezone.utc))
+
+        # Phase F — circuit breaker check (orchestrator-level, before any
+        # per-ticker work). When tripped, every entry is skipped with a
+        # ``skipped_circuit_breaker`` decision. Open positions and the
+        # hold-debate exit_now path are unaffected (we always preserve
+        # the ability to cut losses, even when entries are frozen).
+        breaker_state = None
+        try:
+            from trading_bot import circuit_breaker as _cb
+            if self._intel_lookup_engine is not None:
+                breaker_state = _cb.state(self._intel_lookup_engine)
+        except Exception:
+            breaker_state = None
+        if breaker_state is not None and breaker_state.tripped:
+            for entry in watchlist:
+                self._emit(
+                    Decision(
+                        symbol=entry.symbol,
+                        action="skipped_circuit_breaker",
+                        reason=(
+                            f"breaker tripped: {breaker_state.reason} "
+                            f"(detail: {breaker_state.detail})"
+                        ),
                     ),
                     asset_class=entry.asset_class, decisions=decisions,
                 )
@@ -827,7 +1054,28 @@ class TradeOrchestrator:
                 _data_quality_pass = DataQualityFlags()
 
             ind = compute_indicators(bars)
-            sig = self._strategy.evaluate(symbol, ind, equity=account.equity)
+            # Phase 6 — per-ticker strategy resolution: a high intel score
+            # can unlock Momentum for sideways/trending_down even when the
+            # orchestrator-level regime returned no strategy.
+            ticker_strategy, ticker_intel_score = self._resolve_strategy_for_ticker(
+                symbol=symbol, asset_class=ac,
+            )
+            if ticker_strategy is None:
+                self._emit(
+                    Decision(
+                        symbol=symbol, action="hold",
+                        reason=(
+                            f"no strategy enabled for regime {self._regime}"
+                            + (f" (intel_score={ticker_intel_score:.2f} below "
+                               f"override threshold "
+                               f"{self._intel_score_regime_override_threshold:.2f})"
+                               if ticker_intel_score is not None else "")
+                        ),
+                    ),
+                    asset_class=ac, decisions=decisions,
+                )
+                continue
+            sig = ticker_strategy.evaluate(symbol, ind, equity=account.equity)
             if sig.action != SignalAction.BUY:
                 self._emit(
                     Decision(symbol=symbol, action="hold", reason=sig.reason),
@@ -932,14 +1180,154 @@ class TradeOrchestrator:
                     )
                     continue
 
+            # Phase 6 — pre-trade entry committee. Fires on every BUY
+            # signal that passed the deterministic risk gate. Fail-SOFT:
+            # any failure (no creds, mailbox down, schema mismatch,
+            # over-cap) skips the trade AND queues an alert so the
+            # operator knows the LLM gate was unreachable.
+            #
+            # When the debate runs to completion (verdict in place/skip),
+            # we email the operator a full transcript with the actual
+            # outcome (placed / place_failed / skipped) — pre-built shared
+            # context here so the email helper can be called from any of
+            # the three outcome branches without rebuilding strings.
+            entry_verdict_for_email = None  # populated when debate produced a verdict
+            entry_email_kwargs: dict | None = None
+            if self._entry_debate_enabled and self._entry_debate_engine is not None:
+                indicators_text = (
+                    f"  rsi_14:    {ind.rsi_14:.1f}\n"
+                    f"  macd:      {ind.macd:.3f} (signal {ind.macd_signal:.3f})\n"
+                    f"  ema_20:    {ind.ema_20:.2f}\n"
+                    f"  last_close:{ind.last_close:.2f}\n"
+                    f"  return_5d: {ind.return_5d:+.4f}\n"
+                )
+                operational_context = (
+                    f"  equity_usd:               {account.equity}\n"
+                    f"  consecutive_losing_days:  {state.consecutive_losing_days}\n"
+                    f"  size_multiplier:          {getattr(state, 'size_multiplier', None)}\n"
+                )
+                risk_dollars = (sig.entry_price - sig.stop_loss_price) * sig.qty
+                proposal_summary = (
+                    f"  symbol:           {symbol}\n"
+                    f"  asset_class:      {entry.asset_class}\n"
+                    f"  qty:              {sig.qty}\n"
+                    f"  entry_price:      {sig.entry_price}\n"
+                    f"  stop_loss_price:  {sig.stop_loss_price}\n"
+                    f"  per_trade_risk:   {risk_dollars}\n"
+                )
+                entry_verdict = self._run_entry_debate(
+                    symbol=symbol, asset_class_label=entry.asset_class,
+                    sig=sig, intel_score=ticker_intel_score,
+                    indicators_text=indicators_text,
+                    operational_context=operational_context, account=account,
+                    proposal_summary=proposal_summary,
+                )
+                # Three outcomes:
+                #   ("over_cap", None) → daily debate cap hit; skip with reason
+                #   None              → fail-soft path; skip + queue alert
+                #   verdict.recommendation in {"place","skip"} → act on it
+                if isinstance(entry_verdict, tuple) and entry_verdict and entry_verdict[0] == "over_cap":
+                    self._emit(
+                        Decision(
+                            symbol=symbol,
+                            action="skipped_entry_debate_over_cap",
+                            reason=(
+                                f"daily entry-debate cap hit "
+                                f"({self._entry_debate_daily_cap}); "
+                                "raise cap or tighten upstream gates"
+                            ),
+                        ),
+                        asset_class=ac, decisions=decisions,
+                    )
+                    continue
+                if entry_verdict is None:
+                    # Fail-soft: queue an operator alert so the LLM-gate
+                    # outage is visible, then skip the trade. No email —
+                    # there's no transcript to send when the debate didn't
+                    # produce a verdict; the alert covers operator visibility.
+                    try:
+                        from trading_bot.alerts import AlertEvent, queue_alert
+                        queue_alert(AlertEvent(
+                            kind="daemon_critical",
+                            severity="warn",
+                            title=f"Entry debate unreachable for {symbol} — trade skipped",
+                            detail_html=(
+                                f"<p>Entry debate returned no verdict for "
+                                f"<code>{symbol}</code> ({entry.asset_class}). "
+                                "The trade was NOT placed (fail-soft).</p>"
+                                "<p>Likely causes: missing ANTHROPIC_API_KEY, "
+                                "mailbox queue down, monthly LLM budget halted, "
+                                "or transient SDK error. See logs for details.</p>"
+                            ),
+                            fired_at=datetime.now(timezone.utc),
+                            dedup_key=f"entry_debate_unreachable:{datetime.now(timezone.utc).date().isoformat()}",
+                        ))
+                    except Exception:
+                        pass
+                    self._emit(
+                        Decision(
+                            symbol=symbol,
+                            action="skipped_entry_debate_unreachable",
+                            reason="entry debate returned no verdict (fail-soft)",
+                        ),
+                        asset_class=ac, decisions=decisions,
+                    )
+                    continue
+                # The debate produced a verdict. Stash everything the
+                # outcome-email needs so the call sites below stay short.
+                entry_verdict_for_email = entry_verdict
+                entry_email_kwargs = dict(
+                    verdict=entry_verdict,
+                    symbol=symbol,
+                    asset_class_label=entry.asset_class,
+                    intel_score=ticker_intel_score,
+                    signal_reason=getattr(sig, "reason", "") or "",
+                    regime=self._regime,
+                    proposal_summary=proposal_summary,
+                    indicators=indicators_text,
+                    operational_context=operational_context,
+                )
+                if entry_verdict.recommendation == "skip":
+                    self._send_entry_debate_email_safe(
+                        outcome="skipped", **entry_email_kwargs,
+                    )
+                    self._emit(
+                        Decision(
+                            symbol=symbol,
+                            action="rejected_by_entry_debate",
+                            reason=f"entry_debate({entry_verdict.confidence}): {entry_verdict.reason}",
+                        ),
+                        asset_class=ac, decisions=decisions,
+                    )
+                    continue
+                # verdict.recommendation == "place" → fall through to
+                # place_order_with_stop_loss below; email is sent there
+                # so we know whether the broker accepted the order.
+
             try:
                 result = self._alpaca.place_order_with_stop_loss(order)
             except AlpacaClientError as e:
+                # If the entry debate said "place" but Alpaca rejected the
+                # order, the operator must see both: judge said yes, broker
+                # said no. Email outcome = place_failed with the broker error.
+                if entry_verdict_for_email is not None and entry_email_kwargs is not None:
+                    self._send_entry_debate_email_safe(
+                        outcome="place_failed", place_error=str(e),
+                        **entry_email_kwargs,
+                    )
                 self._emit(
                     Decision(symbol=symbol, action="api_error", reason=str(e)),
                     asset_class=ac, decisions=decisions,
                 )
                 continue
+            # Order placed successfully. If a debate ran (and said place),
+            # send the success email with the entry_order_id back-filled.
+            if entry_verdict_for_email is not None and entry_email_kwargs is not None:
+                self._send_entry_debate_email_safe(
+                    outcome="placed",
+                    entry_order_id=getattr(result, "entry_order_id", "") or "",
+                    **entry_email_kwargs,
+                )
 
             self._journal.append(TradeRecord(
                 timestamp=datetime.now(timezone.utc),
@@ -954,6 +1342,42 @@ class TradeOrchestrator:
                 stop_loss_order_id=result.stop_loss_order_id,
                 notes=sig.reason,
             ))
+            # Phase C — capture entry-time intel snapshot so the hold
+            # debate has a stable baseline to compare against. Best-effort:
+            # snapshot failure must not undo the order.
+            try:
+                from trading_bot.hold_debate import write_intel_snapshot
+                from trading_bot.intel.pool import lookup as _pool_lookup
+                # Pull the intel pool entry to get top_reason + sources mix
+                pool_entry = None
+                state_engine = self._intel_lookup_engine
+                if state_engine is not None:
+                    try:
+                        pool_entry = _pool_lookup(state_engine, symbol, ac)
+                    except Exception:
+                        pool_entry = None
+                top_sources = (
+                    list(pool_entry.sources.keys())
+                    if pool_entry is not None and pool_entry.sources
+                    else []
+                )
+                top_reason = pool_entry.top_reason if pool_entry is not None else ""
+                sentiment_avg = (
+                    pool_entry.sentiment_avg if pool_entry is not None else None
+                )
+                if state_engine is not None:
+                    write_intel_snapshot(
+                        state_engine,
+                        entry_order_id=getattr(result, "entry_order_id", "") or "",
+                        symbol=symbol,
+                        asset_class=entry.asset_class,
+                        entry_intel_score=ticker_intel_score,
+                        entry_top_reason=top_reason,
+                        entry_sentiment_avg=sentiment_avg,
+                        entry_top_sources=top_sources,
+                    )
+            except Exception:
+                pass
             # W2c — populate risk_after so audit logs carry post-trade
             # gross/net + a per-trade VaR contribution. Cheap, no DB hit.
             try:

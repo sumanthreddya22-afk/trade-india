@@ -6,8 +6,8 @@ import os
 
 import click
 
-from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderRequest, OrderSide
-from trading_bot.config import Settings, load_config
+from trading_bot.shared.alpaca_client import AlpacaClient, AssetClass, OrderRequest, OrderSide
+from trading_bot.shared.config import Settings, load_config
 from trading_bot.email_sender import EmailSender
 from trading_bot.email_log import send_logged
 from trading_bot.evolution import (
@@ -39,7 +39,7 @@ from trading_bot.reports import (
     open_positions_email_subject,
 )
 from trading_bot.email_digest import build_daily_digest_email, DigestContext, TradeRow as DigestTradeRow
-from trading_bot.risk_manager import RiskManager, RiskState
+from trading_bot.shared.risk_manager import RiskManager, RiskState
 from trading_bot.state import WatchlistEntry, load_watchlist
 from trading_bot.trade_journal import TradeJournal
 from trading_bot.screener import build_stage1_shortlist, run_stage2, write_opportunities_snapshot
@@ -80,6 +80,17 @@ def _build_orchestrator(
     unblock_enabled = bool(getattr(getattr(cfg, "wheel", None),
                                    "unblock_debate_enabled", False))
     state_engine = get_engine(STATE_DB_PATH) if unblock_enabled else None
+    # Phase 6 — pre-trade entry debate. Reads its enabled-flag from
+    # ``cfg.strategy.entry_debate_enabled``. Always wire the engine so a
+    # YAML toggle alone is enough to flip the gate on without code change.
+    entry_debate_enabled = bool(getattr(cfg.strategy, "entry_debate_enabled", False))
+    entry_debate_daily_cap = int(getattr(cfg.strategy, "entry_debate_daily_cap", 50))
+    intel_threshold = float(getattr(
+        cfg.strategy, "intel_score_regime_override_threshold", 5.0,
+    ))
+    # The intel pool + entry-debate audit table both live in state.db.
+    # Reuse the same engine the unblock_debate already wires.
+    state_engine_full = state_engine if state_engine is not None else get_engine(STATE_DB_PATH)
     return TradeOrchestrator(
         config=cfg, market_data=market, alpaca=alpaca,
         journal=journal, regime=regime,
@@ -89,6 +100,11 @@ def _build_orchestrator(
         approved_venue_url=settings.alpaca_base_url,
         unblock_debate_enabled=unblock_enabled,
         unblock_debate_engine=state_engine,
+        entry_debate_enabled=entry_debate_enabled,
+        entry_debate_engine=state_engine_full,
+        entry_debate_daily_cap=entry_debate_daily_cap,
+        intel_score_regime_override_threshold=intel_threshold,
+        intel_lookup_engine=state_engine_full,
     )
 
 ACTIVE_UNIVERSE_TOP_N_STOCKS = int(os.environ.get("TRADING_BOT_SCAN_TOP_N", "100"))
@@ -121,17 +137,84 @@ def _load_yaml_symbol_set(path: Path) -> set[str]:
 
 
 def _load_crypto_universe():
-    """Auto-discover crypto universe from Alpaca's tradable asset list.
-    Filters: USD-quoted, not stablecoin, not in operator blocklist.
-    Returns WatchlistEntry list. Failure returns []."""
-    from trading_bot.alpaca_client import AlpacaClient
+    """Crypto universe.
+
+    Source preference (highest → lowest):
+      1. intel_candidates (continuous internet-driven, asset_class='crypto')
+         intersected with Alpaca's tradable list. The pool surfaces names
+         that just made news; we still gate on "is it tradable on Alpaca".
+      2. Auto-discover from Alpaca's tradable list (legacy behavior — every
+         USD-quoted non-stable pair).
+    Failure of layer 1 transparently falls through to layer 2.
+    """
+    from trading_bot.shared.alpaca_client import AlpacaClient
     from trading_bot.crypto_universe import discover_crypto_universe
     try:
         ac = AlpacaClient(Settings())
     except Exception:
         return []
     blocklist = _load_yaml_symbol_set(CRYPTO_BLOCKLIST_PATH)
-    return discover_crypto_universe(ac, blocklist=blocklist)
+    discovered = discover_crypto_universe(ac, blocklist=blocklist)
+
+    intel_crypto = _load_intel_pool_crypto()
+    if intel_crypto:
+        # Intersect with currently tradable, preserve intel score order.
+        tradable = {e.symbol for e in discovered}
+        ranked = [e for e in intel_crypto if e.symbol in tradable]
+        if ranked:
+            return ranked
+    return discovered
+
+
+def _load_intel_pool_stocks():
+    """Read top stock candidates from intel_candidates. Returns
+    WatchlistEntry list ordered by score. Empty list when pool stale or
+    missing — caller falls through to existing screener.
+    """
+    try:
+        from trading_bot.intel import pool as intel_pool
+        from trading_bot.state import WatchlistEntry
+        from trading_bot.state_db import get_engine
+        engine = get_engine(STATE_DB_PATH)
+        if not intel_pool.is_pool_fresh(engine):
+            return []
+        entries = intel_pool.top_for_asset_class(
+            engine, asset_class="stock", n=ACTIVE_UNIVERSE_TOP_N_STOCKS,
+        )
+        return [
+            WatchlistEntry(
+                symbol=e.symbol, asset_class="us_equity",
+                notes=f"intel:{e.score:.2f} {e.top_reason[:50]}",
+            )
+            for e in entries
+        ]
+    except Exception:
+        return []
+
+
+def _load_intel_pool_crypto():
+    """Read top crypto candidates from intel_candidates. Returns
+    WatchlistEntry list ordered by score. Empty list on miss.
+    """
+    try:
+        from trading_bot.intel import pool as intel_pool
+        from trading_bot.state import WatchlistEntry
+        from trading_bot.state_db import get_engine
+        engine = get_engine(STATE_DB_PATH)
+        if not intel_pool.is_pool_fresh(engine):
+            return []
+        entries = intel_pool.top_for_asset_class(
+            engine, asset_class="crypto", n=20,
+        )
+        return [
+            WatchlistEntry(
+                symbol=e.symbol, asset_class="crypto",
+                notes=f"intel:{e.score:.2f}",
+            )
+            for e in entries
+        ]
+    except Exception:
+        return []
 
 
 def _alert_universe_fallback(*, kind: str, detail: str) -> None:
@@ -166,7 +249,7 @@ def _seed_equity_fallback() -> list[WatchlistEntry]:
     by the dedicated crypto-universe loader.
     """
     try:
-        from trading_bot.alpaca_client import AlpacaClient
+        from trading_bot.shared.alpaca_client import AlpacaClient
         from trading_bot.universe import CORE_LIQUID_TICKERS
         ac = AlpacaClient(Settings())
         tradable = {a.symbol for a in ac.get_active_assets("us_equity")}
@@ -202,6 +285,16 @@ def _load_active_universe(*, crypto_only: bool = False):
     age = opportunities_age_hours(OPPORTUNITIES_PATH)
     is_stale = age is None or age > OPPORTUNITIES_MAX_AGE_HOURS
     ranked = load_ranked_watchlist(OPPORTUNITIES_PATH) if not is_stale else []
+
+    # Source preference (highest → lowest) for stocks:
+    #   1. intel_candidates pool (continuous, internet-driven) — when fresh
+    #   2. opportunities.md (technical screener) — when fresh
+    #   3. CORE_LIQUID_TICKERS seed list (cold-start safety net)
+    # Cold-start fallback chain stays intact; the intel pool just becomes
+    # the FIRST consulted source. ``intel_pool_stocks`` returns an empty
+    # list whenever the pool is stale or missing — caller transparently
+    # falls through to the existing logic below.
+    intel_stock_entries = _load_intel_pool_stocks()
 
     if is_stale:
         _alert_universe_fallback(
@@ -248,24 +341,28 @@ def _load_active_universe(*, crypto_only: bool = False):
             out.append(e)
         return out
 
-    # Stocks: prefer ranked from opportunities.md, fall back to the 250-name
-    # CORE_LIQUID_TICKERS seed when opportunities.md is missing/stale or has
-    # zero stage-2 endorsed names. The 7-name watchlist.yaml is no longer
-    # used as the equity fallback.
-    stocks_ranked = [e for e in ranked if e.asset_class != "crypto"][:ACTIVE_UNIVERSE_TOP_N_STOCKS]
-    if stocks_ranked:
-        stocks = stocks_ranked
+    # Stocks source order:
+    #   1. intel_candidates pool (continuous internet-driven)
+    #   2. opportunities.md (technical screener output)
+    #   3. CORE_LIQUID_TICKERS (cold-start safety net)
+    # Each stage falls through transparently when its source is empty.
+    if intel_stock_entries:
+        stocks = intel_stock_entries[:ACTIVE_UNIVERSE_TOP_N_STOCKS]
     else:
-        if not is_stale:
-            # File was fresh but stage-2 had zero endorsements — that's a
-            # "low-conviction day" signal. Fall back to seed list rather than
-            # produce zero universe so crypto-only behaviour stays consistent.
-            _alert_universe_fallback(
-                kind="stage2_empty",
-                detail="opportunities.md is fresh but has zero stage-2 endorsed "
-                       "candidates; using CORE_LIQUID_TICKERS seed for equity scan.",
-            )
-        stocks = _seed_equity_fallback()
+        stocks_ranked = [e for e in ranked if e.asset_class != "crypto"][:ACTIVE_UNIVERSE_TOP_N_STOCKS]
+        if stocks_ranked:
+            stocks = stocks_ranked
+        else:
+            if not is_stale:
+                # File was fresh but stage-2 had zero endorsements — that's a
+                # "low-conviction day" signal. Fall back to seed list rather than
+                # produce zero universe so crypto-only behaviour stays consistent.
+                _alert_universe_fallback(
+                    kind="stage2_empty",
+                    detail="opportunities.md is fresh but has zero stage-2 endorsed "
+                           "candidates; using CORE_LIQUID_TICKERS seed for equity scan.",
+                )
+            stocks = _seed_equity_fallback()
 
     seen = set()
     out = []
@@ -599,7 +696,7 @@ def daily_digest() -> None:
 def reconcile_cli() -> None:
     """Diff trade_journal vs Alpaca positions; write closed_trades rows
     for any entries whose position has disappeared. Idempotent."""
-    from trading_bot.alpaca_client import AlpacaClient
+    from trading_bot.shared.alpaca_client import AlpacaClient
     from trading_bot.reconciler import reconcile
     from trading_bot.trade_journal import TradeJournal
 
@@ -934,13 +1031,45 @@ def rich_report(period: str) -> None:
 def crypto_scan() -> None:
     """24/7 crypto-only scan. Identical signal/risk logic to intel-scan but
     restricted to USD-quoted crypto pairs so the equity market being closed
-    is irrelevant. Silent unless an order is placed or rejected."""
+    is irrelevant. Silent unless an order is placed or rejected.
+
+    Phase 1G.3 — closes the bypass: prefers scout-elevated candidates from
+    ``intel_candidates_crypto`` (those that passed Sasha/Lena/Diane's two-call
+    debate). Falls back to the manual Alpaca crypto universe when no
+    elevated candidates exist (cold start, post-rate-limit recovery, or any
+    period when scout debate has not run yet) so the bot never goes silent.
+
+    Set ``TRADING_BOT_CRYPTO_SCAN_BYPASS_SCOUT=1`` to force the legacy
+    manual-universe path (useful for incident response or A/B comparison).
+    """
+    import os as _os
+
     settings = Settings()
     cfg = load_config(CONFIG_PATH)
     alpaca = AlpacaClient(settings)
     market = MarketDataClient(settings)
     journal = TradeJournal(Path(cfg.storage.trade_journal_path))
-    watchlist = _load_active_universe(crypto_only=True)
+
+    bypass_scout = _os.environ.get("TRADING_BOT_CRYPTO_SCAN_BYPASS_SCOUT", "").strip() == "1"
+    watchlist_source = "manual_universe"
+    watchlist = []
+
+    if not bypass_scout:
+        try:
+            from trading_bot.pipelines.crypto.scanner import load_elevated_watchlist
+            from trading_bot.state_db import get_engine
+            db_path = _os.environ.get("TRADING_BOT_STATE_DB", "data/state.db")
+            state_engine = get_engine(db_path)
+            elevated = load_elevated_watchlist(state_engine)
+            if elevated:
+                watchlist = elevated
+                watchlist_source = "scout_elevated"
+        except Exception as e:  # noqa: BLE001 — fall through, never break crypto trading
+            click.echo(f"[crypto-scan] scout watchlist read failed ({e}); using manual universe")
+
+    if not watchlist:
+        watchlist = _load_active_universe(crypto_only=True)
+
     if not watchlist:
         click.echo("[crypto-scan] empty crypto universe — nothing to scan")
         return
@@ -959,7 +1088,7 @@ def crypto_scan() -> None:
     placed = [d for d in result.decisions if d.action == "placed_order"]
     rejected = [d for d in result.decisions if d.action == "rejected_by_risk"]
 
-    click.echo(f"[crypto-scan] regime={regime} symbols={len(watchlist)} "
+    click.echo(f"[crypto-scan] source={watchlist_source} regime={regime} symbols={len(watchlist)} "
                f"placed={len(placed)} rejected={len(rejected)}")
     for d in placed:
         click.echo(f"  PLACED {d.symbol}: {d.reason} (entry={d.entry_order_id})")
@@ -1188,7 +1317,7 @@ def verify_stops() -> None:
     from alpaca.trading.enums import QueryOrderStatus
     from alpaca.trading.requests import GetOrdersRequest
 
-    from trading_bot.alpaca_client import AlpacaClient
+    from trading_bot.shared.alpaca_client import AlpacaClient
     from trading_bot.market_data import MarketDataClient
     from trading_bot.position_protection import evaluate_and_act
     from trading_bot.supervisor import _is_market_hours_et
@@ -1331,7 +1460,7 @@ def dashboard(host: str, port: int, reload: bool) -> None:
 @main.command("daemon")
 def daemon_cmd() -> None:
     """Run the trading bot daemon (long-running APScheduler-driven process)."""
-    from trading_bot.daemon import main as daemon_main
+    from trading_bot.shared.daemon import main as daemon_main
     raise SystemExit(daemon_main())
 
 
@@ -1728,10 +1857,10 @@ def _build_wheel_runtime():
     """Construct the wheel runtime stack used by the CLI subcommands.
     Returns (deps, app_cfg) tuple — deps is None if wheel.enabled is False."""
     from trading_bot.alerts import queue_alert as _qa
-    from trading_bot.daemon import (
+    from trading_bot.shared.daemon import (
         _MacroSnapshotter, _RegimeDetectorAdapter, _build_wheel_deps,
     )
-    from trading_bot.risk_manager import RiskManager
+    from trading_bot.shared.risk_manager import RiskManager
     from trading_bot.state_db import get_engine
 
     settings = Settings()
@@ -1811,7 +1940,7 @@ def wheel_close_cli(symbol: str) -> None:
 def iv_capture_cli() -> None:
     """Capture today's ATM 30-day IV for each allowlisted symbol. Writes to
     option_iv_history. The wheel-scan @ 10:15 ET reads from this table."""
-    from trading_bot.daemon import _build_iv_capture_runner
+    from trading_bot.shared.daemon import _build_iv_capture_runner
     from trading_bot.state_db import get_engine
     settings = Settings()
     cfg = load_config(CONFIG_PATH)
@@ -1831,7 +1960,7 @@ def wheel_universe_build_cli() -> None:
     quality filters; write to wheel_universe_cache. First-ever run takes
     ~100 min (Finnhub free 60/min × ~6,000 names). Subsequent runs only
     re-check 14d-stale entries."""
-    from trading_bot.daemon import _build_universe_builder_runner
+    from trading_bot.shared.daemon import _build_universe_builder_runner
     from trading_bot.state_db import get_engine
     settings = Settings()
     cfg = load_config(CONFIG_PATH)

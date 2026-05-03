@@ -41,7 +41,7 @@ def _make_eligible_set(scout_path: Path,
     real daemon's _eligible_set calls _read_scout_candidates which
     reads the path arg with default 'data/wheel_candidates_today.json'.
     Here we accept any path."""
-    from trading_bot.daemon import _build_wheel_deps  # noqa: F401
+    from trading_bot.shared.daemon import _build_wheel_deps  # noqa: F401
 
     # The actual _read_scout_candidates is a closure inside
     # _build_wheel_deps. Reach in via module-level helper if we add one.

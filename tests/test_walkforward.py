@@ -147,7 +147,7 @@ def test_ensure_bars_warmed_calls_warm_for_missing():
     bar_store.is_warm = MagicMock(side_effect=lambda s, **_: s != "B")
     bar_store.warm = MagicMock(return_value={"B": 100})
     with (
-        patch("trading_bot.config.Settings"),
+        patch("trading_bot.shared.config.Settings"),
         patch("trading_bot.market_data.MarketDataClient"),
     ):
         out = _ensure_bars_warmed(
@@ -166,7 +166,7 @@ def test_ensure_bars_warmed_drops_failed_fetches():
     bar_store.is_warm = MagicMock(return_value=False)  # nothing cached
     bar_store.warm = MagicMock(return_value={"A": 100, "B": -1, "C": -1})
     with (
-        patch("trading_bot.config.Settings"),
+        patch("trading_bot.shared.config.Settings"),
         patch("trading_bot.market_data.MarketDataClient"),
     ):
         out = _ensure_bars_warmed(

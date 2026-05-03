@@ -22,8 +22,8 @@ from typing import Any
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetPortfolioHistoryRequest
 
-from trading_bot.alpaca_client import AlpacaClient
-from trading_bot.config import AppConfig, Settings
+from trading_bot.shared.alpaca_client import AlpacaClient
+from trading_bot.shared.config import AppConfig, Settings
 from trading_bot.intelligence import get_macro_snapshot
 from trading_bot.last_scan import PersistedScan, read_last_scan
 from trading_bot.market_data import MarketDataClient

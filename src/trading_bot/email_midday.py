@@ -80,12 +80,12 @@ def build_midday_snapshot_email(ctx: SnapshotContext) -> Email:
     if ctx.positions:
         rows = [[p["symbol"], p["qty"],
                  severity_pill(p["side"], "good" if p["side"] == "long" else "bad"),
-                 p["entry"], p["current"], p["intraday_pct"]]
+                 p["entry"], p["current"], p.get("total_pct", "—")]
                 for p in ctx.positions]
         body_sections.append(section(
             title="Open Positions", glyph="\U0001f4c8",
             body=data_table(
-                headers=["Symbol", "Qty", "Side", "Entry", "Current", "Intraday"],
+                headers=["Symbol", "Qty", "Side", "Entry", "Current", "P&L %"],
                 rows=rows, right_align_cols=[1, 3, 4, 5],
             ),
         ))

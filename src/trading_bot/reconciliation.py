@@ -27,7 +27,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Session
 
-from trading_bot.config import Settings
+from trading_bot.shared.config import Settings
 from trading_bot.exceptions import AlpacaClientError
 from trading_bot.trade_journal import TradeJournal
 

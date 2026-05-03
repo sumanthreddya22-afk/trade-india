@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from trading_bot.alpaca_client import AccountSnapshot, Position
+from trading_bot.shared.alpaca_client import AccountSnapshot, Position
 from trading_bot.orchestrator import Decision, ScanResult
 from trading_bot.reports import (
     build_vip_alert_email_html,
@@ -56,7 +56,7 @@ def _make_action(
     stop_price=None, current_price=None, fill_estimate=None, error=None,
 ):
     from decimal import Decimal
-    from trading_bot.alpaca_client import AssetClass, OrderSide
+    from trading_bot.shared.alpaca_client import AssetClass, OrderSide
     from trading_bot.position_protection import ProtectionAction
     return ProtectionAction(
         symbol=symbol, qty=Decimal(qty),

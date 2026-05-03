@@ -134,7 +134,7 @@ def test_bot_dry_run_reports_violation():
 
 
 def _real_config_for_test():
-    from trading_bot.config import (
+    from trading_bot.shared.config import (
         AllocationConfig,
         AppConfig,
         EmailConfig,
@@ -166,7 +166,7 @@ def _real_config_for_test():
 
 
 def _real_state_zero():
-    from trading_bot.risk_manager import RiskState
+    from trading_bot.shared.risk_manager import RiskState
     return RiskState(
         daily_pnl_pct=Decimal("0"),
         weekly_pnl_pct=Decimal("0"),

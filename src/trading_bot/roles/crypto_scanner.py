@@ -1,6 +1,15 @@
 # src/trading_bot/roles/crypto_scanner.py
-"""Crypto Scanner — same as StockScannerRole but for crypto pairs, 24/7,
-no sentiment floor. Tier 2."""
+"""Crypto Scanner — runs ``crypto-scan`` every 30 min, 24/7.
+
+Phase 1G.3 — closes the bypass: ``cli.crypto_scan`` now prefers
+scout-elevated candidates from ``intel_candidates_crypto`` (those that
+passed Sasha/Lena/Diane's two-call debate), falling back to the manual
+Alpaca crypto universe when no scout-elevated candidates exist.
+
+The role itself is unchanged — the scout-aware behavior lives in
+``cli.crypto_scan`` so a single point of change covers both the daemon
+role AND ad-hoc CLI invocations.
+"""
 from __future__ import annotations
 from trading_bot.roles.runner import BaseRole
 
@@ -10,12 +19,13 @@ class CryptoScannerRole(BaseRole):
     tier = 2
     process = "daemon"
     job_description = (
-        "Run crypto-scan every 30 min, 24/7. Evaluates configured crypto "
-        "pairs (BTC/USD, ETH/USD, SOL/USD by default). Sentiment floor "
-        "is not applied to crypto. Runs through Risk Officer + Trade Executor."
+        "Run crypto-scan every 30 min, 24/7. Reads scout-elevated crypto "
+        "candidates from intel_candidates_crypto when available; falls back "
+        "to the manual Alpaca crypto universe. Sentiment floor is not applied "
+        "to crypto. Runs through Risk Officer + Trade Executor."
     )
     sla_seconds = 60
-    upstream_roles: list[str] = []
+    upstream_roles: list[str] = ["intel_ingestor"]   # scout debate must run first
     downstream_roles = ["risk_officer", "trade_executor"]
 
     def _do_work(self, ctx):

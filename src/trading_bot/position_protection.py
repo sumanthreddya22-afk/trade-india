@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Literal
 
-from trading_bot.alpaca_client import (
+from trading_bot.shared.alpaca_client import (
     AlpacaClient, AssetClass, OrderSide, Position, _to_orderable_symbol,
 )
 from trading_bot.exceptions import AlpacaClientError

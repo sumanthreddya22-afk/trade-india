@@ -20,7 +20,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from trading_bot.config import WheelConfig
+from trading_bot.shared.config import WheelConfig
 from trading_bot.intelligence_finnhub import FinnhubClient
 from trading_bot.options.chain import (
     ChainContract, pick_csp_contract, pick_cc_contract,
@@ -61,8 +61,23 @@ class WheelDecision:
 class WheelLane:
     name = "wheel"
 
-    def __init__(self, cfg: WheelConfig) -> None:
+    def __init__(self, cfg: WheelConfig, *, engine=None) -> None:
         self.cfg = cfg
+        # Optional override engine — enables adaptive thresholds via the
+        # ``threshold_overrides`` table. Tests that pass no engine see the
+        # legacy static-cfg behavior unchanged.
+        self._engine = engine
+
+    def _iv_rank_floor(self, regime: str | None = None) -> float:
+        if self._engine is not None:
+            try:
+                from trading_bot.threshold_overrides import lookup
+                v = lookup(self._engine, knob="iv_rank_floor", regime=regime)
+                if v is not None:
+                    return float(v)
+            except Exception:
+                pass
+        return float(self.cfg.iv_rank_floor)
 
     def passes_preflight(self, inp: WheelInputs) -> str | None:
         """Cheap gates that don't need an option chain. Returns None if all
@@ -82,7 +97,7 @@ class WheelLane:
             return f"vix={inp.vix}"
         if inp.sentiment_score is not None and inp.sentiment_score < self.cfg.sentiment_floor:
             return f"sentiment={inp.sentiment_score:.2f}"
-        if inp.iv_rank is None or inp.iv_rank < self.cfg.iv_rank_floor:
+        if inp.iv_rank is None or inp.iv_rank < self._iv_rank_floor(inp.regime):
             return f"iv_rank={inp.iv_rank}"
         # Earnings window = today .. today + dte_max + 2 (avoid binary gap
         # risk on a CSP whose expiration straddles an earnings print).
@@ -100,7 +115,10 @@ class WheelLane:
             return WheelDecision("skip", None, skip_reason)
 
         if inp.cycle is None:
-            pick = pick_csp_contract(inp.chain, cfg=self.cfg, today=inp.today)
+            pick = pick_csp_contract(
+                inp.chain, cfg=self.cfg, today=inp.today,
+                engine=self._engine, regime=inp.regime,
+            )
             if pick is None:
                 return WheelDecision("skip", None, "no_csp_contract_in_band")
             return WheelDecision(
@@ -112,7 +130,8 @@ class WheelLane:
         if inp.cost_basis is None:
             return WheelDecision("skip", None, "no_cost_basis")
         pick = pick_cc_contract(inp.chain, cost_basis=inp.cost_basis,
-                                cfg=self.cfg, today=inp.today)
+                                cfg=self.cfg, today=inp.today,
+                                engine=self._engine, regime=inp.regime)
         if pick is None:
             return WheelDecision("skip", None, "no_cc_contract_in_band")
         return WheelDecision(

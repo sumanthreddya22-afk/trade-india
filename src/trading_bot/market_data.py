@@ -10,7 +10,7 @@ from alpaca.data.timeframe import TimeFrame
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator, MACD
 
-from trading_bot.config import Settings
+from trading_bot.shared.config import Settings
 from trading_bot.exceptions import AlpacaClientError
 
 

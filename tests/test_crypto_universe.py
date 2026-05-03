@@ -10,7 +10,7 @@ import pytest
 from trading_bot.crypto_universe import (
     STABLECOINS, discover_crypto_universe, is_stablecoin,
 )
-from trading_bot.alpaca_client import TradableAsset
+from trading_bot.shared.alpaca_client import TradableAsset
 
 
 def _asset(symbol: str, *, tradable: bool = True) -> TradableAsset:

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from trading_bot.alpaca_client import (
+from trading_bot.shared.alpaca_client import (
     AccountSnapshot,
     OrderResult,
     Position,
@@ -15,7 +15,7 @@ from trading_bot.strategy import Signal, SignalAction
 
 
 def _config():
-    from trading_bot.config import (
+    from trading_bot.shared.config import (
         AllocationConfig,
         AppConfig,
         EmailConfig,
@@ -211,7 +211,7 @@ def test_orchestrator_blocks_order_on_risk_debate_reject(watchlist, monkeypatch)
     Base.metadata.create_all(db_engine)
 
     # Force the trigger predicate to return True via consecutive_losing_days=2.
-    from trading_bot.risk_manager import RiskState
+    from trading_bot.shared.risk_manager import RiskState
     state = RiskState(
         daily_pnl_pct=Decimal("0"), weekly_pnl_pct=Decimal("0"),
         consecutive_losing_days=2, halted=False,
@@ -266,7 +266,7 @@ def test_orchestrator_proceeds_when_risk_debate_inconclusive(watchlist, monkeypa
     db_engine = create_engine("sqlite:///:memory:", future=True)
     Base.metadata.create_all(db_engine)
 
-    from trading_bot.risk_manager import RiskState
+    from trading_bot.shared.risk_manager import RiskState
     state = RiskState(
         daily_pnl_pct=Decimal("0"), weekly_pnl_pct=Decimal("0"),
         consecutive_losing_days=2, halted=False,

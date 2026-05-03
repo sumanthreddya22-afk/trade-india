@@ -14,7 +14,7 @@ from decimal import Decimal
 
 import pandas as pd
 
-from trading_bot.alpaca_client import AlpacaClient
+from trading_bot.shared.alpaca_client import AlpacaClient
 
 
 @dataclass(frozen=True)

@@ -28,7 +28,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from trading_bot.alpaca_client import AlpacaClient
+from trading_bot.shared.alpaca_client import AlpacaClient
 from trading_bot.reconciliation import ClosedTrade, ClosedTradeStore
 from trading_bot.trade_journal import TradeJournal, TradeRecord
 

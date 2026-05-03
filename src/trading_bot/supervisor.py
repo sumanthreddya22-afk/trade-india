@@ -53,8 +53,8 @@ def _is_market_hours_et() -> bool:
 
 def _alpaca():
     """Lazy-build Alpaca client when needed (handle absent creds in tests)."""
-    from trading_bot.alpaca_client import AlpacaClient
-    from trading_bot.config import Settings
+    from trading_bot.shared.alpaca_client import AlpacaClient
+    from trading_bot.shared.config import Settings
     return AlpacaClient(Settings())
 
 

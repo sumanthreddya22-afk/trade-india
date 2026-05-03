@@ -23,7 +23,7 @@ class SpyBenchmark:
             return self._fetch_stooq(start=start, end=end)
 
     def _fetch_alpaca(self, *, start: dt.date, end: dt.date) -> pd.DataFrame:
-        from trading_bot.config import Settings
+        from trading_bot.shared.config import Settings
         from trading_bot.market_data import MarketDataClient
 
         client = MarketDataClient(Settings())

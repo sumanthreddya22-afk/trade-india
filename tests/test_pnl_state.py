@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from trading_bot.config import (
+from trading_bot.shared.config import (
     AllocationConfig,
     AppConfig,
     EmailConfig,

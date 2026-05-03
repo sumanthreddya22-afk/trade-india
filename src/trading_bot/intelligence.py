@@ -22,7 +22,7 @@ import requests
 from alpaca.data.historical.news import NewsClient
 from alpaca.data.requests import NewsRequest
 
-from trading_bot.config import Settings
+from trading_bot.shared.config import Settings
 
 
 HTTP_TIMEOUT = 10  # seconds — generous for slow free APIs

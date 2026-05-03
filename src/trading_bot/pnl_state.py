@@ -13,9 +13,9 @@ from decimal import Decimal
 from alpaca.trading.client import TradingClient
 from alpaca.trading.requests import GetPortfolioHistoryRequest
 
-from trading_bot.config import AppConfig, Settings
+from trading_bot.shared.config import AppConfig, Settings
 from trading_bot.exceptions import AlpacaClientError
-from trading_bot.risk_manager import RiskState
+from trading_bot.shared.risk_manager import RiskState
 from trading_bot.state_pause import read_halted_strategies, HALTED_STRATEGIES_PATH
 
 

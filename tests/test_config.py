@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from trading_bot.config import Settings, load_config
+from trading_bot.shared.config import Settings, load_config
 from trading_bot.exceptions import ConfigError, LiveModeDisabled
 
 
@@ -74,7 +74,7 @@ def test_load_config_missing_file_raises(tmp_path: Path):
 
 def test_risk_config_unprotected_stop_pct_default():
     """Defaults to 0.05 (5%) when not present in yaml — matches MomentumStrategy default."""
-    from trading_bot.config import RiskConfig
+    from trading_bot.shared.config import RiskConfig
     cfg = RiskConfig(
         daily_loss_limit_pct=2.0,
         weekly_loss_limit_pct=5.0,
@@ -87,7 +87,7 @@ def test_risk_config_unprotected_stop_pct_default():
 
 
 def test_risk_config_unprotected_stop_pct_override():
-    from trading_bot.config import RiskConfig
+    from trading_bot.shared.config import RiskConfig
     cfg = RiskConfig(
         daily_loss_limit_pct=2.0,
         weekly_loss_limit_pct=5.0,
@@ -101,7 +101,7 @@ def test_risk_config_unprotected_stop_pct_override():
 
 
 def test_wheel_config_defaults(tmp_path):
-    from trading_bot.config import load_config
+    from trading_bot.shared.config import load_config
     cfg = tmp_path / "c.yaml"
     cfg.write_text("""
 risk: {daily_loss_limit_pct: 2, weekly_loss_limit_pct: 5, per_trade_risk_pct: 1, max_position_pct: 10, max_symbol_concentration_pct: 5, max_consecutive_losing_days: 3}

@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
-from trading_bot.alpaca_client import AlpacaClient
-from trading_bot.config import AppConfig, Settings
+from trading_bot.shared.alpaca_client import AlpacaClient
+from trading_bot.shared.config import AppConfig, Settings
 
 
 log = logging.getLogger(__name__)

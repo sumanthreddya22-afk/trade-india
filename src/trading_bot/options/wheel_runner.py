@@ -25,7 +25,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 from trading_bot.alerts import AlertEvent
-from trading_bot.config import WheelConfig
+from trading_bot.shared.config import WheelConfig
 from trading_bot.intelligence_finnhub import FinnhubClient
 from trading_bot.log_structured import StructuredLogger
 from trading_bot.options.alpaca_options import OptionAlpacaClient

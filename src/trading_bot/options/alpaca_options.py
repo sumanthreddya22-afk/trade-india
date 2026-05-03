@@ -21,7 +21,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide as AlpacaSide, OrderType, TimeInForce
 from alpaca.trading.requests import GetOrdersRequest, LimitOrderRequest
 
-from trading_bot.alpaca_client import PAPER_URL_PREFIX, _audit_order_submitted
+from trading_bot.shared.alpaca_client import PAPER_URL_PREFIX, _audit_order_submitted
 from trading_bot.exceptions import AlpacaClientError, LiveModeDisabled
 from trading_bot.options.chain import ChainContract
 from trading_bot.options.symbols import parse_occ

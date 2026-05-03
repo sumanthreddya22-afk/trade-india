@@ -16,7 +16,7 @@ from alpaca.trading.requests import (
 )
 from pydantic import BaseModel, model_validator
 
-from trading_bot.config import Settings
+from trading_bot.shared.config import Settings
 from trading_bot.exceptions import AlpacaClientError, LiveModeDisabled
 from trading_bot.log_structured import StructuredLogger
 
@@ -563,3 +563,194 @@ class AlpacaClient:
             f"crypto post-fill: stop missing on {req.symbol} (entry={entry_id}); "
             f"position has been market-flattened."
         )
+
+    # ---------------------------------------------------------------------
+    # Phase C — hold-debate action helpers
+    # ---------------------------------------------------------------------
+
+    def replace_stop(self, *, symbol: str, new_stop_price: float) -> "ReplaceStopResult":
+        """Cancel the existing protective stop for ``symbol`` and submit
+        a new stop-loss at ``new_stop_price``. Used by the hold-debate
+        ``tighten_stop`` verdict to defend gains without exiting.
+
+        Returns a result with the cancelled and new order IDs. Raises
+        ``AlpacaClientError`` on:
+          - position not found
+          - no open stop order for the symbol (caller should consider
+            ``flatten_position`` instead since there's no protection to
+            tighten)
+          - submit / cancel failure
+        """
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        # Find the position so we know the qty for the new stop
+        try:
+            raw_positions = self._client.get_all_positions()
+        except Exception as e:
+            raise AlpacaClientError(f"replace_stop get_positions failed: {e}") from e
+        pos = next((p for p in raw_positions if str(p.symbol) == symbol), None)
+        if pos is None:
+            raise AlpacaClientError(
+                f"replace_stop: no open position for {symbol}"
+            )
+        pos_qty = abs(float(getattr(pos, "qty", 0) or 0))
+        pos_side = (
+            OrderSide.SELL if float(getattr(pos, "qty", 0)) > 0 else OrderSide.BUY
+        )  # the SIDE of the protective stop is opposite the position side
+
+        # Find the open stop order(s) for this symbol
+        try:
+            open_orders = self._client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200)
+            )
+        except Exception as e:
+            raise AlpacaClientError(f"replace_stop get_orders failed: {e}") from e
+        stop_orders = [
+            o for o in open_orders
+            if str(o.symbol) == symbol
+            and str(getattr(o, "type", "")).lower().endswith(("stop", "stop_limit"))
+        ]
+        if not stop_orders:
+            raise AlpacaClientError(
+                f"replace_stop: no open stop order for {symbol} — consider flatten_position"
+            )
+
+        # Cancel ALL of them (defensive — usually exactly one)
+        cancelled_ids: list[str] = []
+        for o in stop_orders:
+            try:
+                self._client.cancel_order_by_id(str(o.id))
+                cancelled_ids.append(str(o.id))
+            except Exception as e:
+                raise AlpacaClientError(
+                    f"replace_stop cancel failed for {o.id}: {e}"
+                ) from e
+
+        # Submit the new stop-loss order
+        try:
+            new_stop_req = StopOrderRequest(
+                symbol=symbol,
+                qty=pos_qty,
+                side=_to_alpaca_side(pos_side),
+                time_in_force=TimeInForce.GTC,
+                stop_price=float(new_stop_price),
+            )
+            new_stop = self._client.submit_order(new_stop_req)
+            _audit_order_submitted(
+                source="hold_debate_replace_stop", symbol=symbol,
+                side=pos_side.value, qty=pos_qty, asset_class="stock",
+                order_id=str(new_stop.id), order_type="stop",
+                stop_price=new_stop_price,
+            )
+        except Exception as e:
+            raise AlpacaClientError(
+                f"replace_stop submit failed for {symbol} "
+                f"(cancelled prior stops {cancelled_ids}): {e}"
+            ) from e
+
+        return ReplaceStopResult(
+            symbol=symbol,
+            cancelled_order_ids=cancelled_ids,
+            new_stop_order_id=str(new_stop.id),
+            new_stop_price=float(new_stop_price),
+        )
+
+    def flatten_position(self, *, symbol: str) -> "FlattenResult":
+        """Cancel all open child orders for ``symbol`` (stop + take-profit)
+        and submit a market order in the opposite direction to close the
+        position. Used by the hold-debate ``exit_now`` verdict.
+
+        Returns a result with the flatten order ID and cancelled child IDs.
+        Raises ``AlpacaClientError`` on:
+          - position not found (nothing to flatten)
+          - flatten submit failure
+        """
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+
+        # Get the position
+        try:
+            raw_positions = self._client.get_all_positions()
+        except Exception as e:
+            raise AlpacaClientError(f"flatten_position get_positions failed: {e}") from e
+        pos = next((p for p in raw_positions if str(p.symbol) == symbol), None)
+        if pos is None:
+            raise AlpacaClientError(
+                f"flatten_position: no open position for {symbol}"
+            )
+        pos_qty = abs(float(getattr(pos, "qty", 0) or 0))
+        is_long = float(getattr(pos, "qty", 0)) > 0
+        flatten_side = OrderSide.SELL if is_long else OrderSide.BUY
+
+        # Cancel all open orders for this symbol (stop, TP, anything else)
+        # so the flatten doesn't race against a stop or TP.
+        cancelled_ids: list[str] = []
+        try:
+            open_orders = self._client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200)
+            )
+        except Exception as e:
+            raise AlpacaClientError(
+                f"flatten_position get_orders failed: {e}"
+            ) from e
+        for o in open_orders:
+            if str(o.symbol) != symbol:
+                continue
+            try:
+                self._client.cancel_order_by_id(str(o.id))
+                cancelled_ids.append(str(o.id))
+            except Exception:
+                # Best-effort — continue trying to flatten even if a
+                # specific cancel failed (the flatten itself is the
+                # critical part).
+                pass
+
+        # Submit the flatten order
+        try:
+            asset_class_str = (
+                "crypto"
+                if any(symbol.endswith(q) for q in ("/USD", "/USDT", "/USDC", "/EUR", "/BTC"))
+                else "stock"
+            )
+            tif = TimeInForce.GTC if asset_class_str == "crypto" else TimeInForce.DAY
+            flatten_req = MarketOrderRequest(
+                symbol=symbol,
+                qty=pos_qty,
+                side=_to_alpaca_side(flatten_side),
+                time_in_force=tif,
+            )
+            flatten_order = self._client.submit_order(flatten_req)
+            _audit_order_submitted(
+                source="hold_debate_flatten", symbol=symbol,
+                side=flatten_side.value, qty=pos_qty,
+                asset_class=asset_class_str,
+                order_id=str(flatten_order.id), order_type="market",
+            )
+        except Exception as e:
+            raise AlpacaClientError(
+                f"flatten_position submit failed for {symbol}: {e}"
+            ) from e
+
+        return FlattenResult(
+            symbol=symbol,
+            flatten_order_id=str(flatten_order.id),
+            cancelled_child_order_ids=cancelled_ids,
+            qty=pos_qty,
+        )
+
+
+@dataclass(frozen=True)
+class ReplaceStopResult:
+    symbol: str
+    cancelled_order_ids: list[str]
+    new_stop_order_id: str
+    new_stop_price: float
+
+
+@dataclass(frozen=True)
+class FlattenResult:
+    symbol: str
+    flatten_order_id: str
+    cancelled_child_order_ids: list[str]
+    qty: float

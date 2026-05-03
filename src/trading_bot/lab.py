@@ -39,6 +39,8 @@ def _build_runners(log: StructuredLogger):
     from trading_bot.roles.param_optimizer import ParamOptimizerRole
     from trading_bot.roles.promoter import PromoterRole
     from trading_bot.roles.strategy_architect import StrategyArchitectRole
+    from trading_bot.roles.intel_ingestor import IntelIngestorRole
+    from trading_bot.roles.threshold_tuner import ThresholdTunerRole
     from trading_bot.state_db import get_engine
 
     engine = get_engine(STATE_DB)
@@ -48,6 +50,20 @@ def _build_runners(log: StructuredLogger):
     architect = StrategyArchitectRole(engine=engine)
     reviewer = CodeReviewerRole(engine=engine)
     reflector = DecisionReflectorRole(engine=engine)
+    # Continuous intel ingestion — every 30 min market hours, hourly
+    # after-hours. Source preferences feed the daemon's universe
+    # construction at every scan.
+    ingestor = IntelIngestorRole(engine=engine)
+    # Adaptive thresholds — runs nightly post-reconciler, before pre-market.
+    # Reads cfg from the YAML for static fallbacks; tries to load and pass
+    # an EmailSender so the operator gets a summary email each morning.
+    tuner_cfg = _load_app_cfg_safely()
+    tuner_sender = _build_tuner_email_sender(tuner_cfg)
+    tuner = ThresholdTunerRole(
+        engine=engine,
+        cfg=tuner_cfg,
+        sender=tuner_sender,
+    )
 
     def _wrap(name: str, fn):
         def runner():
@@ -97,8 +113,49 @@ def _build_runners(log: StructuredLogger):
         "decision_reflect": _wrap(
             "decision_reflect", lambda: reflector.safe_run(ctx={})
         ),
+        "threshold_tune": _wrap(
+            "threshold_tune", lambda: tuner.safe_run(ctx={})
+        ),
+        "intel_ingest": _wrap(
+            "intel_ingest", lambda: ingestor.safe_run(ctx={})
+        ),
         "saturday_evolve": _saturday_evolve,
     }
+
+
+def _load_app_cfg_safely():
+    """Best-effort load of strategy/config.yaml. Returns None if anything
+    goes wrong — the threshold tuner only needs cfg for static fallbacks
+    on knobs that haven't tuned yet, so a missing cfg just means more
+    knobs sit at their pydantic defaults."""
+    try:
+        from pathlib import Path
+        from trading_bot.shared.config import load_config
+        return load_config(Path("strategy/config.yaml"))
+    except Exception:
+        return None
+
+
+def _build_tuner_email_sender(cfg):
+    """Construct an EmailSender if SMTP creds + a recipient are configured.
+    Returns None to disable email cleanly when anything is missing — the
+    tuner role will skip the email step but still write overrides.
+    """
+    if cfg is None:
+        return None
+    try:
+        from trading_bot.shared.config import Settings
+        from trading_bot.email_sender import EmailSender
+        settings = Settings()
+        # Settings exposes Gmail SMTP creds via env vars; if either is unset,
+        # bail out rather than constructing a sender that will crash on send.
+        user = getattr(settings, "gmail_user", None) or os.environ.get("GMAIL_USER")
+        pw = getattr(settings, "gmail_app_password", None) or os.environ.get("GMAIL_APP_PASSWORD")
+        if not user or not pw:
+            return None
+        return EmailSender(user=user, app_password=pw, to=cfg.email.to)
+    except Exception:
+        return None
 
 
 def _register_lab_jobs(scheduler: BackgroundScheduler, runners: dict) -> None:
@@ -132,6 +189,43 @@ def _register_lab_jobs(scheduler: BackgroundScheduler, runners: dict) -> None:
         id="decision_reflect",
         replace_existing=True,
     )
+    # Adaptive thresholds — nightly tuner runs at 04:00 ET, after the
+    # decision_reflector (03:30) has produced lessons and before the
+    # daemon's pre-market jobs start. Output: rows in
+    # ``threshold_overrides`` for auto-mode knobs, recommendations JSON
+    # for the operator on recommend-mode knobs.
+    if "threshold_tune" in runners:
+        scheduler.add_job(
+            runners["threshold_tune"],
+            trigger=CronTrigger(hour=4, minute=0, timezone="America/New_York"),
+            id="threshold_tune",
+            replace_existing=True,
+        )
+    # Continuous intel ingestion. Two cron jobs share the same callable:
+    #   * Every 30 min during US market hours (09:00-16:00 ET, weekdays).
+    #   * Every hour outside that window (so overnight news still rolls in).
+    # Cron-level split keeps the daemon honest and lets the operator see
+    # exactly when each tick fires; APScheduler registers them as two
+    # distinct jobs.
+    if "intel_ingest" in runners:
+        scheduler.add_job(
+            runners["intel_ingest"],
+            trigger=CronTrigger(
+                day_of_week="mon-fri", hour="9-15", minute="0,30",
+                timezone="America/New_York",
+            ),
+            id="intel_ingest_market",
+            replace_existing=True,
+        )
+        scheduler.add_job(
+            runners["intel_ingest"],
+            trigger=CronTrigger(
+                hour="0-8,16-23", minute=0,
+                timezone="America/New_York",
+            ),
+            id="intel_ingest_offhours",
+            replace_existing=True,
+        )
     # Phase 5: Saturday weekly Architect → Reviewer pipeline.
     if "saturday_evolve" in runners:
         scheduler.add_job(

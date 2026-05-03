@@ -22,8 +22,8 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session
 
-from trading_bot.alpaca_client import AlpacaClient, OrderSide, AssetClass
-from trading_bot.config import Settings
+from trading_bot.shared.alpaca_client import AlpacaClient, OrderSide, AssetClass
+from trading_bot.shared.config import Settings
 from trading_bot.roles.runner import BaseRole
 from trading_bot.state_db import (
     FallbackFlag,

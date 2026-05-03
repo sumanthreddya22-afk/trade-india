@@ -165,7 +165,12 @@ class MeanReversionStrategy:
         )
 
 
-def strategy_for_regime(regime: str):
+def strategy_for_regime(
+    regime: str,
+    *,
+    intel_score: float | None = None,
+    intel_score_threshold: float = 5.0,
+):
     """Strategy router: pick the right strategy for the current market regime.
 
     Backtest-driven changes (Plan 5b verdict, run 9bcc54801ec3):
@@ -178,9 +183,24 @@ def strategy_for_regime(regime: str):
       trades to evaluate (1 in risk_off). Conservatively disabled until
       data accrues.
 
+    Phase 6 (intel-aware override): when the per-ticker ``intel_score``
+    is at or above ``intel_score_threshold``, the router will return a
+    ``MomentumStrategy`` for ``sideways`` and ``trending_down`` regimes
+    too. ``risk_off`` remains a hard wall regardless of intel — when the
+    macro tape is genuinely panicking, even strong news rarely fights it.
+
     The router returning None means "no entries this regime" — existing
     positions are still managed (exits run, stops trigger, etc.).
     """
     if regime == "trending_up":
         return MomentumStrategy()
+    if regime == "risk_off":
+        # Hard wall — intel can't override a risk_off regime. Catching a
+        # falling knife on news is exactly the failure mode this prevents.
+        return None
+    # sideways / trending_down — intel can unlock Momentum when the
+    # signal is strong enough.
+    if regime in ("sideways", "trending_down"):
+        if intel_score is not None and intel_score >= intel_score_threshold:
+            return MomentumStrategy()
     return None

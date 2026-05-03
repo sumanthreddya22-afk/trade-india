@@ -33,7 +33,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from trading_bot.config import Settings, load_config
+from trading_bot.shared.config import Settings, load_config
 from trading_bot.dashboard.data import DashboardSnapshot, build_snapshot
 from trading_bot.dashboard.insights import InsightsSnapshot, build_insights
 from trading_bot.event_bus import bus as _bus_mod
@@ -323,7 +323,7 @@ async def _maybe_start_market_data_stream(app, broadcaster, cache) -> None:
     symbol set (debounced, 5s).
     """
     try:
-        from trading_bot.config import Settings
+        from trading_bot.shared.config import Settings
         from trading_bot.streams.market_data_stream import maybe_start as _md_start
     except Exception:
         return

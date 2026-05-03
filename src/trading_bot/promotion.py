@@ -142,7 +142,7 @@ def promote_atomically(
         from trading_bot.email_promotion import build_promotion_email
         from trading_bot.email_log import send_logged
         from trading_bot.email_sender import EmailSender
-        from trading_bot.config import Settings, load_config
+        from trading_bot.shared.config import Settings, load_config
         from pathlib import Path as _Path
 
         _new_promo_dict = {

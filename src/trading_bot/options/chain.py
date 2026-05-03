@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as dt
 from dataclasses import dataclass
 
-from trading_bot.config import WheelConfig
+from trading_bot.shared.config import WheelConfig
 
 
 @dataclass(frozen=True)
@@ -48,24 +48,57 @@ def passes_liquidity(c: ChainContract, cfg: WheelConfig) -> bool:
     )
 
 
+def _resolved_premium_floor(cfg: WheelConfig, engine, regime: str | None) -> float:
+    """min_premium_abs with override consultation. Falls back to static cfg
+    when no engine or no fresh override exists."""
+    if engine is not None:
+        try:
+            from trading_bot.threshold_overrides import lookup
+            v = lookup(engine, knob="min_premium_abs", regime=regime)
+            if v is not None:
+                return float(v)
+        except Exception:
+            pass
+    return float(cfg.min_premium_abs)
+
+
+def _resolved_yield_floor(cfg: WheelConfig, engine, regime: str | None) -> float:
+    """min_annualized_yield with override consultation."""
+    if engine is not None:
+        try:
+            from trading_bot.threshold_overrides import lookup
+            v = lookup(engine, knob="min_annualized_yield", regime=regime)
+            if v is not None:
+                return float(v)
+        except Exception:
+            pass
+    return float(cfg.min_annualized_yield)
+
+
 def pick_csp_contract(
     chain: list[ChainContract], *, cfg: WheelConfig, today: dt.date,
+    engine=None, regime: str | None = None,
 ) -> ChainContract | None:
     """Pick the put with abs(delta) closest to 0.25 inside [delta_target_low, high]
     and DTE inside [dte_min, dte_max]. Liquidity, min_premium_abs, and
     min_annualized_yield must all pass. Returns None if no fit.
 
-    Bucket C: ``min_annualized_yield`` is now enforced (was dead config).
+    Adaptive thresholds: when ``engine`` is supplied, ``min_premium_abs``
+    and ``min_annualized_yield`` are read from the ``threshold_overrides``
+    table first (with safety bounds clamping), falling back to the static
+    cfg values when no fresh override exists.
     """
     target = (cfg.delta_target_low + cfg.delta_target_high) / 2.0
+    premium_floor = _resolved_premium_floor(cfg, engine, regime)
+    yield_floor = _resolved_yield_floor(cfg, engine, regime)
     candidates = [
         c for c in chain
         if c.kind == "P"
         and cfg.dte_min <= _dte(c, today) <= cfg.dte_max
         and cfg.delta_target_low <= abs(c.delta) <= cfg.delta_target_high
         and passes_liquidity(c, cfg)
-        and c.bid >= cfg.min_premium_abs
-        and annualized_yield(c, today) >= cfg.min_annualized_yield
+        and c.bid >= premium_floor
+        and annualized_yield(c, today) >= yield_floor
     ]
     if not candidates:
         return None
@@ -74,12 +107,15 @@ def pick_csp_contract(
 
 def pick_cc_contract(
     chain: list[ChainContract], *, cost_basis: float, cfg: WheelConfig, today: dt.date,
+    engine=None, regime: str | None = None,
 ) -> ChainContract | None:
     """Pick a call with strike >= cost_basis, abs(delta) inside band, DTE in window.
 
-    Bucket C: ``min_annualized_yield`` is now enforced for CCs as well.
+    Same override-consultation pattern as ``pick_csp_contract``.
     """
     target = (cfg.delta_target_low + cfg.delta_target_high) / 2.0
+    premium_floor = _resolved_premium_floor(cfg, engine, regime)
+    yield_floor = _resolved_yield_floor(cfg, engine, regime)
     candidates = [
         c for c in chain
         if c.kind == "C"
@@ -87,8 +123,8 @@ def pick_cc_contract(
         and cfg.dte_min <= _dte(c, today) <= cfg.dte_max
         and cfg.delta_target_low <= abs(c.delta) <= cfg.delta_target_high
         and passes_liquidity(c, cfg)
-        and c.bid >= cfg.min_premium_abs
-        and annualized_yield(c, today) >= cfg.min_annualized_yield
+        and c.bid >= premium_floor
+        and annualized_yield(c, today) >= yield_floor
     ]
     if not candidates:
         return None

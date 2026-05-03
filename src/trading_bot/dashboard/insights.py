@@ -371,6 +371,11 @@ def build_process_registry() -> list[ProcessRow]:
         started_raw, cmd = m.group(1), m.group(2)
         if "ps -axwwo" in cmd or "pgrep" in cmd:
             continue
+        # Skip OS-level launcher wrappers (Gatekeeper disclaimer, etc.) that
+        # exec the real python process — they share the child's command line
+        # and would falsely count as duplicates.
+        if cmd.startswith("/Applications/") and "disclaimer" in cmd:
+            continue
         # Friendly label
         if "trading_bot.daemon" in cmd or cmd.endswith("bot daemon") or " bot daemon" in cmd:
             label = "Daemon (scheduler + verify-stops + alerts)"
@@ -554,43 +559,49 @@ _ACTIVITY_VERBS = {
 }
 
 
-def build_activity_feed(
-    *, log_path: str = "runs/daemon.log", limit: int = 80,
-) -> list[ActivityLine]:
-    p = Path(log_path)
-    if not p.exists():
-        return []
-    # Read tail efficiently — last ~256KB is plenty for ~80 events.
-    try:
-        size = p.stat().st_size
-        with p.open("rb") as f:
-            f.seek(max(0, size - 256 * 1024))
-            chunk = f.read().decode(errors="replace")
-    except Exception:
-        return []
-    lines = chunk.splitlines()
-    out: list[ActivityLine] = []
-    for line in reversed(lines):
-        if len(out) >= limit:
-            break
-        line = line.strip()
-        if not line.startswith("{"):
+def _iter_activity_rows(runs_dir: Path, role: str) -> Any:
+    """Yield event dicts newest-first from runs/<UTC date>/<role>/*.json.
+
+    StructuredLogger writes one JSON file per event (HH-MM-SS[.usec].json).
+    Lex sort = chronological, so reverse-sort gives newest-first. Walks
+    today's UTC date dir, then yesterday's so the feed survives midnight.
+    """
+    today = dt.datetime.now(dt.timezone.utc).date()
+    for delta in (0, 1):
+        d = (today - dt.timedelta(days=delta)).isoformat()
+        role_dir = runs_dir / d / role
+        if not role_dir.is_dir():
             continue
         try:
-            row = json.loads(line)
-        except Exception:
+            files = sorted(role_dir.iterdir(), reverse=True)
+        except OSError:
             continue
+        for fp in files:
+            try:
+                yield json.loads(fp.read_text())
+            except Exception:
+                continue
+
+
+def build_activity_feed(
+    *, runs_dir: str | Path = "runs", role: str = "daemon", limit: int = 80,
+) -> list[ActivityLine]:
+    out: list[ActivityLine] = []
+    for row in _iter_activity_rows(Path(runs_dir), role):
+        if len(out) >= limit:
+            break
         event = row.get("event")
         ts = row.get("ts") or ""
         level = (row.get("level") or "info").lower()
         if not event:
             continue
-        # Skip the chatty start/finish pairs unless they failed
-        if event.endswith("_finish") and level == "info":
+        # Suppress heartbeat noise: alert_drain runs every ~30s, and the
+        # `_start` half of every job pair is redundant with its `_finish`.
+        # We keep `_finish` events at info so the operator sees what just
+        # completed — that's the whole point of this panel.
+        if event in ("alert_drain_start", "alert_drain_finish"):
             continue
         if event.endswith("_start") and level == "info":
-            continue
-        if event in ("alert_drain_start", "alert_drain_finish"):
             continue
         try:
             t = dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))

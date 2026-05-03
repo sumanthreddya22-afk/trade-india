@@ -473,6 +473,154 @@ def role_health(session: Session) -> list[RoleHealthRow]:
 # ============================================================================
 
 
+# ============================================================================
+# Intel pool (continuous candidate ingestion)
+# ============================================================================
+
+
+@dataclass
+class IntelPoolEntry:
+    symbol: str
+    asset_class: str
+    score: float
+    n_mentions: int
+    n_sources: int
+    last_seen: dt.datetime
+    top_reason: str
+    sources: dict[str, int]
+    sentiment_avg: float | None
+
+
+@dataclass
+class IntelPoolView:
+    by_class: dict[str, list[IntelPoolEntry]]
+    last_run_at: dt.datetime | None
+    last_run_status: str | None
+    last_run_outputs: dict[str, Any] | None
+
+    @property
+    def total(self) -> int:
+        return sum(len(v) for v in self.by_class.values())
+
+
+def intel_pool(session: Session, *, top_n_per_class: int = 10) -> IntelPoolView:
+    """Read top candidates per asset class for the dashboard tile."""
+    from trading_bot.intel import pool as intel_pool_mod
+
+    engine = session.get_bind()
+    by_class: dict[str, list[IntelPoolEntry]] = {}
+    for asset_class in ("stock", "crypto"):
+        entries = intel_pool_mod.top_for_asset_class(
+            engine, asset_class=asset_class, n=top_n_per_class, min_score=0.0,
+        )
+        by_class[asset_class] = [
+            IntelPoolEntry(
+                symbol=e.symbol,
+                asset_class=e.asset_class,
+                score=e.score,
+                n_mentions=e.n_mentions,
+                n_sources=e.n_sources,
+                last_seen=e.last_seen,
+                top_reason=e.top_reason,
+                sources=e.sources,
+                sentiment_avg=e.sentiment_avg,
+            )
+            for e in entries
+        ]
+    last_run = (
+        session.query(RoleRun)
+        .filter(RoleRun.role_name == "intel_ingestor")
+        .order_by(desc(RoleRun.started_at))
+        .first()
+    )
+    return IntelPoolView(
+        by_class=by_class,
+        last_run_at=last_run.started_at if last_run else None,
+        last_run_status=last_run.status if last_run else None,
+        last_run_outputs=None,
+    )
+
+
+# ============================================================================
+# Threshold overrides (adaptive thresholds dashboard tile)
+# ============================================================================
+
+
+@dataclass
+class ThresholdOverrideRow:
+    knob: str
+    value: float
+    regime: str | None
+    bounds_min: float
+    bounds_max: float
+    set_at: dt.datetime
+    set_by: str
+    signal_summary: dict[str, Any]
+    expires_at: dt.datetime | None
+
+    @property
+    def signal_short(self) -> str:
+        """One-line summary for the table cell — flatten the JSON without
+        clipping the salient signal name."""
+        rule = self.signal_summary.get("rule", "")
+        salient = ", ".join(
+            f"{k}={v}" for k, v in self.signal_summary.items()
+            if k not in ("rule",)
+        )
+        return f"{rule}: {salient}" if rule else salient
+
+
+@dataclass
+class ThresholdOverridesView:
+    rows: list[ThresholdOverrideRow]
+    last_run_at: dt.datetime | None
+    last_run_status: str | None
+
+    @property
+    def total(self) -> int:
+        return len(self.rows)
+
+
+def threshold_overrides(session: Session, *, max_age_hours: int = 36) -> ThresholdOverridesView:
+    """Return active overrides + the latest threshold_tuner run.
+
+    Pure read: dashboard fragment + email digest both pull from this so
+    they show identical numbers.
+    """
+    from trading_bot.threshold_overrides import list_active
+
+    engine = session.get_bind()
+    raw = list_active(engine, max_age_hours=max_age_hours)
+    rows = []
+    for r in raw:
+        try:
+            sig = json.loads(r.signal_summary or "{}")
+        except Exception:
+            sig = {}
+        rows.append(ThresholdOverrideRow(
+            knob=r.knob,
+            value=float(r.value),
+            regime=r.regime,
+            bounds_min=float(r.bounds_min),
+            bounds_max=float(r.bounds_max),
+            set_at=r.set_at,
+            set_by=r.set_by,
+            signal_summary=sig,
+            expires_at=r.expires_at,
+        ))
+    last_run = (
+        session.query(RoleRun)
+        .filter(RoleRun.role_name == "threshold_tuner")
+        .order_by(desc(RoleRun.started_at))
+        .first()
+    )
+    return ThresholdOverridesView(
+        rows=rows,
+        last_run_at=last_run.started_at if last_run else None,
+        last_run_status=last_run.status if last_run else None,
+    )
+
+
 @dataclass
 class ProposalRow:
     name: str

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 
-from trading_bot.alpaca_client import AlpacaClient
+from trading_bot.shared.alpaca_client import AlpacaClient
 from trading_bot.state import WatchlistEntry
 
 

@@ -30,7 +30,7 @@ from typing import Any
 import pandas as pd
 import requests
 
-from trading_bot.config import Settings
+from trading_bot.shared.config import Settings
 
 POLYGON_BASE = "https://api.polygon.io"
 HTTP_TIMEOUT = 30

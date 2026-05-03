@@ -20,7 +20,7 @@ from trading_bot.backtest.simulator import (
     BacktestTrade,
     Backtester,
 )
-from trading_bot.config import (
+from trading_bot.shared.config import (
     AllocationConfig,
     AppConfig,
     EmailConfig,

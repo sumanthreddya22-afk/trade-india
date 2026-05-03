@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from trading_bot.alpaca_client import AlpacaClient, AccountSnapshot, Position
+from trading_bot.shared.alpaca_client import AlpacaClient, AccountSnapshot, Position
 from trading_bot.exceptions import AlpacaClientError, LiveModeDisabled
 
 
@@ -25,7 +25,7 @@ def test_client_refuses_non_paper_url(fake_settings):
 
 
 def test_get_account_returns_snapshot(fake_settings):
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         mock_account = MagicMock()
         mock_account.equity = "100000.50"
         mock_account.cash = "25000.10"
@@ -41,7 +41,7 @@ def test_get_account_returns_snapshot(fake_settings):
 
 
 def test_get_positions_returns_list(fake_settings):
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         mock_pos = MagicMock()
         mock_pos.symbol = "AAPL"
         mock_pos.qty = "10"
@@ -64,19 +64,19 @@ def test_get_positions_returns_list(fake_settings):
 
 
 def test_get_account_wraps_api_error(fake_settings):
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         MockTC.return_value.get_account.side_effect = RuntimeError("boom")
         client = AlpacaClient(fake_settings)
         with pytest.raises(AlpacaClientError):
             client.get_account()
 
 
-from trading_bot.alpaca_client import OrderRequest, OrderResult, OrderSide, AssetClass
+from trading_bot.shared.alpaca_client import OrderRequest, OrderResult, OrderSide, AssetClass
 
 
 def test_place_stock_order_uses_bracket(fake_settings):
     """Stock orders should use a single bracket submission with stop_loss leg."""
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         leg = MagicMock(id="stop-1", type="stop")
         entry = MagicMock(id="entry-1", legs=[leg])
         MockTC.return_value.submit_order.return_value = entry
@@ -99,7 +99,7 @@ def test_place_stock_order_uses_bracket(fake_settings):
 
 
 def test_place_order_requires_stop_loss(fake_settings):
-    with patch("trading_bot.alpaca_client.TradingClient"):
+    with patch("trading_bot.shared.alpaca_client.TradingClient"):
         client = AlpacaClient(fake_settings)
         with pytest.raises(ValueError, match="stop_loss_price"):
             OrderRequest(
@@ -114,7 +114,7 @@ def test_place_order_requires_stop_loss(fake_settings):
 
 def test_place_stock_bracket_failure_raises(fake_settings):
     """If the bracket submission itself fails, raise AlpacaClientError."""
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         MockTC.return_value.submit_order.side_effect = RuntimeError("rejected")
         client = AlpacaClient(fake_settings)
         req = OrderRequest(
@@ -131,7 +131,7 @@ def test_place_stock_bracket_failure_raises(fake_settings):
 
 def test_place_crypto_uses_market_then_stop(fake_settings):
     """Crypto can't use bracket — uses market entry then separate stop."""
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         entry = MagicMock(id="entry-c", legs=[])
         stop = MagicMock(id="stop-c")
         MockTC.return_value.submit_order.side_effect = [entry, stop]
@@ -160,7 +160,7 @@ def test_place_crypto_uses_stop_limit_not_plain_stop(fake_settings):
         StopLimitOrderRequest as AlpacaStopLimitOrderRequest,
     )
 
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         entry = MagicMock(id="entry-c", legs=[])
         stop = MagicMock(id="stop-c")
         MockTC.return_value.submit_order.side_effect = [entry, stop]
@@ -190,7 +190,7 @@ def test_place_crypto_cancels_pending_entry_when_stop_fails(fake_settings):
     pending entry must be cancelled — otherwise it can fill later unprotected.
     Regression: this was the second half of the unprotected-position bug.
     """
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         entry = MagicMock(id="entry-c", legs=[])
         MockTC.return_value.submit_order.side_effect = [
             entry,
@@ -216,7 +216,7 @@ def test_place_crypto_cancels_pending_entry_when_stop_fails(fake_settings):
 def test_verifier_recognises_stop_limit_as_protection(fake_settings):
     """A live stop_limit order on the symbol must count as protection so
     the verifier does NOT flatten an already-protected position."""
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         # One filled position and one live stop-limit on the same symbol.
         live_pos = MagicMock(symbol="BTC/USD", qty="0.001")
         live_stop = MagicMock(symbol="BTC/USD", type="OrderType.STOP_LIMIT")
@@ -242,9 +242,9 @@ def test_place_protective_stop_stock_long(fake_settings):
     """Long stock: places plain StopOrderRequest with side=SELL, GTC."""
     from decimal import Decimal
     from alpaca.trading.requests import StopOrderRequest
-    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+    from trading_bot.shared.alpaca_client import AlpacaClient, AssetClass, OrderSide
 
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         MockTC.return_value.submit_order.return_value = MagicMock(id="stop-123")
         client = AlpacaClient(fake_settings)
         order_id = client.place_protective_stop(
@@ -269,9 +269,9 @@ def test_place_protective_stop_crypto_long_uses_stop_limit(fake_settings):
     Symbol is rewritten 'DOTUSD' → 'DOT/USD' for orders."""
     from decimal import Decimal
     from alpaca.trading.requests import StopLimitOrderRequest
-    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+    from trading_bot.shared.alpaca_client import AlpacaClient, AssetClass, OrderSide
 
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         MockTC.return_value.submit_order.return_value = MagicMock(id="stop-c1")
         client = AlpacaClient(fake_settings)
         order_id = client.place_protective_stop(
@@ -294,9 +294,9 @@ def test_place_protective_stop_crypto_long_uses_stop_limit(fake_settings):
 def test_place_protective_stop_short_uses_buy_side(fake_settings):
     """Short position (rare but supported): protective stop is a BUY stop above current."""
     from decimal import Decimal
-    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+    from trading_bot.shared.alpaca_client import AlpacaClient, AssetClass, OrderSide
 
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         MockTC.return_value.submit_order.return_value = MagicMock(id="stop-s")
         client = AlpacaClient(fake_settings)
         client.place_protective_stop(
@@ -315,9 +315,9 @@ def test_place_protective_stop_crypto_short_limit_above_trigger(fake_settings):
     """Crypto short → buy-stop_limit; Alpaca requires limit_price >= stop_price."""
     from decimal import Decimal
     from alpaca.trading.requests import StopLimitOrderRequest
-    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+    from trading_bot.shared.alpaca_client import AlpacaClient, AssetClass, OrderSide
 
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         MockTC.return_value.submit_order.return_value = MagicMock(id="stop-cs")
         client = AlpacaClient(fake_settings)
         client.place_protective_stop(
@@ -337,10 +337,10 @@ def test_place_protective_stop_crypto_short_limit_above_trigger(fake_settings):
 
 def test_place_protective_stop_propagates_alpaca_errors(fake_settings):
     from decimal import Decimal
-    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+    from trading_bot.shared.alpaca_client import AlpacaClient, AssetClass, OrderSide
     from trading_bot.exceptions import AlpacaClientError
 
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         MockTC.return_value.submit_order.side_effect = RuntimeError("rejected")
         client = AlpacaClient(fake_settings)
         with pytest.raises(AlpacaClientError, match="protective stop"):
@@ -355,9 +355,9 @@ def test_place_market_order_normalizes_crypto_symbol(fake_settings):
     (regression: previously the flatten path failed at runtime for crypto)."""
     from decimal import Decimal
     from alpaca.trading.requests import MarketOrderRequest as AlpacaMarketOrderRequest
-    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+    from trading_bot.shared.alpaca_client import AlpacaClient, AssetClass, OrderSide
 
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         MockTC.return_value.submit_order.return_value = MagicMock(id="flat-c")
         client = AlpacaClient(fake_settings)
         client.place_market_order(
@@ -375,9 +375,9 @@ def test_place_market_order_normalizes_crypto_symbol(fake_settings):
 def test_place_market_order_passes_through_stock_symbol(fake_settings):
     """Stock symbols are not rewritten."""
     from alpaca.trading.requests import MarketOrderRequest as AlpacaMarketOrderRequest
-    from trading_bot.alpaca_client import AlpacaClient, AssetClass, OrderSide
+    from trading_bot.shared.alpaca_client import AlpacaClient, AssetClass, OrderSide
 
-    with patch("trading_bot.alpaca_client.TradingClient") as MockTC:
+    with patch("trading_bot.shared.alpaca_client.TradingClient") as MockTC:
         MockTC.return_value.submit_order.return_value = MagicMock(id="flat-s")
         client = AlpacaClient(fake_settings)
         client.place_market_order(
@@ -392,7 +392,7 @@ def test_place_market_order_passes_through_stock_symbol(fake_settings):
 
 
 def test_get_active_assets_returns_tradable(monkeypatch):
-    from trading_bot.alpaca_client import TradableAsset
+    from trading_bot.shared.alpaca_client import TradableAsset
 
     mock_asset_a = MagicMock(
         symbol="NVDA",

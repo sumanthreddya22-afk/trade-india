@@ -12,15 +12,15 @@ from decimal import Decimal
 
 import pytest
 
-from trading_bot.alpaca_client import (
+from trading_bot.shared.alpaca_client import (
     AccountSnapshot, AssetClass, OrderRequest, OrderSide, Position,
 )
 from trading_bot.exceptions import RiskRuleViolation
-from trading_bot.risk_manager import RiskManager, RiskState
+from trading_bot.shared.risk_manager import RiskManager, RiskState
 
 
 def _config(*, gross_cap_pct: float = 200.0, net_cap_pct: float = 100.0):
-    from trading_bot.config import (
+    from trading_bot.shared.config import (
         AllocationConfig, AppConfig, EmailConfig, RegimeAllocation,
         RiskConfig, StorageConfig, StrategyConfig,
     )

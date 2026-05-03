@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from trading_bot.audit import (
+from trading_bot.shared.audit import (
     build_audit,
     compute_policy_version,
     hash_string,

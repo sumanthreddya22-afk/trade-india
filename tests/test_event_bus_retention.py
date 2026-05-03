@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from trading_bot.daemon import _run_event_bus_retention
+from trading_bot.shared.daemon import _run_event_bus_retention
 
 
 def _create_events_table(p: str) -> None:

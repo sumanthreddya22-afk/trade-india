@@ -335,6 +335,41 @@ class UnblockDebateRun(Base):
     entry_order_id = Column(String(64), nullable=True, index=True)
     closed_pnl_pct = Column(Float, nullable=True)
     synthetic = Column(Boolean, nullable=False, default=False)
+    # Phase D — composed persona/version tag captured at debate time.
+    prompt_version = Column(String(64), nullable=False, default="")
+
+
+class EntryDebateRun(Base):
+    """One row per pre-trade entry-committee debate. Same audit shape as
+    ``UnblockDebateRun`` so the dashboard + lessons loop can consume both
+    uniformly. ``intel_score`` + ``signal_reason`` + ``regime`` capture
+    the entry-side context (the unblock counterpart uses ``overage_ratio``
+    + ``block_reason`` for the rejection-override side).
+
+    ``entry_order_id`` is back-filled by the reconciler when the order
+    fills; ``closed_pnl_pct`` populated when the position closes — those
+    are the join columns the decision_reflector uses to write entry-class
+    lessons.
+    """
+    __tablename__ = "entry_debate_runs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    asset_class = Column(String(16), nullable=False, index=True)  # stock|crypto
+    symbol = Column(String(32), nullable=False, index=True)
+    intel_score = Column(Float, nullable=True)
+    signal_reason = Column(Text, nullable=False, default="")
+    regime = Column(String(32), nullable=False, default="")
+    verdict = Column(String(16), nullable=False)  # place|skip
+    confidence = Column(String(16), nullable=False)  # high|medium|low
+    judge_reason = Column(Text, nullable=False, default="")
+    aggressive_text = Column(Text, nullable=False, default="")
+    conservative_text = Column(Text, nullable=False, default="")
+    neutral_text = Column(Text, nullable=False, default="")
+    entry_order_id = Column(String(64), nullable=True, index=True)
+    closed_pnl_pct = Column(Float, nullable=True)
+    synthetic = Column(Boolean, nullable=False, default=False)
+    # Phase D — composed persona/version tag captured at debate time.
+    prompt_version = Column(String(64), nullable=False, default="")
 
 
 class IntelEvent(Base):
@@ -388,9 +423,182 @@ class IntelCandidate(Base):
     sources_json = Column(Text, nullable=False, default="{}")
     sentiment_avg = Column(Float, nullable=True)
     rolled_up_at = Column(DateTime(timezone=True), nullable=False)
+    # Phase F — adversarial-defense flags (set by aggregator before scoring).
+    dedup_url_hashes_json = Column(Text, nullable=False, default="[]")
+    suspicious_spike = Column(Boolean, nullable=False, default=False)
+    coordinated = Column(Boolean, nullable=False, default=False)
+    pump_signature = Column(Boolean, nullable=False, default=False)
+    # Phase B — scout-debate verdict and dismissal TTL.
+    # scout_verdict: 'elevate' | 'dismiss' | NULL (not yet debated).
+    # scout_dismissed_until: TTL timestamp; pool readers filter rows where
+    # this value is in the future. NULL = not dismissed.
+    scout_verdict = Column(String(16), nullable=True)
+    scout_dismissed_until = Column(
+        DateTime(timezone=True), nullable=True, index=True,
+    )
     __table_args__ = (
         UniqueConstraint("symbol", "asset_class", name="ux_intel_candidates_symbol_class"),
     )
+
+
+class ScoutDebateRun(Base):
+    """Audit log for the scout debate (Phase B).
+
+    Mirrors EntryDebateRun shape so the dashboard + lessons loop can treat
+    all debate tables uniformly. One row per (symbol, debate-tick) pair —
+    a batched debate covering 4 symbols writes 4 rows.
+    """
+    __tablename__ = "scout_debate_runs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    asset_class = Column(String(16), nullable=False)
+    symbol = Column(String(32), nullable=False, index=True)
+    candidate_score = Column(Float, nullable=True)
+    top_reason = Column(Text, nullable=False, default="")
+    verdict = Column(String(16), nullable=False)       # elevate | dismiss
+    confidence = Column(String(16), nullable=False)    # high | medium | low
+    judge_reason = Column(Text, nullable=False, default="")
+    skeptic_text = Column(Text, nullable=False, default="")
+    analyst_text = Column(Text, nullable=False, default="")
+    prompt_version = Column(String(32), nullable=False, default="")
+    synthetic = Column(Boolean, nullable=False, default=False)
+
+
+class TradeIntelSnapshot(Base):
+    """Phase C — snapshot of intel state at order placement.
+
+    Captured once per order so the hold debate has a stable baseline to
+    compare against (e.g. "score dropped 50% from entry"). Keyed by
+    entry_order_id which matches trade_journal._TradeRow.entry_order_id.
+
+    Stored in state.db (Alembic-managed) instead of mutating trade_journal's
+    schema — keeps the trade journal backwards-compatible.
+    """
+    __tablename__ = "trade_intel_snapshots"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entry_order_id = Column(String(64), nullable=False, index=True)
+    symbol = Column(String(32), nullable=False, index=True)
+    asset_class = Column(String(16), nullable=False)
+    captured_at = Column(DateTime(timezone=True), nullable=False)
+    entry_intel_score = Column(Float, nullable=True)
+    entry_top_reason = Column(Text, nullable=False, default="")
+    entry_sentiment_avg = Column(Float, nullable=True)
+    entry_top_sources_json = Column(Text, nullable=False, default="[]")
+
+
+class HoldDebateRun(Base):
+    """Audit log for the hold debate (Phase C).
+
+    One row per hold-debate firing. Mirrors EntryDebateRun + adds hold-
+    specific columns for trigger reason and entry-vs-current comparison.
+    """
+    __tablename__ = "hold_debate_runs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    asset_class = Column(String(16), nullable=False)
+    symbol = Column(String(32), nullable=False, index=True)
+    entry_order_id = Column(String(64), nullable=True, index=True)
+    trigger_reason = Column(String(64), nullable=False, default="")
+    current_score = Column(Float, nullable=True)
+    current_sentiment = Column(Float, nullable=True)
+    entry_score = Column(Float, nullable=True)
+    entry_sentiment = Column(Float, nullable=True)
+    verdict = Column(String(16), nullable=False)       # hold | tighten_stop | exit_now
+    confidence = Column(String(16), nullable=False)    # high | medium | low
+    judge_reason = Column(Text, nullable=False, default="")
+    aggressive_text = Column(Text, nullable=False, default="")
+    conservative_text = Column(Text, nullable=False, default="")
+    neutral_text = Column(Text, nullable=False, default="")
+    action_taken = Column(String(32), nullable=False, default="")  # none | stop_replaced | flattened
+    resulting_pnl_pct = Column(Float, nullable=True)               # backfilled on close
+    prompt_version = Column(String(64), nullable=False, default="")
+    synthetic = Column(Boolean, nullable=False, default=False)
+
+
+class IntelStreamEvent(Base):
+    """Phase G — events captured by the EventStreamer (fast-poll SEC EDGAR
+    or websocket-style sources). Distinct from IntelEvent so the express-
+    lane handler can find unprocessed rows without touching the polled
+    history. ``processed_at`` flips when the express scout/hold debate
+    has dispatched.
+    """
+    __tablename__ = "intel_stream_events"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(32), nullable=False, index=True)
+    asset_class = Column(String(16), nullable=False)
+    source = Column(String(32), nullable=False)
+    headline = Column(Text, nullable=False, default="")
+    url = Column(Text, nullable=False, default="")
+    sentiment = Column(Float, nullable=True)
+    event_at = Column(DateTime(timezone=True), nullable=True)
+    ingested_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    event_hash = Column(String(64), nullable=False)
+    __table_args__ = (
+        UniqueConstraint("source", "event_hash", name="ux_intel_stream_events_hash"),
+    )
+
+
+class DebateQueue(Base):
+    """Phase G — priority queue replacing the hard daily-cap drop. Entries
+    queued throughout the day; dispatcher processes top-N by ``priority_score``
+    up to the daily budget. Demoted rows roll over rather than being silently
+    dropped.
+    """
+    __tablename__ = "debate_queue"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    debate_class = Column(String(16), nullable=False, index=True)  # entry|scout|hold
+    symbol = Column(String(32), nullable=False)
+    asset_class = Column(String(16), nullable=False)
+    priority_score = Column(Float, nullable=False, index=True)
+    payload_json = Column(Text, nullable=False, default="{}")
+    queued_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    outcome = Column(String(32), nullable=True)  # processed | demoted | expired
+
+
+class CircuitBreakerEvent(Base):
+    """Phase F — audit row per circuit-breaker trip / clear event.
+
+    Append-only. The active state is the most recent row whose action='tripped'
+    AND (expires_at IS NULL OR expires_at > now); a 'cleared' row supersedes
+    a prior trip.
+    """
+    __tablename__ = "circuit_breaker_events"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    action = Column(String(16), nullable=False)   # tripped | cleared
+    reason = Column(String(64), nullable=False)
+    detail_json = Column(Text, nullable=False, default="{}")
+    expires_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class DebateLesson(Base):
+    """Phase D — nightly outcome-analyzer summary.
+
+    One row per analysis run (typically nightly). Joins entry/unblock/hold
+    debate runs with closed-trade outcomes (last N days) and persists the
+    lessons block that the next debate's brief will inject under "RECENT
+    LESSONS". Mutating prompts requires operator review (Layer 2); the
+    in-context lesson injection (Layer 1) updates automatically.
+    """
+    __tablename__ = "debate_lessons"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_date = Column(DateTime(timezone=True), nullable=False, index=True)
+    lookback_days = Column(Integer, nullable=False)
+    n_trades_closed = Column(Integer, nullable=False, default=0)
+    n_entry_debates = Column(Integer, nullable=False, default=0)
+    n_unblock_debates = Column(Integer, nullable=False, default=0)
+    n_hold_debates = Column(Integer, nullable=False, default=0)
+    overall_place_winrate = Column(Float, nullable=True)
+    overall_skip_winrate = Column(Float, nullable=True)
+    summary_text = Column(Text, nullable=False, default="")
+    per_source_winrate_json = Column(Text, nullable=False, default="{}")
+    per_verdict_winrate_json = Column(Text, nullable=False, default="{}")
+    losing_patterns_json = Column(Text, nullable=False, default="[]")
+    shadow_skips_json = Column(Text, nullable=False, default="[]")
+    candidate_edits_json = Column(Text, nullable=False, default="[]")
+    prompt_version = Column(String(64), nullable=False, default="")
 
 
 class Event(Base):
@@ -442,6 +650,12 @@ class ThresholdOverride(Base):
     set_by = Column(String(64), nullable=False)  # threshold_tuner | operator | operator_kill
     signal_summary = Column(Text, nullable=False, default="{}")
     expires_at = Column(DateTime(timezone=True), nullable=True)
+    # Phase E — shadow-mode rollout. Live readers must skip rows with shadow=True.
+    # The tuner backfills shadow_what_if_pnl after the shadow window closes;
+    # if positive vs the live row, the operator (or auto-promoter) flips
+    # the row's shadow flag to False to make it live.
+    shadow = Column(Boolean, nullable=False, default=False)
+    shadow_what_if_pnl = Column(Float, nullable=True)
 
 
 def get_engine(db_path: str | Path = "data/state.db"):

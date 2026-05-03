@@ -56,6 +56,72 @@ strategy:
   sentiment_floor: -0.5
   sentiment_max_age_days: 3
 
+  # ───────────────────────── Phase 6 ─────────────────────────
+  # Pre-trade entry committee. When True, every BUY signal that survives
+  # the deterministic risk gate fires a 4-LLM debate (mailbox-routed,
+  # Claude Code subscription) before the order is placed. Fail-soft: a
+  # debate failure (no creds, mailbox down, schema mismatch) skips the
+  # trade AND queues an operator alert.
+  entry_debate_enabled: true
+  # Hard daily cap on debates. Exceeding this skips with reason
+  # "skipped_entry_debate_over_cap" — raise the cap or tighten upstream
+  # gates if you hit it consistently.
+  entry_debate_daily_cap: 50
+  # When the equity regime detector returns sideways/trending_down, allow
+  # Momentum entries IF the per-ticker intel_score is at or above this
+  # value. risk_off remains a hard wall regardless of intel score.
+  # Empirically 5.0 is the score where ≥3 sources have rolled up in the
+  # last 12h — i.e. a real news-driven event, not single-source noise.
+  intel_score_regime_override_threshold: 5.0
+
+# ───────────────────────── Phase B — Scout Debate ─────────────────────────
+# Post-ingestion LLM committee that fires inside IntelIngestorRole after
+# aggregator.roll_up(). Sequential 3-call chain (Skeptic → Analyst → Judge,
+# all named expert personas). Per-symbol verdicts: 'elevate' (boost score)
+# or 'dismiss' (filter from pool for TTL window). Fail-soft: any error
+# leaves candidates unchanged (refuses to dismiss on LLM gate failure).
+intel:
+  scout_debate_enabled: true
+  # Min IntelCandidate.score for a new (un-debated) candidate to enter
+  # the scout brief. Below this is treated as routine noise.
+  scout_debate_threshold: 3.0
+  # Max candidates included per debate (cap LLM tokens / cost).
+  scout_debate_batch_limit: 8
+  # Max scout debates per day. ~48 ticks/day (30-min ingestor cadence)
+  # gives one debate per tick under this cap.
+  scout_debate_daily_cap: 48
+  # Score multiplier applied on 'elevate' verdict.
+  scout_elevate_boost: 1.5
+  # How long a 'dismiss' verdict hides the symbol from the pool.
+  # The symbol is re-debatable after this window expires.
+  scout_dismiss_ttl_hours: 24
+
+# ───────────────────────── Phase C — Hold Debate ─────────────────────────
+# Position-level LLM committee that fires when intel decay or fresh adverse
+# news suggests an entry thesis is breaking. Sequential 4-call chain
+# (Position Trader → Risk Manager → Book Runner → Senior PM, all named
+# expert personas). Verdicts: 'hold' (no action), 'tighten_stop' (replace
+# stop at breakeven/swing-low), 'exit_now' (flatten via market order).
+# Fail-soft: any error leaves bracket order untouched + queues operator
+# alert. We NEVER auto-exit on infrastructure failure.
+hold:
+  hold_debate_enabled: true
+  # Cheap SQL check cadence — drives PositionMonitorRole scheduling.
+  cheap_check_interval_minutes: 15
+  # Score-drop trigger: if current intel_score / entry_intel_score <=
+  # (1 - this fraction), the score-drop trigger fires.
+  hold_score_drop_threshold: 0.5      # 50% drop fires
+  # Sentiment-flip trigger: entry_sentiment >= +X AND current <= -X fires.
+  hold_sentiment_flip_threshold: 0.3
+  # Negative-news cluster trigger: 3+ new negative events since entry.
+  hold_negative_news_count_threshold: 3
+  # Hard triggers: any fresh sec_8k or high-severity vip_tweet for the
+  # held symbol fires the debate immediately, regardless of soft triggers.
+  hold_8k_hard_trigger: true
+  hold_vip_hard_trigger: true
+  # Daily debate cap to bound LLM cost.
+  hold_debate_daily_cap: 30
+
 wheel:
   enabled: true  # paper-only (hardcoded URL prefix check); enabled 2026-04-29
   delta_target_low: 0.20
@@ -89,3 +155,7 @@ wheel:
   # Loosen to capture testing data; tighten back in steady-state.
   liquidity_max_spread_abs: 1.50
   liquidity_max_spread_rel: 0.50
+  # Phase 5: turn on the unblock committee so borderline risk-cap
+  # rejections fire a 4-LLM debate that may override. Default-off in
+  # code; explicit opt-in here to begin generating debate history.
+  unblock_debate_enabled: true

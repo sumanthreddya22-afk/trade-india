@@ -2,8 +2,8 @@ import os
 
 import pytest
 
-from trading_bot.alpaca_client import AlpacaClient
-from trading_bot.config import Settings
+from trading_bot.shared.alpaca_client import AlpacaClient
+from trading_bot.shared.config import Settings
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("RUN_INTEGRATION") != "1",

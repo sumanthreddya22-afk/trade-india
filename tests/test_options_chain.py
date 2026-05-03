@@ -3,7 +3,7 @@ import pytest
 from trading_bot.options.chain import (
     ChainContract, pick_csp_contract, pick_cc_contract, passes_liquidity,
 )
-from trading_bot.config import WheelConfig
+from trading_bot.shared.config import WheelConfig
 
 
 def _c(strike, kind, delta, *, dte=35, bid=2.5, ask=2.55, oi=500, iv=0.30):

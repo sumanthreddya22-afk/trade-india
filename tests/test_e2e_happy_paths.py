@@ -23,7 +23,7 @@ import pandas as pd
 import pytest
 from sqlalchemy import create_engine
 
-from trading_bot.alpaca_client import (
+from trading_bot.shared.alpaca_client import (
     AccountSnapshot, OrderResult, OrderSide, Position,
 )
 from trading_bot.options.chain import ChainContract
@@ -55,7 +55,7 @@ def runs_dir(tmp_path, monkeypatch):
     # The alpaca audit logger reads its base from the StructuredLogger
     # constructor default ('runs'). To redirect cleanly we re-create the
     # module-level _audit_log against the tmp base.
-    import trading_bot.alpaca_client as ac
+    import trading_bot.shared.alpaca_client as ac
     from trading_bot.log_structured import StructuredLogger
     monkeypatch.setattr(ac, "_audit_log", StructuredLogger(base=runs, role="alpaca"))
     return runs
@@ -84,7 +84,7 @@ def _bars(symbol: str = "MSFT") -> pd.DataFrame:
 def _config():
     """Same shape as tests/test_orchestrator.py — risk + strategy gates
     permissive enough that a small momentum signal places."""
-    from trading_bot.config import (
+    from trading_bot.shared.config import (
         AllocationConfig, AppConfig, EmailConfig, RegimeAllocation,
         RiskConfig, StorageConfig, StrategyConfig,
     )

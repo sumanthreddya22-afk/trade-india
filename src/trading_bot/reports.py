@@ -38,7 +38,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Iterable
 
-from trading_bot.alpaca_client import AccountSnapshot, Position
+from trading_bot.shared.alpaca_client import AccountSnapshot, Position
 from trading_bot.orchestrator import ScanResult
 from trading_bot.email_shell import (
     # color tokens — single source of truth

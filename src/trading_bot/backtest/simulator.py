@@ -36,13 +36,13 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Session
 
-from trading_bot.alpaca_client import AccountSnapshot, AssetClass, OrderRequest, OrderSide, Position
+from trading_bot.shared.alpaca_client import AccountSnapshot, AssetClass, OrderRequest, OrderSide, Position
 from trading_bot.backtest.bar_store import BarStore
-from trading_bot.config import AppConfig
+from trading_bot.shared.config import AppConfig
 from trading_bot.exceptions import RiskRuleViolation
 from trading_bot.market_data import MIN_BARS_FOR_INDICATORS, compute_indicators
 from trading_bot.regime import detect_regime_from_bars
-from trading_bot.risk_manager import RiskManager, RiskState
+from trading_bot.shared.risk_manager import RiskManager, RiskState
 from trading_bot.strategy import (
     MeanReversionStrategy,
     MomentumStrategy,

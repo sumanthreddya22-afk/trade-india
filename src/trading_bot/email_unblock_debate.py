@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from trading_bot.config import Settings, load_config
+from trading_bot.shared.config import Settings, load_config
 from trading_bot.email_fill import Email
 from trading_bot.email_log import send_logged
 from trading_bot.email_sender import EmailSender

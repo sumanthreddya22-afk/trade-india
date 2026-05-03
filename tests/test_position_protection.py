@@ -73,7 +73,7 @@ def _stub_indicators(*, last_close: float, ema_20: float):
 
 def _make_position(symbol: str, qty: str, asset_class: str = "us_equity",
                    current_price: str = "100"):
-    from trading_bot.alpaca_client import Position
+    from trading_bot.shared.alpaca_client import Position
     return Position(
         symbol=symbol,
         qty=Decimal(qty),
@@ -87,7 +87,7 @@ def _make_position(symbol: str, qty: str, asset_class: str = "us_equity",
 
 def test_evaluate_and_act_long_stock_healthy_places_stop(monkeypatch):
     """Healthy long stock during RTH → place stop, no flatten."""
-    from trading_bot.alpaca_client import AssetClass, OrderSide
+    from trading_bot.shared.alpaca_client import AssetClass, OrderSide
     from trading_bot import position_protection as pp
 
     monkeypatch.setattr(
@@ -128,7 +128,7 @@ def test_evaluate_and_act_long_stock_healthy_places_stop(monkeypatch):
 
 def test_evaluate_and_act_long_stock_broken_during_rth_flattens(monkeypatch):
     """Broken long stock during RTH → market-flatten."""
-    from trading_bot.alpaca_client import AssetClass, OrderSide
+    from trading_bot.shared.alpaca_client import AssetClass, OrderSide
     from trading_bot import position_protection as pp
 
     monkeypatch.setattr(
@@ -214,7 +214,7 @@ def test_evaluate_and_act_long_stock_healthy_off_hours_places_stop(monkeypatch):
 
 def test_evaluate_and_act_crypto_off_hours_still_flattens(monkeypatch):
     """Crypto trades 24/7 — broken crypto outside RTH still gets flattened."""
-    from trading_bot.alpaca_client import AssetClass, OrderSide
+    from trading_bot.shared.alpaca_client import AssetClass, OrderSide
     from trading_bot import position_protection as pp
 
     monkeypatch.setattr(
@@ -334,7 +334,7 @@ def test_evaluate_and_act_market_data_failure_records_failed(monkeypatch):
 
 def test_evaluate_and_act_short_position_uses_buy_actions(monkeypatch):
     """Short position (qty < 0): protective action takes the BUY side."""
-    from trading_bot.alpaca_client import OrderSide
+    from trading_bot.shared.alpaca_client import OrderSide
     from trading_bot import position_protection as pp
 
     monkeypatch.setattr(

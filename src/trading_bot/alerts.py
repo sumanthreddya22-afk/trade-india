@@ -252,7 +252,7 @@ def drain_alerts(
         sender_send(subject=subject, html_body=html)
     else:
         # Production path: route through send_logged.
-        from trading_bot.config import Settings, load_config
+        from trading_bot.shared.config import Settings, load_config
         from trading_bot.email_log import send_logged
         from trading_bot.email_sender import EmailSender
         from pathlib import Path as _Path
