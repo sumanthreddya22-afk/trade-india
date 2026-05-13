@@ -1,0 +1,6 @@
+{
+  "lock_version": "2026-05-13.v4-phase0-skeleton",
+  "_note": "Skeleton only — full thresholds (research_candidate / paper_candidate / live_candidate gates, multiple_testing, cost_model_ref, benchmarks, cooldowns) land in Phase 4. See Plan v4 §4 for the target shape.",
+  "owner": "L0 Governance",
+  "phase_when_populated": 4
+}

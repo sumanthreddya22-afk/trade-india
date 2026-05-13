@@ -1,0 +1,43 @@
+<section class="card p-6" id="card-wheel">
+  <div class="flex items-baseline justify-between">
+    <div>
+      <div class="label">Options Strategy</div>
+      <h3 class="text-xl font-semibold mt-1">Wheel <span class="text-xs text-slate-500 font-normal">(sells puts → owns shares → sells calls)</span></h3>
+    </div>
+    <span class="text-xs text-slate-500">{{ s.wheel_open_cycles|length }} open</span>
+  </div>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 text-sm">
+    <div><div class="text-xs text-slate-500">Open cycles</div><div class="text-lg font-semibold">{{ s.wheel_open_cycles|length }}</div></div>
+    <div><div class="text-xs text-slate-500">Cash tied up</div><div class="text-lg font-semibold">{{ "%.1f"|format(s.wheel_collateral_pct or 0) }}%</div></div>
+    <div><div class="text-xs text-slate-500">P&amp;L (30d)</div><div class="text-lg font-semibold">{{ fmt.usd(s.wheel_pnl_30d, sign=True) }}</div></div>
+    <div><div class="text-xs text-slate-500">Win rate</div><div class="text-lg font-semibold">{{ "%.0f"|format((s.wheel_win_rate or 0) * 100) }}%</div></div>
+  </div>
+  {% if s.wheel_open_cycles %}
+  <div class="mt-4 max-h-72 overflow-y-auto scroll-thin">
+    <table class="w-full text-sm">
+      <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-slate-950/95">
+        <tr>
+          <th class="text-left py-2 pr-2">Symbol</th>
+          <th class="text-left py-2 pr-2">Stage</th>
+          <th class="text-left py-2 pr-2">Contract</th>
+          <th class="text-left py-2 pr-2">Strike</th>
+          <th class="text-left py-2">Rolls</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800/60">
+        {% for c in s.wheel_open_cycles %}
+        <tr class="pos-row">
+          <td class="py-2 pr-2 font-mono">{{ c.symbol }}</td>
+          <td class="py-2 pr-2 text-slate-400 capitalize">{{ c.phase }}</td>
+          <td class="py-2 pr-2 text-slate-400 font-mono text-xs">{{ c.contract }}</td>
+          <td class="py-2 pr-2">{{ c.strike }}</td>
+          <td class="py-2 text-slate-400">{{ c.rolls_used }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-sm text-slate-500 italic mt-3">No open option cycles. The wheel sits idle until a candidate clears its filters.</p>
+  {% endif %}
+</section>

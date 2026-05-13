@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-950">
+<head>
+  <meta charset="utf-8">
+  <title>Trading Bot — Architecture</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: linear-gradient(180deg,#070b15 0%,#0a0f1c 100%); color: #e2e8f0; font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+    .card { background: rgba(15,23,42,.85); border:1px solid #1e293b; border-radius: 16px; }
+    .label { font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color:#06b6d4; font-weight:600; }
+    code { font-family: ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace; font-size: 13px;
+           background: #0f172a; border: 1px solid #1e293b; padding: 1px 6px; border-radius: 4px; color: #67e8f9; }
+    pre { background: #0a0f1c; border: 1px solid #1e293b; border-radius: 10px; padding: 14px 18px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; color: #cbd5e1; }
+    h2 { font-size: 28px; font-weight: 700; letter-spacing: -.02em; color: #e2e8f0; margin-top: 0; }
+    h2 .anchor { color: #475569; font-weight: 400; font-size: 14px; margin-left: 8px; }
+    h3 { font-size: 18px; font-weight: 600; color: #e2e8f0; margin: 20px 0 8px; }
+    h4 { font-size: 14px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: .12em; margin: 16px 0 8px; }
+    p, li { color: #cbd5e1; line-height: 1.65; }
+    a { color: #22d3ee; }
+    a:hover { color: #67e8f9; text-decoration: underline; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+    th { text-align: left; color: #94a3b8; font-weight: 600; padding: 10px 12px; border-bottom: 1px solid #1e293b; font-size: 12px; text-transform: uppercase; letter-spacing: .1em; }
+    td { padding: 10px 12px; border-bottom: 1px solid rgba(30,41,59,0.5); color: #e2e8f0; vertical-align: top; }
+    .toc-link { display: block; padding: 6px 10px; border-radius: 6px; color: #94a3b8; font-size: 13px; }
+    .toc-link:hover { background: rgba(15,23,42,0.6); color: #e2e8f0; text-decoration: none; }
+    .toc-link.section { color: #06b6d4; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .15em; padding: 12px 10px 4px; }
+    .pill { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; border: 1px solid; font-weight: 500; margin-right: 4px; }
+    .pill-em { background: rgba(16,185,129,.1); border-color: rgba(16,185,129,.4); color: #6ee7b7; }
+    .pill-cy { background: rgba(34,211,238,.1); border-color: rgba(34,211,238,.4); color: #67e8f9; }
+    .pill-am { background: rgba(245,158,11,.1); border-color: rgba(245,158,11,.4); color: #fcd34d; }
+    .pill-ro { background: rgba(244,63,94,.1); border-color: rgba(244,63,94,.4); color: #fda4af; }
+    .pill-sl { background: rgba(100,116,139,.1); border-color: rgba(100,116,139,.4); color: #cbd5e1; }
+    .anchor-target { scroll-margin-top: 24px; }
+  </style>
+</head>
+<body class="min-h-full">
+
+<div class="flex">
+
+  <!-- TOC Sidebar -->
+  <aside class="hidden lg:block w-64 shrink-0 sticky top-0 h-screen overflow-y-auto border-r border-slate-800/70 px-4 py-6">
+    <div class="flex items-center gap-2 mb-6 px-2">
+      <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-400 to-emerald-500 grid place-items-center text-slate-900 font-bold">TB</div>
+      <div>
+        <div class="text-sm font-semibold leading-tight">Trading Bot</div>
+        <div class="text-xs text-slate-500">Architecture</div>
+      </div>
+    </div>
+    <nav>
+      <a href="/" class="toc-link">← Live dashboard</a>
+      <div class="toc-link section">Overview</div>
+      <a href="#what" class="toc-link">What it does</a>
+      <a href="#guarantees" class="toc-link">Safety guarantees</a>
+      <a href="#current-state" class="toc-link">Current state</a>
+
+      <div class="toc-link section">Pipeline</div>
+      <a href="#pipeline" class="toc-link">End-to-end flow</a>
+      <a href="#universe" class="toc-link">Universe selection</a>
+      <a href="#regime" class="toc-link">Regime detection</a>
+      <a href="#strategy" class="toc-link">Entry strategy</a>
+
+      <div class="toc-link section">Trade lifecycle</div>
+      <a href="#pre-trade" class="toc-link">Pre-trade checks</a>
+      <a href="#execution" class="toc-link">Execution</a>
+      <a href="#during" class="toc-link">While in position</a>
+      <a href="#exit" class="toc-link">Exit conditions</a>
+      <a href="#halts" class="toc-link">Halt mechanics</a>
+
+      <div class="toc-link section">Data</div>
+      <a href="#data-sources" class="toc-link">All sources</a>
+      <a href="#data-stores" class="toc-link">Local stores</a>
+
+      <div class="toc-link section">Operations</div>
+      <a href="#schedule" class="toc-link">Scheduled jobs</a>
+      <a href="#cli" class="toc-link">CLI commands</a>
+      <a href="#alerts" class="toc-link">Alerting</a>
+
+      <div class="toc-link section">Validation</div>
+      <a href="#backtest" class="toc-link">Backtest verdict</a>
+      <a href="#evolution" class="toc-link">Evolution loop</a>
+
+      <div class="toc-link section">Reference</div>
+      <a href="#modules" class="toc-link">Module map</a>
+      <a href="#known-gaps" class="toc-link">Known gaps</a>
+    </nav>
+  </aside>
+
+  <!-- Main content -->
+  <main class="flex-1 max-w-4xl px-6 lg:px-12 py-10 space-y-12">
+
+    <header>
+      <div class="label">Trading Bot</div>
+      <h1 class="text-4xl font-bold mt-2 mb-2 bg-gradient-to-r from-cyan-300 to-emerald-300 bg-clip-text text-transparent">Project Architecture</h1>
+      <p class="text-slate-400">A semi-autonomous algorithmic trading bot for an Alpaca paper account. Trades on validated daily-bar momentum signals across the full liquid US equity + crypto universe, with multi-source intelligence (FRED macro, Massive news + sentiment, GDELT events, SEC filings, Truth Social VIPs) and a hard pre-trade risk-gate layer.</p>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <span class="pill pill-em">Paper-only enforced</span>
+        <span class="pill pill-cy">Empirical PF 1.25 / Sharpe 0.76</span>
+        <span class="pill pill-am">Backtest-validated</span>
+      </div>
+    </header>
+
+    <!-- ============= OVERVIEW ============= -->
+
+    <section id="what" class="anchor-target">
+      <h2>What the bot actually does <span class="anchor"><a href="#what">#</a></span></h2>
+      <p>One sentence: every trading day, it ranks the full liquid US equity + crypto universe, classifies the market regime, and (only in <code>trending_up</code>) places long-only bracket orders on names that pass a momentum-indicator screen and a six-rule risk gate.</p>
+
+      <p>It does <strong>not</strong> day-trade or scalp. Holding period is days-to-weeks. Indicators all run on daily bars (RSI 14, MACD, EMA 20). Intraday cadence (intel-scan every hour during market hours; crypto-scan hourly 24/7) exists to catch signal flips and place orders, not to chase intraday moves.</p>
+
+      <p>It does not sell short, trade options, hedge, or use margin. Long-only on stocks and USD-quoted crypto pairs. Position sizing is currently flat 0.5% per-trade risk; concentration capped at 4.5% of equity per name.</p>
+    </section>
+
+    <section id="guarantees" class="anchor-target">
+      <h2>Safety guarantees <span class="anchor"><a href="#guarantees">#</a></span></h2>
+      <ul class="list-disc list-inside space-y-2">
+        <li><strong>Paper-only enforced at config load.</strong> <code>Settings.bot_mode</code> is a <code>Literal["paper", "live"]</code> with a validator that raises <code>LiveModeDisabled</code> if anything but "paper" is set. Cannot be silently flipped.</li>
+        <li><strong>Every order goes through the same risk gate.</strong> <code>RiskManager.check()</code> is called inline by the orchestrator and the simulator. No bypass path; raising <code>RiskRuleViolation</code> is the only way to fail-closed, and the orchestrator catches and skips, not retries.</li>
+        <li><strong>Crypto orders are post-fill verified.</strong> After the non-atomic <code>market entry → stop</code> sequence, the bot re-queries Alpaca within 500ms; if the position is unprotected, it market-flattens immediately.</li>
+        <li><strong>Hourly stop sweep on stocks.</strong> A scheduled job re-checks every open position has a live stop order; if any are missing, an alert email fires.</li>
+        <li><strong>Halt fires on a -2% daily / -5% weekly P&amp;L.</strong> Once halted, no new entries fire (existing brackets continue to manage themselves). Halt clears at next trading day's open.</li>
+      </ul>
+    </section>
+
+    <section id="current-state" class="anchor-target">
+      <h2>Current state <span class="anchor"><a href="#current-state">#</a></span></h2>
+      <h4>Empirical baseline (24-month backtest, 15 symbols, 229 trades, momentum-only)</h4>
+      <table>
+        <thead><tr><th>Metric</th><th>Value</th><th>Gate</th></tr></thead>
+        <tbody>
+          <tr><td>Profit factor</td><td>1.25</td><td>≥ 1.0 ✓</td></tr>
+          <tr><td>Sharpe (daily, ann.)</td><td>0.76</td><td>≥ 0.5 ✓</td></tr>
+          <tr><td>Win rate</td><td>38.0%</td><td>—</td></tr>
+          <tr><td>Equity over 24 months</td><td>+6.09%</td><td>—</td></tr>
+          <tr><td>Max drawdown</td><td>-3.49%</td><td>—</td></tr>
+          <tr><td>Avg hold</td><td>~10 days</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <p class="text-sm text-slate-500 mt-2">Mean-reversion strategy was disabled after the same backtest found PF 0.66 in sideways. Trailing stops were tested across 6 configurations and every variant lost vs the no-trailing baseline; default is OFF, opt-in via <code>--trailing-stop</code>.</p>
+    </section>
+
+    <!-- ============= PIPELINE ============= -->
+
+    <section id="pipeline" class="anchor-target">
+      <h2>End-to-end pipeline <span class="anchor"><a href="#pipeline">#</a></span></h2>
+<pre>
+                  ┌───────────────────────────────────────────────────┐
+                  │  PRE-MARKET, 8:00 ET Mon-Fri                       │
+                  │                                                    │
+                  │  bot rank                                          │
+                  │   1. Massive grouped daily aggregates → ~10,000   │
+                  │      US equities OHLC in ONE call                 │
+                  │   2. ∩ Alpaca tradable list                       │
+                  │   3. Liquidity filter (price ≥ $10, ADV ≥ $10M)   │
+                  │   4. Top 200 by ADV → stage-1                     │
+                  │   5. Stage-1: composite score (1d × 1.4 +         │
+                  │      relative_5d + min(vol_ratio, 3) × 2)         │
+                  │   6. Stage-2: lanes (Momentum, MeanReversion,     │
+                  │      Breakout) endorse subsets                    │
+                  │   7. Write strategy/opportunities.md              │
+                  │      (top ~15-30 endorsed candidates)             │
+                  └────────────────┬──────────────────────────────────┘
+                                   │
+                                   ▼
+                  ┌───────────────────────────────────────────────────┐
+                  │  MARKET HOURS, every hour 9-15 ET Mon-Fri          │
+                  │                                                    │
+                  │  bot intel-scan                                    │
+                  │   1. _load_active_universe()                       │
+                  │      = top 25 stocks from opportunities.md         │
+                  │      + USD-quoted crypto from opportunities.md     │
+                  │      + watchlist.yaml fallback crypto              │
+                  │      = ~25 stocks + 10-15 crypto                   │
+                  │                                                    │
+                  │   2. detect_regime(spy_bars, vix=FRED, vol_thr=22) │
+                  │      → trending_up | trending_down | sideways |   │
+                  │        risk_off                                    │
+                  │                                                    │
+                  │   3. strategy_for_regime(regime)                   │
+                  │      → MomentumStrategy if trending_up else None  │
+                  │                                                    │
+                  │   4. For each symbol (if strategy is not None):    │
+                  │      a. Skip if open position or pending order     │
+                  │      b. Fetch 60d daily bars                       │
+                  │      c. compute_indicators (RSI, MACD, EMA, ret5d)│
+                  │      d. strategy.evaluate(symbol, ind, equity)     │
+                  │      e. (Plan 6c) news sentiment gate             │
+                  │      f. RiskManager.check (6 rules)               │
+                  │      g. If passed: alpaca.place_order_with_stop   │
+                  │      h. journal append + Decision recorded         │
+                  │                                                    │
+                  │   5. data/last_scan.json overwritten               │
+                  │      → dashboard's "Decision pipeline" panel       │
+                  └────────────────┬──────────────────────────────────┘
+                                   │
+                                   ▼
+                  ┌───────────────────────────────────────────────────┐
+                  │  PASSIVE EXECUTION (no bot involvement)            │
+                  │                                                    │
+                  │   Alpaca holds the bracket order. One of:          │
+                  │     stop hits   → close at -5% (or EMA20)          │
+                  │     tp hits     → close at +10% (2× risk)          │
+                  │     time-stop   → close at 60 days (backtest only)│
+                  └────────────────┬──────────────────────────────────┘
+                                   │
+                                   ▼
+                  ┌───────────────────────────────────────────────────┐
+                  │  RECONCILIATION (daily, before EOD email)          │
+                  │                                                    │
+                  │  bot reconcile                                     │
+                  │   1. Pull recent filled orders from Alpaca         │
+                  │   2. Match against trade_journal entries           │
+                  │   3. Compute realized P&L                          │
+                  │   4. Insert ClosedTrade row                        │
+                  └────────────────┬──────────────────────────────────┘
+                                   │
+                                   ▼
+                  ┌───────────────────────────────────────────────────┐
+                  │  WEEKLY EVOLVE (Sat 10:00 ET)                      │
+                  │                                                    │
+                  │  bot evolve                                        │
+                  │   1. evaluate_performance(closed_trades)           │
+                  │   2. propose_rule_changes (Kelly-conservative)     │
+                  │   3. apply_proposals → strategy/params.yaml        │
+                  └───────────────────────────────────────────────────┘
+</pre>
+    </section>
+
+    <section id="universe" class="anchor-target">
+      <h2>Universe selection <span class="anchor"><a href="#universe">#</a></span></h2>
+      <p>The bot looks at the entire US tradable market via the screener, but trades only the top of the ranked list.</p>
+      <h4>Stage 1 — universe build (Massive-first, post-Plan-6)</h4>
+      <ol class="list-decimal list-inside space-y-1">
+        <li><code>massive.daily_grouped(date)</code> — one call returns OHLC + volume for ~10,000 US equities for the most-recent trading day.</li>
+        <li>Intersect with <code>alpaca.get_active_assets("us_equity")</code> — only keeps symbols we can actually place orders on.</li>
+        <li>Apply liquidity filter: <strong>stocks</strong> need <code>price ≥ $10 AND ADV ≥ $10M</code>; <strong>crypto bypasses both</strong> (Alpaca paper crypto volume is sandbox-level and doesn't reflect real market depth).</li>
+        <li>Per-ticker bars are fetched only for the top-200-by-ADV pre-shortlist — keeps Alpaca rate-limit usage in budget.</li>
+      </ol>
+      <h4>Stage 1 score</h4>
+<pre>composite = one_day_return × 1.4
+          + (5d_return − SPY_5d_return)        # relative strength
+          + min(volume_ratio, 3.0) × 2.0       # volume surge</pre>
+      <p>Top 100 by composite go to Stage 2.</p>
+      <h4>Stage 2 — lane endorsement</h4>
+      <table>
+        <thead><tr><th>Lane</th><th>Conditions</th></tr></thead>
+        <tbody>
+          <tr><td>Momentum</td><td>RSI 55-70, MACD &gt; signal, close &gt; EMA20, 5d return &gt; 0</td></tr>
+          <tr><td>Mean-reversion</td><td>RSI &lt; 30 AND price &lt; lower Bollinger Band (2σ, 20d)</td></tr>
+          <tr><td>Breakout</td><td>close &gt; 20-day high AND volume &gt; 1.5× 20d avg</td></tr>
+        </tbody>
+      </table>
+      <p>Symbols endorsed by ≥1 lane are sorted by max conviction across lanes and written to <code>strategy/opportunities.md</code>.</p>
+    </section>
+
+    <section id="regime" class="anchor-target">
+      <h2>Regime detection <span class="anchor"><a href="#regime">#</a></span></h2>
+      <p>Module: <code>regime.py</code>. Pure function of SPY bars + optional VIX.</p>
+      <table>
+        <thead><tr><th>Regime</th><th>Trigger (in priority order)</th></tr></thead>
+        <tbody>
+          <tr><td><span class="pill pill-ro">risk_off</span></td><td>VIX &gt; 28 <em>(if VIX feed available)</em>, OR 20d realised vol &gt; 22% (configurable), OR 20d drawdown &lt; -10%</td></tr>
+          <tr><td><span class="pill pill-am">sideways</span></td><td>VIX in (22, 28] caps regime here even if SPY trends up; OR mixed EMA signals</td></tr>
+          <tr><td><span class="pill pill-em">trending_up</span></td><td>SPY close &gt; EMA50 &gt; EMA200, vol &lt; 25%, VIX ≤ 22</td></tr>
+          <tr><td><span class="pill pill-ro">trending_down</span></td><td>SPY close &lt; EMA50 &lt; EMA200</td></tr>
+        </tbody>
+      </table>
+      <p class="text-sm text-slate-500">VIX comes from FRED's <code>VIXCLS</code> series (free, no key). 10Y yield and Fed Funds also pulled but only used in the dashboard "Macro" panel today.</p>
+    </section>
+
+    <section id="strategy" class="anchor-target">
+      <h2>Entry strategy <span class="anchor"><a href="#strategy">#</a></span></h2>
+      <p>Module: <code>strategy.py</code>. After the Plan 5b backtest verdict (mean-reversion lost 0.66 PF in sideways across 49 trades), only momentum-in-trending_up is enabled.</p>
+      <h4>MomentumStrategy.evaluate</h4>
+      <ol class="list-decimal list-inside space-y-1">
+        <li><code>RSI(14) ∈ [55, 70]</code> — uptrend strength but not overbought</li>
+        <li><code>MACD &gt; MACD signal</code> — bullish crossover state</li>
+        <li><code>close &gt; EMA(20)</code> — price above short-term trend</li>
+        <li><code>5d return &gt; 0</code> — recent direction confirmed</li>
+        <li>Compute stop: <code>max(EMA20, entry × 0.95)</code> — whichever is closer to entry</li>
+        <li>Compute qty: <code>min(0.5%-equity-risk / per_share_risk, 4.5%-equity-cap / entry)</code></li>
+      </ol>
+      <p class="text-sm text-slate-500">If qty rounds down to less than 1 share, returns HOLD. Otherwise BUY signal.</p>
+      <h4>Other regimes</h4>
+      <p><code>strategy_for_regime()</code> returns <code>None</code> for trending_down / sideways / risk_off. The orchestrator interprets None as "skip entries this regime; existing positions still managed by their bracket orders." This is a deliberate choice from Plan 5b — losing slices got removed rather than band-aided.</p>
+    </section>
+
+    <!-- ============= TRADE LIFECYCLE ============= -->
+
+    <section id="pre-trade" class="anchor-target">
+      <h2>Pre-trade checks <span class="anchor"><a href="#pre-trade">#</a></span></h2>
+      <p>Six rules in <code>RiskManager.check()</code>. Every entry passes them; <code>RiskRuleViolation</code> is the only fail mode.</p>
+      <table>
+        <thead><tr><th>Rule</th><th>Condition</th><th>Source</th></tr></thead>
+        <tbody>
+          <tr><td>halted</td><td>RiskState.halted == False</td><td>circuit-breaker (daily/weekly P&amp;L)</td></tr>
+          <tr><td>per_trade_risk_pct</td><td>(entry − stop) × qty / equity ≤ 1.0%</td><td>config.risk.per_trade_risk_pct</td></tr>
+          <tr><td>max_position_pct</td><td>entry × qty / equity ≤ 10%</td><td>config.risk.max_position_pct</td></tr>
+          <tr><td>max_symbol_concentration_pct</td><td>existing + new notional / equity ≤ 5%</td><td>config.risk.max_symbol_concentration_pct</td></tr>
+          <tr><td>asset_class_cap (regime-conditional)</td><td>Σ asset-class notional ≤ regime cap (e.g. trending_up: 60% stocks, 25% crypto, 0% cash floor)</td><td>config.regime_allocations[regime]</td></tr>
+          <tr><td>daily / weekly loss limits</td><td>daily_pnl &gt; -2%, weekly &gt; -5%</td><td>config.risk + RiskState</td></tr>
+        </tbody>
+      </table>
+      <p class="text-sm text-slate-500 mt-3">Plus, after Plan 6c, an optional <strong>news-sentiment gate</strong> sits between the BUY signal and the risk check: when <code>config.strategy.sentiment_floor</code> is set, entries on names with an aggregate news sentiment below the floor are skipped (defaults to disabled until the backtest sweep finds a value that improves PF).</p>
+    </section>
+
+    <section id="execution" class="anchor-target">
+      <h2>Execution <span class="anchor"><a href="#execution">#</a></span></h2>
+      <h4>Stocks — bracket orders (atomic)</h4>
+      <p>One <code>BracketOrderRequest</code> to Alpaca with three legs: market entry, stop-loss, take-profit. All three placed atomically by Alpaca's matching engine. Take-profit is set at <code>entry + 2 × per_share_risk</code> (2:1 reward-to-risk).</p>
+      <h4>Crypto — market entry + standalone stop, post-fill verified</h4>
+      <p>Alpaca crypto doesn't support brackets, so it's two non-atomic API calls: market entry (fills near-instantly), then a standalone stop order. Between the two, a flash crash could leave the position unprotected. <strong>Mitigation:</strong> 500ms after both legs are submitted, the client re-queries Alpaca; if a position exists but no live stop order is on the symbol, it market-flattens the position immediately. (Module: <code>alpaca_client.py::_verify_crypto_stop_or_flatten</code>.)</p>
+      <h4>Continuous stop verification</h4>
+      <p>A scheduled job (<code>bot verify-stops</code>, every :20 / :50 24/7) sweeps every open position. For any without a live stop, it auto-protects: places a strategy-aligned stop if the position is above its protective floor, or market-flattens if it's already broken (deferring stock flattens to next RTH). Emails a summary of the actions taken. Catches the rare bracket-leg detachment bug Alpaca has had in the past.</p>
+    </section>
+
+    <section id="during" class="anchor-target">
+      <h2>While in position <span class="anchor"><a href="#during">#</a></span></h2>
+      <ul class="list-disc list-inside space-y-2">
+        <li><strong>Bracket sits in Alpaca's book.</strong> No bot intervention required between fill and exit; all three legs (entry, stop, take-profit) are in the order book.</li>
+        <li><strong>No trailing stops.</strong> The Plan 5b backtest tested 6 trailing-stop configs and every variant underperformed the no-trailing baseline. Code path exists but disabled by default.</li>
+        <li><strong>Portfolio-watch alerts.</strong> Every 30 min during market hours, the bot snapshots positions and emails on any &gt;2% intraday move (in either direction).</li>
+        <li><strong>Open-position auto-protect.</strong> Every :20 / :50 24/7, the verify-stops sweep confirms every open position has a stop. Unprotected positions are auto-actioned (stop placed or flattened) and a summary email is sent.</li>
+        <li><strong>Existing positions stay open through regime changes.</strong> When the regime shifts to risk_off or sideways, no new entries fire, but already-filled positions continue to be managed by their bracket orders.</li>
+      </ul>
+    </section>
+
+    <section id="exit" class="anchor-target">
+      <h2>Exit conditions <span class="anchor"><a href="#exit">#</a></span></h2>
+      <table>
+        <thead><tr><th>Trigger</th><th>Price</th><th>Where</th></tr></thead>
+        <tbody>
+          <tr><td>Stop loss hits</td><td>max(EMA20-at-entry, entry × 0.95)</td><td>Alpaca matching engine (passive)</td></tr>
+          <tr><td>Take-profit hits</td><td>entry + 2 × (entry − stop)</td><td>Alpaca matching engine (passive)</td></tr>
+          <tr><td>Time-based exit</td><td>day-60 close (configurable)</td><td>Backtest only — not live yet</td></tr>
+          <tr><td>Manual flatten</td><td>operator decision</td><td>Alpaca UI</td></tr>
+          <tr><td>Crypto post-fill flatten</td><td>market</td><td>Auto, only if stop verification fails within 500ms</td></tr>
+        </tbody>
+      </table>
+      <p>Exit attribution: 80%+ of historical trades hit the stop, ~12% hit take-profit, the rest are time-stops or manual. (From the 229-trade backtest run.)</p>
+    </section>
+
+    <section id="halts" class="anchor-target">
+      <h2>Halt mechanics <span class="anchor"><a href="#halts">#</a></span></h2>
+      <p><code>RiskState.halted</code> is recomputed at the start of every scan. It flips to True on either:</p>
+      <ul class="list-disc list-inside space-y-1">
+        <li><code>daily_pnl_pct ≤ -2.0</code> (config.risk.daily_loss_limit_pct)</li>
+        <li><code>weekly_pnl_pct ≤ -5.0</code> (config.risk.weekly_loss_limit_pct)</li>
+      </ul>
+      <p>While halted, <code>RiskManager.check()</code> raises immediately on every BUY signal — no entries fire. Existing bracket orders continue to manage their positions independently.</p>
+      <p>Halt clears at the next scan after midnight UTC (daily roll). Plan 5e (deferred) will add soft-halt at -1.5% (no new entries, no manual reset) and intraday equity polling for finer granularity.</p>
+    </section>
+
+    <!-- ============= DATA ============= -->
+
+    <section id="data-sources" class="anchor-target">
+      <h2>All data sources <span class="anchor"><a href="#data-sources">#</a></span></h2>
+      <table>
+        <thead><tr><th>Source</th><th>What</th><th>Used for</th><th>Cost</th></tr></thead>
+        <tbody>
+          <tr><td>Alpaca paper</td><td>Orders, positions, account, tradable list, live bars (intel-scan)</td><td>Order placement + live state</td><td>Free</td></tr>
+          <tr><td>Massive (Polygon)</td><td>Daily grouped aggregates, per-ticker historical bars, news + per-ticker sentiment, short interest</td><td>Universe screening, backtest data, news-sentiment filter</td><td>Subscribed (rate-limited free tier)</td></tr>
+          <tr><td>FRED</td><td>VIXCLS, DGS10 (10Y yield), DFF (Fed Funds)</td><td>Regime detection (VIX), dashboard macro panel</td><td>Free, no auth</td></tr>
+          <tr><td>GDELT 2.0</td><td>Doc-API, broad market news with tone scoring</td><td>Dashboard "Macro panel" + EOD email context</td><td>Free, no auth</td></tr>
+          <tr><td>SEC EDGAR</td><td>Form 4 RSS (insider buys/sells)</td><td>Dashboard signal (not yet a strategy gate)</td><td>Free, no auth</td></tr>
+          <tr><td>Public news RSS</td><td>General market headlines</td><td>Dashboard / EOD email</td><td>Free</td></tr>
+          <tr><td>Truth Social RSS</td><td>VIP account feeds (Trump, et al.)</td><td>VIP-tweet alerts, alert-only HIGH severity</td><td>Free, no auth</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="data-stores" class="anchor-target">
+      <h2>Local data stores <span class="anchor"><a href="#data-stores">#</a></span></h2>
+      <table>
+        <thead><tr><th>Path</th><th>What</th></tr></thead>
+        <tbody>
+          <tr><td><code>strategy/config.yaml</code></td><td>Risk thresholds, regime allocations, vol threshold, sentiment floor, email recipient</td></tr>
+          <tr><td><code>strategy/watchlist.yaml</code></td><td>Legacy 7-name fallback (used when opportunities.md is missing)</td></tr>
+          <tr><td><code>strategy/opportunities.md</code></td><td>Daily-refreshed top-N ranked candidates (gitignored)</td></tr>
+          <tr><td><code>strategy/rules.md</code></td><td>Strategy rules + evolution log (human-readable)</td></tr>
+          <tr><td><code>strategy/params.yaml</code></td><td>Evolved per-strategy params (per_trade_risk, stop_pct)</td></tr>
+          <tr><td><code>data/trade_journal.db</code></td><td>SQLite, every order placed (open + closed)</td></tr>
+          <tr><td><code>data/closed_trades.db</code></td><td>SQLite, reconciled closed trades with realized P&amp;L</td></tr>
+          <tr><td><code>data/portfolio_snapshot.json</code></td><td>Last-seen positions + equity (for snapshot diff)</td></tr>
+          <tr><td><code>data/last_scan.json</code></td><td>Most recent scan's decisions (powers dashboard pipeline panel)</td></tr>
+          <tr><td><code>data/backtest_bars.db</code></td><td>SQLite, historical bar cache (Massive-sourced)</td></tr>
+          <tr><td><code>data/backtest_trades.db</code></td><td>SQLite, synthetic trades from backtest runs</td></tr>
+          <tr><td><code>data/news_sentiment.db</code></td><td>SQLite, per-(symbol, date) cached sentiment scores</td></tr>
+          <tr><td><code>data/vip_seen.json</code></td><td>Last-seen Truth Social post IDs per handle (idempotency)</td></tr>
+          <tr><td><code>.env</code></td><td>Alpaca + Gmail + Polygon credentials (gitignored)</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ============= OPERATIONS ============= -->
+
+    <section id="schedule" class="anchor-target">
+      <h2>Scheduled jobs <span class="anchor"><a href="#schedule">#</a></span></h2>
+      <p>Managed via the <code>scheduled-tasks</code> MCP. Each fire runs the bot's CLI inside a fresh Claude Code session.</p>
+      <table>
+        <thead><tr><th>Cron (local TZ)</th><th>Task</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>0 8 * * 1-5</code></td><td>premarket-rank</td><td>Refresh opportunities.md before market open</td></tr>
+          <tr><td><code>45 8,11,14 * * 1-5</code></td><td>news-warm</td><td>Refresh sentiment cache before each scan window</td></tr>
+          <tr><td><code>0 9-15 * * 1-5</code></td><td>intel-scan (hourly)</td><td>Scan + place trades</td></tr>
+          <tr><td><code>15,45 9-15 * * 1-5</code></td><td>portfolio-watch</td><td>Snapshot diff alerts</td></tr>
+          <tr><td><code>20,50 * * * *</code></td><td>verify-stops</td><td>Open-position auto-protect, 24/7</td></tr>
+          <tr><td><code>5 * * * *</code></td><td>crypto-scan</td><td>Crypto-only scan, hourly 24/7</td></tr>
+          <tr><td><code>*/10 * * * *</code></td><td>vip-tweets</td><td>Truth Social RSS poll</td></tr>
+          <tr><td><code>30 12 * * 1-5</code></td><td>rich-report-mid</td><td>Midday HTML email</td></tr>
+          <tr><td><code>30 16 * * 1-5</code></td><td>daily-full-run</td><td>EOD report (no orders)</td></tr>
+          <tr><td><code>0 10 * * 6</code></td><td>weekly-evolve</td><td>Param tuning from closed trades</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="cli" class="anchor-target">
+      <h2>CLI commands <span class="anchor"><a href="#cli">#</a></span></h2>
+      <table>
+        <thead><tr><th>Command</th><th>What</th></tr></thead>
+        <tbody>
+          <tr><td><code>bot status</code></td><td>Print + email account/position snapshot</td></tr>
+          <tr><td><code>bot dry-run</code></td><td>Test risk gates against a hypothetical order</td></tr>
+          <tr><td><code>bot scan</code></td><td>One-shot scan (forces a regime) + place trades</td></tr>
+          <tr><td><code>bot intel-scan</code></td><td>Hourly automated scan; silent unless action</td></tr>
+          <tr><td><code>bot crypto-scan</code></td><td>Crypto-only scan, USD pairs</td></tr>
+          <tr><td><code>bot full-run</code></td><td>regime → reconcile → scan → email</td></tr>
+          <tr><td><code>bot rank</code></td><td>Stage-1 + stage-2 screener → opportunities.md</td></tr>
+          <tr><td><code>bot screen-universe</code></td><td>Liquidity-screen the tradable universe</td></tr>
+          <tr><td><code>bot reconcile</code></td><td>Pull filled legs → closed_trades.db</td></tr>
+          <tr><td><code>bot evolve</code></td><td>Weekly param tuning</td></tr>
+          <tr><td><code>bot rich-report --period mid|eod</code></td><td>Comprehensive HTML email</td></tr>
+          <tr><td><code>bot eod-report</code></td><td>EOD email, no order placement</td></tr>
+          <tr><td><code>bot daily-report</code></td><td>Basic daily email (legacy)</td></tr>
+          <tr><td><code>bot portfolio-watch</code></td><td>Snapshot diff alerts</td></tr>
+          <tr><td><code>bot verify-stops</code></td><td>Open-position auto-protect sweep</td></tr>
+          <tr><td><code>bot vip-scan</code></td><td>Truth Social poll, alert on HIGH</td></tr>
+          <tr><td><code>bot news-warm</code></td><td>Refresh news sentiment cache</td></tr>
+          <tr><td><code>bot backtest --from D --to D</code></td><td>Replay strategy through historical bars</td></tr>
+          <tr><td><code>bot dashboard</code></td><td>Start local web dashboard (this server)</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="alerts" class="anchor-target">
+      <h2>Alerting <span class="anchor"><a href="#alerts">#</a></span></h2>
+      <p>All alerts go to the email address in <code>config.email.to</code> (Gmail SMTP via app password). Alert types:</p>
+      <ul class="list-disc list-inside space-y-2">
+        <li><strong>Trade event</strong> — order placed or rejected by risk manager (intel-scan)</li>
+        <li><strong>Big-move portfolio alert</strong> — any open position ±2% intraday (portfolio-watch)</li>
+        <li><strong>Open-position summary</strong> — verify-stops sweep auto-actioned one or more unprotected positions, or one needs manual review</li>
+        <li><strong>VIP tweet HIGH-severity</strong> — Truth Social keyword match (vip-scan)</li>
+        <li><strong>Midday rich-report</strong> — comprehensive 12:30 ET HTML report</li>
+        <li><strong>EOD rich-report</strong> — comprehensive 16:30 ET HTML report (regime + intel + positions, no scan side-effect)</li>
+      </ul>
+    </section>
+
+    <!-- ============= VALIDATION ============= -->
+
+    <section id="backtest" class="anchor-target">
+      <h2>Backtest verdict <span class="anchor"><a href="#backtest">#</a></span></h2>
+      <p>The backtest harness (<code>bot backtest</code>) replays the <strong>real strategy + risk_manager + orchestrator code paths</strong> against historical bars. Reuses <code>MomentumStrategy.evaluate</code>, <code>RiskManager.check</code>, and <code>detect_regime_from_bars</code> verbatim — only the day-by-day clock loop, the bracket-leg simulator, and the metric aggregator are new code.</p>
+      <h4>Acceptance gate</h4>
+      <ol class="list-decimal list-inside">
+        <li>Overall Sharpe ≥ 0.5</li>
+        <li>At least one strategy in the dominant regime has trades ≥ 30 AND PF ≥ 1.0</li>
+      </ol>
+      <h4>Latest run (24 months, 15 symbols, momentum-only)</h4>
+      <table>
+        <thead><tr><th>Slice</th><th>Trades</th><th>Win %</th><th>PF</th><th>P&amp;L</th></tr></thead>
+        <tbody>
+          <tr><td>Overall</td><td>229</td><td>38.0%</td><td>1.25</td><td>+$830</td></tr>
+          <tr><td>momentum × trending_up</td><td>220</td><td>38.2%</td><td>1.27</td><td>+$849</td></tr>
+          <tr><td>stocks (all)</td><td>~155</td><td>~36%</td><td>1.16</td><td>+$396</td></tr>
+          <tr><td>crypto (all)</td><td>~75</td><td>~37%</td><td>1.15</td><td>+$225</td></tr>
+        </tbody>
+      </table>
+      <p class="text-sm text-slate-500 mt-2">All gates pass. Equity 15,000 → 15,914 (+6.09%). Max drawdown -3.49%. Avg hold ~10 days.</p>
+    </section>
+
+    <section id="evolution" class="anchor-target">
+      <h2>Evolution loop <span class="anchor"><a href="#evolution">#</a></span></h2>
+      <p>Weekly job (<code>bot evolve</code>, Sat 10am) reads <code>data/closed_trades.db</code>, computes per-strategy stats (win rate, profit factor, total P&amp;L), and proposes parameter changes via a Kelly-conservative algorithm: bad runs cut <code>per_trade_risk_pct</code> by 50%, good runs raise by 25%. Proposals are applied to <code>strategy/params.yaml</code> only with <code>--apply</code>; otherwise just logged to <code>strategy/rules.md</code>.</p>
+      <p>Currently only tunes <code>per_trade_risk_pct</code> and <code>stop_pct</code>. Plan 5f (deferred) extends to RSI thresholds, MACD parameters, and regime-conditional metrics.</p>
+    </section>
+
+    <!-- ============= REFERENCE ============= -->
+
+    <section id="modules" class="anchor-target">
+      <h2>Module map <span class="anchor"><a href="#modules">#</a></span></h2>
+      <table>
+        <thead><tr><th>Module</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr><td><code>cli.py</code></td><td>All <code>bot</code> entry points (~22 commands)</td></tr>
+          <tr><td><code>config.py</code></td><td>Pydantic-validated settings (env + YAML)</td></tr>
+          <tr><td><code>state.py</code></td><td><code>WatchlistEntry</code>, YAML loader</td></tr>
+          <tr><td><code>alpaca_client.py</code></td><td>Sole point of contact with Alpaca REST API; bracket placement, crypto post-fill verify</td></tr>
+          <tr><td><code>massive_client.py</code></td><td>Polygon REST adapter (grouped, news + sentiment, short interest)</td></tr>
+          <tr><td><code>market_data.py</code></td><td>Daily-bar fetches + indicator math (RSI, MACD, EMA)</td></tr>
+          <tr><td><code>regime.py</code></td><td>Pure-function regime classifier</td></tr>
+          <tr><td><code>intelligence.py</code></td><td>FRED macro, GDELT news, SEC EDGAR Form 4, public RSS</td></tr>
+          <tr><td><code>news_sentiment.py</code></td><td>SQLite-backed per-(symbol, date) sentiment cache + filter helper</td></tr>
+          <tr><td><code>strategy.py</code></td><td>MomentumStrategy + (disabled) MeanReversionStrategy</td></tr>
+          <tr><td><code>strategy_lanes.py</code></td><td>Stage-2 lanes: Momentum / MeanReversion / Breakout</td></tr>
+          <tr><td><code>screener.py</code></td><td>Stage-1 shortlist + Stage-2 lane orchestration</td></tr>
+          <tr><td><code>universe.py</code></td><td>Liquid-asset filter + sector tagging</td></tr>
+          <tr><td><code>risk_manager.py</code></td><td>Pre-trade gate (6 rules)</td></tr>
+          <tr><td><code>orchestrator.py</code></td><td>Trading loop: watchlist → strategy → risk → execution → journal</td></tr>
+          <tr><td><code>trade_journal.py</code></td><td>SQLite log of every order placed</td></tr>
+          <tr><td><code>reconciliation.py</code></td><td>Match Alpaca fills to journal → ClosedTrade</td></tr>
+          <tr><td><code>portfolio_monitor.py</code></td><td>Snapshot diff: detects fills + big moves</td></tr>
+          <tr><td><code>pnl_state.py</code></td><td>Build RiskState from Alpaca portfolio history</td></tr>
+          <tr><td><code>last_scan.py</code></td><td>Persist Decisions to JSON for the dashboard</td></tr>
+          <tr><td><code>evolution.py</code></td><td>Weekly param tuning (Kelly-conservative)</td></tr>
+          <tr><td><code>email_sender.py</code></td><td>Gmail SMTP wrapper</td></tr>
+          <tr><td><code>reports.py</code></td><td>HTML email rendering (basic + rich)</td></tr>
+          <tr><td><code>vip_tweets.py</code></td><td>Truth Social RSS poller, sentiment scoring, alert-only</td></tr>
+          <tr><td><code>backtest/bar_store.py</code></td><td>Historical bar cache (SQLite, 24h TTL)</td></tr>
+          <tr><td><code>backtest/simulator.py</code></td><td>Day-by-day replay loop</td></tr>
+          <tr><td><code>backtest/metrics.py</code></td><td>Per-strategy / per-regime aggregation</td></tr>
+          <tr><td><code>backtest/reporter.py</code></td><td>Markdown report writer</td></tr>
+          <tr><td><code>backtest/massive_bar_loader.py</code></td><td>Polygon REST + CSV importer for the bar store</td></tr>
+          <tr><td><code>dashboard/data.py</code></td><td>Snapshot builder for the live dashboard</td></tr>
+          <tr><td><code>dashboard/app.py</code></td><td>FastAPI app (this server)</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="known-gaps" class="anchor-target">
+      <h2>Known gaps <span class="anchor"><a href="#known-gaps">#</a></span></h2>
+      <ul class="list-disc list-inside space-y-2">
+        <li><strong>No earnings-window exclusion.</strong> Plan 5c-4 deferred — Massive's earnings endpoint is paid. Finnhub free-tier integration is the next planned vendor.</li>
+        <li><strong>No soft halt or intraday halt.</strong> Plan 5e deferred — current halt is daily-close based and clears next day.</li>
+        <li><strong>No conviction-based sizing.</strong> Every trade gets flat 0.5% risk. Plan 5d deferred.</li>
+        <li><strong>No options trading.</strong> Regime allocations reserve % for options but nothing trades them.</li>
+        <li><strong>No live news-sentiment filter.</strong> Module is built and cached, but <code>config.strategy.sentiment_floor</code> defaults to None until a backtest sweep finds a threshold that improves PF.</li>
+        <li><strong>Rate-limited Massive plan.</strong> Free-tier limits force sequential calls; <code>bot rank</code> needs to budget around them.</li>
+        <li><strong>Daily-bar only.</strong> No intraday strategies. Indicators recompute as the latest bar updates, but signal flips happen on hourly+ timescales.</li>
+      </ul>
+    </section>
+
+    <footer class="text-xs text-slate-600 pt-8 pb-12 text-center">
+      Trading Bot · Local · 127.0.0.1 · paper-only · backtest verdict PF 1.25 / Sharpe 0.76
+    </footer>
+
+  </main>
+</div>
+
+</body>
+</html>

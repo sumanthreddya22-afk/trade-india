@@ -1,0 +1,6 @@
+{
+  "lock_version": "2026-05-13.v4-phase0-skeleton",
+  "_note": "Skeleton only — per-lane allocation, daily loss, and status (research_only / shadow / paper / live) populated in Phase 2 alongside risk_policy.lock.",
+  "owner": "L6 Risk Kernel",
+  "phase_when_populated": 2
+}

@@ -1,0 +1,184 @@
+<section id="llm_spend"
+         class="card p-5"
+         hx-get="/fragment/llm_spend"
+         hx-trigger="every 300s"
+         hx-swap="outerHTML">
+  <div class="flex items-center justify-between mb-3">
+    <span class="label" title="How much the bot has spent on Claude AI calls this month. Used for strategy review and news sentiment.">AI Spend This Month</span>
+    <span class="text-[11px] text-slate-500">Anthropic Claude · so far this month</span>
+  </div>
+
+  {% set sp = lab.llm_spend %}
+  {% if sp is none or sp.n_calls_mtd == 0 %}
+    <div class="space-y-2">
+      <div class="text-sm text-slate-500">No Claude calls this month yet.</div>
+      <div class="text-[11px] text-slate-600">Where the bot uses AI:</div>
+      <ul class="text-[11px] text-slate-600 ml-4 list-disc space-y-0.5">
+        <li>Drafting new strategy ideas — Saturdays</li>
+        <li>Reading sentiment on news headlines</li>
+        <li>Reviewing breaking-news for trade opportunities</li>
+      </ul>
+    </div>
+  {% else %}
+    <div class="flex items-baseline gap-3">
+      <span class="text-3xl font-bold font-mono text-slate-100">${{ "%.2f"|format(sp.month_to_date_usd) }}</span>
+      <span class="text-xs text-slate-500">this month · no cap</span>
+    </div>
+    <div class="grid grid-cols-3 gap-3 mt-4">
+      <div title="Number of Claude calls so far this month.">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Calls (month)</div>
+        <div class="text-sm font-semibold text-slate-200 mt-1">{{ sp.n_calls_mtd }}</div>
+      </div>
+      <div title="Number of Claude calls in the last 30 days.">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Calls (30 days)</div>
+        <div class="text-sm font-semibold text-slate-200 mt-1">{{ sp.n_calls_30d }}</div>
+      </div>
+      <div title="The Claude model handling most of the calls.">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Most-used model</div>
+        <div class="text-[12px] font-mono text-slate-300 mt-1 truncate" title="{{ sp.most_used_model }}">{{ sp.most_used_model or '—' }}</div>
+      </div>
+    </div>
+    {% if sp.last_call_at %}
+    <div class="text-[11px] text-slate-500 mt-3">
+      Most recent call: {{ sp.last_call_at | et('%b %d · %-I:%M %p ET') }}
+    </div>
+    {% endif %}
+
+    {% if sp.trend_points %}
+    <div class="mt-5 border-t border-slate-800 pt-4">
+      <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] uppercase tracking-wider text-slate-500">LLM Calls Trend</span>
+          <span id="llm-calls-period-total" class="text-[11px] text-slate-400"></span>
+        </div>
+        <div class="flex items-center gap-1">
+          {% for key, label in [("24hr","24hr"),("1w","1W"),("2w","2W"),("1m","1M")] %}
+          <button data-llm-range="{{ key }}"
+                  class="llm-range-btn px-2 py-0.5 rounded border text-[11px] {% if key == '1m' %}bg-cyan-500/15 border-cyan-500/40 text-cyan-300 active{% else %}border-slate-700 text-slate-400 hover:text-slate-200{% endif %}">
+            {{ label }}
+          </button>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="h-40">
+        <canvas id="llmCallsTrendChart"></canvas>
+      </div>
+    </div>
+    {% endif %}
+  {% endif %}
+
+  <script>
+    (function() {
+      const allPoints = {{ (sp.trend_points if sp and sp.trend_points else []) | tojson | safe }};
+      if (!allPoints.length) return;
+
+      const root = document.getElementById("llm_spend");
+      const canvas = document.getElementById("llmCallsTrendChart");
+      const totalEl = document.getElementById("llm-calls-period-total");
+      if (!root || !canvas) return;
+
+      let activeChart = null;
+
+      // ts values from server are UTC without Z — append it so Date parses correctly.
+      function parseUTC(ts) { return new Date(ts + "Z"); }
+
+      function cutoffDate(rangeKey) {
+        const hoursBack = rangeKey === "24hr" ? 24 : rangeKey === "1w" ? 168 : rangeKey === "2w" ? 336 : 720;
+        return new Date(Date.now() - hoursBack * 3600 * 1000);
+      }
+
+      function fmtLabel(ts, rangeKey) {
+        const d = parseUTC(ts);
+        const opts = { timeZone: "America/New_York" };
+        if (rangeKey === "24hr") {
+          return d.toLocaleTimeString("en-US", { ...opts, hour: "numeric", hour12: true });
+        }
+        if (rangeKey === "1w") {
+          return d.toLocaleString("en-US", { ...opts, month: "short", day: "numeric", hour: "numeric", hour12: true });
+        }
+        // 2w / 1m — show date only (too dense for hourly labels)
+        return d.toLocaleDateString("en-US", { ...opts, month: "short", day: "numeric" });
+      }
+
+      function drawChart(rangeKey) {
+        const cutoff = cutoffDate(rangeKey);
+        const pts = allPoints.filter(p => parseUTC(p.ts) >= cutoff);
+
+        const labels = pts.map(p => fmtLabel(p.ts, rangeKey));
+        const data   = pts.map(p => p.calls);
+        const total  = data.reduce((a, b) => a + b, 0);
+
+        if (totalEl) totalEl.textContent = "· " + total.toLocaleString() + " calls";
+
+        if (activeChart) { try { activeChart.destroy(); } catch(e) {} activeChart = null; }
+        if (!pts.length) return;
+
+        // For dense ranges, thin labels so x-axis stays readable.
+        const maxTicks = rangeKey === "24hr" ? 12 : rangeKey === "1w" ? 14 : rangeKey === "2w" ? 14 : 15;
+
+        activeChart = new Chart(canvas, {
+          type: "line",
+          data: { labels, datasets: [{
+            label: "Calls",
+            data,
+            borderColor: "#22d3ee",
+            backgroundColor: "rgba(34,211,238,0.08)",
+            fill: true,
+            tension: 0.35,
+            pointRadius: rangeKey === "24hr" ? 3 : 0,
+            pointHoverRadius: 5,
+            borderWidth: 1.5,
+          }]},
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: {
+                mode: "index", intersect: false,
+                callbacks: {
+                  title: ctx => {
+                    const ts = pts[ctx[0].dataIndex].ts;
+                    const d = parseUTC(ts);
+                    return d.toLocaleString("en-US", {
+                      timeZone: "America/New_York",
+                      month: "short", day: "numeric",
+                      hour: "numeric", minute: "2-digit", hour12: true
+                    }) + " ET";
+                  },
+                  label: ctx => ctx.parsed.y + " calls",
+                }
+              }
+            },
+            scales: {
+              x: {
+                ticks: { color: "#475569", maxTicksLimit: maxTicks, font: { size: 10 }, maxRotation: 0 },
+                grid: { display: false }
+              },
+              y: {
+                ticks: { color: "#475569", precision: 0, font: { size: 10 } },
+                grid: { color: "rgba(30,41,59,0.5)" },
+                beginAtZero: true
+              }
+            }
+          }
+        });
+      }
+
+      let currentRange = "1m";
+      drawChart(currentRange);
+
+      root.querySelectorAll(".llm-range-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          currentRange = btn.dataset.llmRange;
+          root.querySelectorAll(".llm-range-btn").forEach(b => {
+            b.classList.remove("bg-cyan-500/15", "border-cyan-500/40", "text-cyan-300", "active");
+            b.classList.add("border-slate-700", "text-slate-400");
+          });
+          btn.classList.add("bg-cyan-500/15", "border-cyan-500/40", "text-cyan-300", "active");
+          btn.classList.remove("border-slate-700", "text-slate-400");
+          drawChart(currentRange);
+        });
+      });
+    })();
+  </script>
+</section>

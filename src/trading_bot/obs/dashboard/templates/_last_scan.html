@@ -1,0 +1,82 @@
+<section id="last_scan" class="card p-6"
+         hx-get="/fragment/last_scan"
+         hx-trigger="scan.completed from:body, every 120s"
+         hx-swap="outerHTML">
+  <div class="flex items-baseline justify-between flex-wrap gap-2">
+    <div>
+      <div class="label">Most Recent Scan</div>
+      <h3 class="text-xl font-semibold mt-1">What the bot saw last
+        {% if s.last_scan %}
+          <span class="text-slate-500 text-sm font-normal">— {{ s.last_scan.command }} · {{ s.last_scan.universe_size }} symbols checked</span>
+          {% set age = scan_age_seconds %}
+          {% if age is not none %}
+            {% set age_color = "emerald" if age < 1800 else ("amber" if age < 7200 else "rose") %}
+            <span class="ml-2 px-2 py-0.5 rounded text-[11px] bg-{{ age_color }}-500/10 border border-{{ age_color }}-500/30 text-{{ age_color }}-300">{{ fmt.relative_age(age) }}</span>
+          {% endif %}
+        {% endif %}
+      </h3>
+    </div>
+    {% if s.last_scan %}
+    <div class="flex gap-2 text-xs" id="decision-filter">
+      <button data-filter="all"
+              class="filter-btn active px-2 py-1 rounded bg-slate-700/40 border border-slate-600 text-slate-200">All {{ s.last_scan.decisions|length }}</button>
+      <button data-filter="placed_order"
+              class="filter-btn px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">Traded {{ s.last_scan.placed }}</button>
+      <button data-filter="rejected_by_risk"
+              class="filter-btn px-2 py-1 rounded bg-rose-500/10 border border-rose-500/30 text-rose-300">Blocked {{ s.last_scan.rejected }}</button>
+      <button data-filter="hold"
+              class="filter-btn px-2 py-1 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300">Waited {{ s.last_scan.holds }}</button>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if s.last_scan and s.last_scan.decisions %}
+  <div class="mt-4 max-h-80 overflow-y-auto scroll-thin">
+    <table class="w-full text-sm" id="decision-table">
+      <thead class="text-xs text-slate-500 uppercase tracking-wider sticky top-0 bg-slate-950/95">
+        <tr><th class="text-left py-2 pr-2">Symbol</th><th class="text-left py-2 pr-2">What happened</th><th class="text-left py-2">Why</th></tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800/60">
+        {% set action_short = {
+          "placed_order": "Traded",
+          "rejected_by_risk": "Blocked by risk",
+          "rejected_by_risk_debate": "Blocked by review",
+          "rejected_by_intel": "Blocked by news",
+          "skipped_existing_position": "Already holding",
+          "skipped_pending_order": "Order already in flight",
+          "skipped_intel": "Waiting on news",
+          "skipped_no_signal": "No signal",
+          "skipped_signal_filter": "Signal filter",
+          "hold": "Waited",
+          "api_error": "Broker error",
+        } %}
+        {% for d in s.last_scan.decisions %}
+        <tr class="pos-row decision-row" data-action="{{ d.action }}">
+          <td class="py-2 pr-2 font-mono">{{ d.symbol }}</td>
+          <td class="py-2 pr-2"><span class="px-2 py-0.5 rounded bg-{{ d.badge_color }}-500/10 border border-{{ d.badge_color }}-500/30 text-{{ d.badge_color }}-300 text-xs">{{ action_short.get(d.action, d.action.replace('_', ' ')) }}</span></td>
+          <td class="py-2 text-slate-400 text-xs">{{ d.reason }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <script>
+    (function() {
+      const root = document.getElementById("last_scan");
+      if (!root || root.dataset.bound) return;
+      root.dataset.bound = "1";
+      root.addEventListener("click", (ev) => {
+        const btn = ev.target.closest(".filter-btn");
+        if (!btn) return;
+        const wanted = btn.dataset.filter;
+        root.querySelectorAll(".filter-btn").forEach(b => b.classList.toggle("active", b === btn));
+        root.querySelectorAll(".decision-row").forEach(r => {
+          r.style.display = (wanted === "all" || r.dataset.action === wanted) ? "" : "none";
+        });
+      });
+    })();
+  </script>
+  {% else %}
+  <div class="mt-4 text-sm text-slate-500 italic">No scan run yet — `data/last_scan.json` is empty. Will populate after the first intel-scan/full-run/crypto-scan fires.</div>
+  {% endif %}
+</section>

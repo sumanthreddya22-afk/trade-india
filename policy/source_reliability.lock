@@ -1,0 +1,6 @@
+{
+  "lock_version": "2026-05-13.v4-phase0-skeleton",
+  "_note": "Skeleton only — tier assignments (primary / secondary / tertiary), weighting, auto-demote thresholds, and kernel_admissible_tiers land in Phase 1.5 (L1.5 alt-data ingest) per Plan §1B.",
+  "owner": "L0 Governance",
+  "phase_when_populated": 1.5
+}

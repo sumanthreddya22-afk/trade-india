@@ -81,6 +81,17 @@ class RiskConfig(BaseModel):
     gross_cap_pct: float = Field(default=200.0, gt=0, le=1000.0)
     net_cap_pct: float = Field(default=100.0, gt=0, le=500.0)
 
+    # Execution — marketable-limit + spread gate. Stocks were using the
+    # signal's entry_price as the bracket limit, which fails to fill when
+    # price has drifted by submission time; crypto used a true market
+    # order, which can eat the entire visible book on illiquid alts. Both
+    # paths now read the live quote and submit a LimitOrderRequest priced
+    # past the touch by `marketable_limit_buffer_pct`. Trades whose quoted
+    # spread exceeds `max_quoted_spread_pct` are refused pre-submit so the
+    # wide-spread tax is never paid.
+    marketable_limit_buffer_pct: float = Field(default=0.005, ge=0, le=0.05)
+    max_quoted_spread_pct: float = Field(default=0.01, gt=0, le=0.1)
+
 
 class AllocationConfig(BaseModel):
     """Bucket F: stocks_max_pct / crypto_max_pct / cash_floor_pct were
@@ -218,6 +229,29 @@ class WheelConfig(BaseModel):
     unblock_max_overage_ratio: float = Field(default=0.50, gt=0, le=2.0)
     unblock_min_candidate_score: float = Field(default=7.0, ge=0, le=10)
     unblock_daily_debate_cap: int = Field(default=15, ge=0, le=100)
+    # When True, wheel_scan hands off to the wheel_entry_debate runner
+    # (Aurelio/Beatrice/Yusuf → Catherine) instead of placing orders
+    # directly. Mirrors the stocks/crypto entry-debate gate.
+    wheel_entry_debate_enabled: bool = Field(default=False)
+
+
+class HoldConfig(BaseModel):
+    """Phase C — hold-debate trigger thresholds. All values read by
+    PositionMonitorRole via _hcfg(); changes take effect on next daemon tick
+    without a restart.
+    """
+    hold_debate_enabled: bool = True
+    cheap_check_interval_minutes: int = Field(default=15, ge=1, le=120)
+    hold_score_drop_threshold: float = Field(default=0.5, gt=0, le=1.0)
+    hold_sentiment_flip_threshold: float = Field(default=0.3, ge=0, le=1.0)
+    hold_negative_news_count_threshold: int = Field(default=3, ge=1)
+    hold_8k_hard_trigger: bool = True
+    hold_vip_hard_trigger: bool = True
+    hold_debate_daily_cap: int = Field(default=12, ge=0)
+    # When unrealized gain reaches this %, fire the hold debate so the LLM
+    # committee decides dynamically: exit_now / tighten_stop / hold.
+    # Set to 0 to disable (pure adverse-signal mode).
+    profit_review_min_pnl_pct: float = Field(default=3.0, ge=0)
 
 
 class DataQualityConfig(BaseModel):
@@ -229,10 +263,11 @@ class DataQualityConfig(BaseModel):
     enabled: bool = Field(default=True)
     # Maximum age in hours for the most recent bar (per asset class).
     # Daily bars typically run within 48h during RTH (today's bar may not
-    # be built until end-of-day). Crypto trades 24/7 so we expect fresh
-    # bars every few hours.
+    # be built until end-of-day). Crypto trades 24/7 but Alpaca's data for
+    # small-cap/illiquid tokens can lag 8-10 h; use 24 h so sparse tokens
+    # aren't endlessly skipped as stale.
     max_bar_age_hours_stock: float = Field(default=48.0, gt=0, le=168.0)
-    max_bar_age_hours_crypto: float = Field(default=6.0, gt=0, le=168.0)
+    max_bar_age_hours_crypto: float = Field(default=24.0, gt=0, le=168.0)
     # Maximum % of NaN values in OHLC columns before the gate trips.
     max_missing_ohlc_pct: float = Field(default=5.0, ge=0.0, le=50.0)
 
@@ -246,6 +281,7 @@ class AppConfig(BaseModel):
     regime: RegimeConfig = Field(default_factory=RegimeConfig)
     strategy: StrategyConfig = Field(default_factory=StrategyConfig)
     wheel: WheelConfig = Field(default_factory=WheelConfig)
+    hold: HoldConfig = Field(default_factory=HoldConfig)
     data_quality: DataQualityConfig = Field(default_factory=DataQualityConfig)
 
 

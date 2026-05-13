@@ -1,0 +1,6 @@
+{
+  "lock_version": "2026-05-13.v4-phase0-skeleton",
+  "_note": "Skeleton only — full numeric limits (account / asset-class / lane / strategy / symbol / order tiers from Plan §6) land in Phase 2.",
+  "owner": "L6 Risk Kernel",
+  "phase_when_populated": 2
+}

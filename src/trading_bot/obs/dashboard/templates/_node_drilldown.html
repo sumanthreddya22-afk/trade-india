@@ -1,0 +1,78 @@
+{# Drill-down panel content for one node. Loaded via HTMX into the
+   bottom slide-up panel in system.html. Self-contained — never
+   replaces other DOM. The container in system.js handles open/close. #}
+{% set n = node %}
+<div class="flex items-baseline justify-between mb-3">
+  <div>
+    <h3 class="text-lg font-semibold">{{ n.label }}</h3>
+    <div class="text-xs text-slate-400 mt-1">
+      {% if n.zone %}<span class="capitalize">{{ n.zone | replace('_',' ') }}</span>{% endif %}
+      {% if n.process %} · launchd: <span class="font-mono">{{ n.process }}</span>{% endif %}
+      {% if n.cadence_label %} · {{ n.cadence_label }}{% endif %}
+    </div>
+    <div class="flex flex-wrap items-center gap-1 mt-2">
+      {% if n.model_badge %}<span class="badge badge-model">{{ n.model_badge }}</span>{% endif %}
+      {% if n.mailbox %}<span class="badge badge-mailbox">✉ mbx</span>{% endif %}
+      <span class="badge badge-process" data-health="{{ health.health }}">
+        {{ health.health }}{% if health.last_activity_label %} · last {{ health.last_activity_label }}{% endif %}
+      </span>
+    </div>
+  </div>
+  <button data-action="close-drilldown"
+          class="text-slate-400 hover:text-cyan-300 text-sm border border-slate-700 rounded px-2 py-1">close ✕</button>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  {% if role_runs %}
+  <section>
+    <div class="label mb-2">Last {{ role_runs|length }} runs</div>
+    <div class="text-xs space-y-1 max-h-56 overflow-y-auto scroll-thin">
+      {% for r in role_runs %}
+        <div class="flex justify-between border-b border-slate-800/50 py-1">
+          <div>
+            <span class="font-mono">{{ fmt.short_dt(r.started_at) }}</span>
+            <span class="ml-2 text-slate-400">{{ r.role_name }}</span>
+            {% if r.latency_ms %}<span class="text-slate-500"> · {{ r.latency_ms }}ms</span>{% endif %}
+          </div>
+          <span class="{{ 'text-emerald-400' if r.status == 'ok' else 'text-rose-400' }}">{{ r.status }}</span>
+        </div>
+        {% if r.error_text %}
+          <div class="ml-4 text-rose-300/80 text-[11px] font-mono whitespace-pre-wrap">{{ r.error_text[:300] }}</div>
+        {% endif %}
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section>
+    <div class="label mb-2">Recent events</div>
+    {% if events %}
+    <div class="text-xs space-y-1 max-h-56 overflow-y-auto scroll-thin">
+      {% for ev in events %}
+        <div class="border-b border-slate-800/50 py-1">
+          <div class="flex justify-between">
+            <span class="font-mono text-cyan-300">{{ ev.type }}</span>
+            <span class="text-slate-500">{{ fmt.short_dt(ev.created_at) }}</span>
+          </div>
+          {% if ev.payload_str %}
+            <div class="text-slate-400 mt-0.5 font-mono text-[11px]">{{ ev.payload_str }}</div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+    {% else %}
+      <div class="text-xs text-slate-500">No events in last 24h.</div>
+    {% endif %}
+  </section>
+</div>
+
+{% if subscribes %}
+<div class="mt-4">
+  <div class="label mb-1">Subscribed events</div>
+  <div class="text-[11px] text-slate-400 font-mono">{{ subscribes | join(", ") }}</div>
+</div>
+{% endif %}
+
+<div class="mt-4 text-xs text-slate-500">
+  <a href="/?view=operator" class="hover:text-cyan-300">← back to operator view</a>
+</div>

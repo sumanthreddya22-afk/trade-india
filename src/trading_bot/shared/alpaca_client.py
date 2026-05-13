@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import OrderClass, OrderSide as AlpacaSide, OrderType, TimeInForce
+from alpaca.trading.enums import OrderClass, OrderSide as AlpacaSide, OrderStatus, OrderType, TimeInForce
 from alpaca.trading.requests import (
     LimitOrderRequest,
     MarketOrderRequest,
@@ -23,6 +23,19 @@ from trading_bot.log_structured import StructuredLogger
 PAPER_URL_PREFIX = "https://paper-api.alpaca.markets"
 
 _audit_log = StructuredLogger(role="alpaca")
+
+# Alpaca crypto symbols come in two forms: "BTC/USD" (slash) and "BTCUSD" (no slash).
+# Market orders for crypto require IOC time_in_force (GTC/DAY are rejected by the venue).
+_CRYPTO_QUOTE_CURRENCIES = ("USD", "USDT", "USDC", "EUR", "BTC")
+
+
+def _is_crypto_symbol(symbol: str) -> bool:
+    """Return True for both slash-form (BTC/USD) and no-slash (BTCUSD) crypto symbols."""
+    sym = symbol.upper()
+    for q in _CRYPTO_QUOTE_CURRENCIES:
+        if sym.endswith("/" + q) or (sym.endswith(q) and len(sym) > len(q)):
+            return True
+    return False
 
 
 def _audit_order_submitted(
@@ -171,6 +184,81 @@ class AlpacaClient:
             secret_key=settings.alpaca_api_secret,
             paper=True,
         )
+        # Execution policy is optional. When set via set_execution_policy(),
+        # both bracket-stock and crypto-entry paths consult the live top-of-
+        # book before submitting: trades whose quoted spread exceeds
+        # `_max_spread_pct` are refused, and limit prices are nudged past
+        # the touch by `_marketable_buffer_pct` so they actually fill.
+        # When unset, behaviour is unchanged.
+        self._md: "Any | None" = None
+        self._marketable_buffer_pct: float = 0.0
+        self._max_spread_pct: float = 1.0  # effectively disabled
+
+    def set_execution_policy(
+        self, *, market_data: "Any",
+        marketable_buffer_pct: float, max_spread_pct: float,
+    ) -> None:
+        self._md = market_data
+        self._marketable_buffer_pct = float(marketable_buffer_pct)
+        self._max_spread_pct = float(max_spread_pct)
+
+    def _quote_or_refuse(self, symbol: str):
+        """Returns the live Quote when the execution policy is active and
+        the spread is within tolerance. Raises AlpacaClientError when the
+        policy is active but the quote is missing or the spread is too
+        wide. Returns None when no policy is set (caller falls through to
+        legacy pricing)."""
+        if self._md is None:
+            return None
+        quote = self._md.get_latest_quote(symbol)
+        if quote is None:
+            raise AlpacaClientError(
+                f"no live quote for {symbol} — refusing to submit without "
+                "spread/reprice gate (would fill blind)"
+            )
+        if quote.spread_pct > self._max_spread_pct:
+            raise AlpacaClientError(
+                f"quoted spread too wide for {symbol}: "
+                f"{quote.spread_pct*100:.2f}% > {self._max_spread_pct*100:.2f}% "
+                f"(bid={quote.bid} ask={quote.ask})"
+            )
+        return quote
+
+    def _cancel_open_orders_for_symbol(self, symbol: str) -> None:
+        """Cancel all open orders for *symbol* before placing a new entry.
+
+        Prevents Alpaca's wash-trade rejection (code 40310000) when a stale
+        order from a prior cycle is still on the books on the opposite side.
+        Fails soft: logs each cancelled/failed order but never aborts the
+        incoming trade.
+        """
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+        orderable = _to_orderable_symbol(symbol, AssetClass.CRYPTO) if "/" not in symbol and symbol.endswith("USD") else symbol
+        symbols_to_match = {symbol, orderable}
+        try:
+            open_orders = self._client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200)
+            )
+        except Exception as e:
+            _audit_log.event("pre_entry_cancel_skipped", symbol=symbol, error=str(e))
+            return
+        for o in open_orders:
+            if str(o.symbol) not in symbols_to_match:
+                continue
+            try:
+                self._client.cancel_order_by_id(str(o.id))
+                _audit_log.event(
+                    "pre_entry_cancel_ok", symbol=symbol,
+                    cancelled_order_id=str(o.id),
+                    order_type=str(getattr(o, "type", "")),
+                    side=str(getattr(o, "side", "")),
+                )
+            except Exception as ce:
+                _audit_log.event(
+                    "pre_entry_cancel_failed", symbol=symbol,
+                    order_id=str(o.id), error=str(ce),
+                )
 
     def get_account(self) -> AccountSnapshot:
         try:
@@ -209,6 +297,56 @@ class AlpacaClient:
         except Exception as e:
             raise AlpacaClientError(f"get_orders failed: {e}") from e
         return {str(o.symbol) for o in orders}
+
+    def get_order_bracket_levels(self) -> dict[str, tuple[float | None, float | None]]:
+        """Return {symbol: (stop_price, take_profit_price)} from open bracket legs.
+
+        Makes one get_orders call and extracts stop and limit prices per symbol.
+        For an active long position: the open SELL STOP is the stop-loss, the open
+        SELL LIMIT is the take-profit leg (entry limit already filled and closed).
+        """
+        from alpaca.trading.enums import QueryOrderStatus
+        from alpaca.trading.requests import GetOrdersRequest
+        try:
+            open_orders = self._client.get_orders(
+                filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=200)
+            )
+        except Exception as e:
+            raise AlpacaClientError(f"get_order_bracket_levels failed: {e}") from e
+
+        stops: dict[str, float] = {}
+        take_profits: dict[str, float] = {}
+        for o in open_orders:
+            sym = str(getattr(o, "symbol", "") or "")
+            order_type = str(getattr(o, "type", "")).lower()
+            if "stop" in order_type:
+                sp = getattr(o, "stop_price", None)
+                if sp is not None:
+                    try:
+                        stops[sym] = float(sp)
+                    except (TypeError, ValueError):
+                        pass
+            elif "limit" in order_type:
+                lp = getattr(o, "limit_price", None)
+                if lp is not None:
+                    try:
+                        take_profits[sym] = float(lp)
+                    except (TypeError, ValueError):
+                        pass
+
+        result: dict[str, tuple[float | None, float | None]] = {}
+        for sym in set(list(stops) + list(take_profits)):
+            pair = (stops.get(sym), take_profits.get(sym))
+            result[sym] = pair
+            # Crypto orders use "BTC/USD" but positions API returns "BTCUSD".
+            # Store both so callers can look up by either form.
+            if "/" in sym:
+                no_slash = sym.replace("/", "")
+                result[no_slash] = pair
+            elif sym.endswith("USD") and len(sym) > 4:
+                with_slash = f"{sym[:-3]}/USD"
+                result[with_slash] = pair
+        return result
 
     def get_active_assets(self, asset_class: str) -> list[TradableAsset]:
         """List all active+tradable assets for the given asset_class.
@@ -326,19 +464,35 @@ class AlpacaClient:
         return self._place_stock_bracket(req)
 
     def _place_stock_bracket(self, req: OrderRequest) -> OrderResult:
+        self._cancel_open_orders_for_symbol(req.symbol)
+        # Marketable-limit + spread gate. The signal's entry_price often
+        # leaves the bracket limit unfilled once price has drifted by
+        # submission time. With the execution policy wired, reprice the
+        # entry to ask × (1 + buffer) for BUY (bid × (1 - buffer) for SELL)
+        # so the order is marketable; the SL is left at the strategy's
+        # absolute stop level (independent of fill price), and the TP is
+        # rebuilt from the new entry to preserve the 2:1 reward:risk shape.
+        # When the policy is unset, behaviour is identical to before.
+        limit_price = float(req.limit_price)
+        quote = self._quote_or_refuse(req.symbol)
+        if quote is not None:
+            if req.side == OrderSide.BUY:
+                limit_price = round(quote.ask * (1.0 + self._marketable_buffer_pct), 2)
+            else:
+                limit_price = round(quote.bid * (1.0 - self._marketable_buffer_pct), 2)
         # Alpaca bracket orders require a take-profit leg. Use 2:1 reward:risk.
-        risk = abs(float(req.limit_price) - float(req.stop_loss_price))
+        risk = abs(limit_price - float(req.stop_loss_price))
         if req.side == OrderSide.BUY:
-            take_profit_price = float(req.limit_price) + 2 * risk
+            take_profit_price = limit_price + 2 * risk
         else:
-            take_profit_price = float(req.limit_price) - 2 * risk
+            take_profit_price = limit_price - 2 * risk
         try:
             entry_req = LimitOrderRequest(
                 symbol=req.symbol,
                 qty=float(req.qty),
                 side=_to_alpaca_side(req.side),
                 time_in_force=TimeInForce.DAY,
-                limit_price=float(req.limit_price),
+                limit_price=limit_price,
                 order_class=OrderClass.BRACKET,
                 stop_loss=StopLossRequest(stop_price=float(req.stop_loss_price)),
                 take_profit=TakeProfitRequest(limit_price=round(take_profit_price, 2)),
@@ -367,6 +521,8 @@ class AlpacaClient:
 
     def _place_crypto_with_stop(self, req: OrderRequest) -> OrderResult:
         """Crypto orders are placed in two non-atomic legs:
+        0) cancel any stale open orders for this symbol (prevents wash-trade
+           rejection on the stop-limit leg)
             1) market entry
             2) standalone stop-limit order
 
@@ -380,19 +536,56 @@ class AlpacaClient:
         Either way we never hold an unprotected crypto position past the
         verification window.
         """
+        self._cancel_open_orders_for_symbol(req.symbol)
+        orderable_symbol = _to_orderable_symbol(req.symbol, req.asset_class)
+        # Marketable-limit + spread gate. The previous true-market path on
+        # crypto could eat the entire visible book on illiquid alts. With
+        # the execution policy wired, we submit a LimitOrderRequest priced
+        # past the touch by `_marketable_buffer_pct` so we still get an
+        # essentially-immediate fill but with a hard slippage cap; trades
+        # where the quoted spread is too wide are refused entirely. When
+        # the policy is unset, behaviour falls back to the legacy market
+        # order so unit tests + tooling that bypass set_execution_policy
+        # keep working.
         try:
-            entry_req = MarketOrderRequest(
-                symbol=req.symbol,
-                qty=float(req.qty),
-                side=_to_alpaca_side(req.side),
-                time_in_force=TimeInForce.GTC,
-            )
-            entry = self._client.submit_order(entry_req)
-            _audit_order_submitted(
-                source="crypto_entry", symbol=req.symbol, side=req.side.value,
-                qty=req.qty, asset_class=req.asset_class.value,
-                order_id=str(entry.id), order_type="market",
-            )
+            quote = self._quote_or_refuse(orderable_symbol)
+        except AlpacaClientError:
+            # Re-raise so the caller (orchestrator) records this as a
+            # clean `api_error` decision rather than a generic broker fault.
+            raise
+        try:
+            if quote is not None:
+                if req.side == OrderSide.BUY:
+                    limit_price = round(quote.ask * (1.0 + self._marketable_buffer_pct), 6)
+                else:
+                    limit_price = round(quote.bid * (1.0 - self._marketable_buffer_pct), 6)
+                entry_req = LimitOrderRequest(
+                    symbol=orderable_symbol,
+                    qty=float(req.qty),
+                    side=_to_alpaca_side(req.side),
+                    time_in_force=TimeInForce.IOC,
+                    limit_price=limit_price,
+                )
+                entry = self._client.submit_order(entry_req)
+                _audit_order_submitted(
+                    source="crypto_entry", symbol=req.symbol, side=req.side.value,
+                    qty=req.qty, asset_class=req.asset_class.value,
+                    order_id=str(entry.id), order_type="marketable_limit_ioc",
+                    limit_price=limit_price,
+                )
+            else:
+                entry_req = MarketOrderRequest(
+                    symbol=orderable_symbol,
+                    qty=float(req.qty),
+                    side=_to_alpaca_side(req.side),
+                    time_in_force=TimeInForce.GTC,
+                )
+                entry = self._client.submit_order(entry_req)
+                _audit_order_submitted(
+                    source="crypto_entry", symbol=req.symbol, side=req.side.value,
+                    qty=req.qty, asset_class=req.asset_class.value,
+                    order_id=str(entry.id), order_type="market",
+                )
         except Exception as e:
             raise AlpacaClientError(f"crypto entry order failed: {e}") from e
 
@@ -403,20 +596,65 @@ class AlpacaClient:
         # "insufficient balance", leaving the position unprotected. Re-query the
         # entry order to get filled_qty, briefly polling so the fill state
         # has time to propagate.
+        # Wait for the entry to reach "filled" status before placing the stop.
+        # Placing the stop while the entry is still open (pending/partial) triggers
+        # Alpaca's wash-trade check (code 40310000) because the open BUY entry
+        # and the SELL stop are on opposite sides of the same symbol.
+        # If the entry never fills within the window, cancel it and abort — an
+        # unfilled entry must not linger on the books without a paired stop.
         actual_qty = float(req.qty)
+        import time as _t
+        entry_filled = False
         try:
-            for _ in range(5):
+            for _ in range(40):  # up to 20 seconds
                 refreshed = self._client.get_order_by_id(entry.id)
                 fq = float(getattr(refreshed, "filled_qty", 0) or 0)
-                if fq > 0:
-                    actual_qty = fq
+                if getattr(refreshed, "status", None) == OrderStatus.FILLED:
+                    actual_qty = fq or float(req.qty)
+                    entry_filled = True
                     break
-                import time as _t
                 _t.sleep(0.5)
         except Exception:
-            # If the re-query fails, fall through with req.qty — stop submission
-            # may then itself fail and the unprotected-position recovery path runs.
             pass
+
+        if not entry_filled:
+            # Entry didn't fill in time. Cancel it so it can't fill later
+            # without a stop, then surface a clean error.
+            cancel_msg = ""
+            try:
+                self._client.cancel_order_by_id(str(entry.id))
+                cancel_msg = "pending entry cancelled (never filled within 20 s)"
+            except Exception as ce:
+                cancel_msg = f"entry cancel FAILED: {ce} — manually cancel {entry.id}"
+            raise AlpacaClientError(
+                f"crypto entry order did not fill within 20 s; {cancel_msg}"
+            )
+
+        # After confirming the fill via order-status, wait for the position
+        # to appear in get_all_positions() before placing the stop-limit.
+        # Alpaca's internal order book settles asynchronously — placing a
+        # SELL stop while the just-filled BUY is still "active" triggers
+        # wash-trade rejection (code 40310000). Polling the positions ledger
+        # is more reliable than a fixed sleep because it confirms the state
+        # transition the stop placement depends on.
+        _pos_confirmed = False
+        _sym_noSlash = orderable_symbol.replace("/", "")
+        for _ in range(20):  # up to 10 seconds
+            try:
+                _pos_list = self._client.get_all_positions()
+                if any(
+                    str(p.symbol).replace("/", "") == _sym_noSlash
+                    for p in _pos_list
+                ):
+                    _pos_confirmed = True
+                    break
+            except Exception:
+                pass
+            _t.sleep(0.5)
+        if not _pos_confirmed:
+            # Position not yet visible — add a final safety sleep so the
+            # stop doesn't fire into a still-settling order book.
+            _t.sleep(1.0)
 
         stop_side = _opposite(req.side)
         stop_trigger = float(req.stop_loss_price)
@@ -431,7 +669,7 @@ class AlpacaClient:
         stop_error: Exception | None = None
         try:
             stop_req = StopLimitOrderRequest(
-                symbol=req.symbol,
+                symbol=orderable_symbol,
                 qty=actual_qty,
                 side=_to_alpaca_side(stop_side),
                 time_in_force=TimeInForce.GTC,
@@ -511,8 +749,9 @@ class AlpacaClient:
         except Exception as e:
             raise AlpacaClientError(f"verify failed (get_positions): {e}") from e
 
+        _req_sym_norm = req.symbol.replace("/", "")
         pos = next(
-            (p for p in raw_positions if str(p.symbol) == req.symbol),
+            (p for p in raw_positions if str(p.symbol).replace("/", "") == _req_sym_norm),
             None,
         )
         if pos is None:
@@ -541,7 +780,7 @@ class AlpacaClient:
         # Unprotected position detected. Market-flatten.
         try:
             flatten_req = MarketOrderRequest(
-                symbol=req.symbol,
+                symbol=_to_orderable_symbol(req.symbol, req.asset_class),
                 qty=float(getattr(pos, "qty", req.qty)),
                 side=_to_alpaca_side(_opposite(req.side)),
                 time_in_force=TimeInForce.GTC,
@@ -708,12 +947,9 @@ class AlpacaClient:
 
         # Submit the flatten order
         try:
-            asset_class_str = (
-                "crypto"
-                if any(symbol.endswith(q) for q in ("/USD", "/USDT", "/USDC", "/EUR", "/BTC"))
-                else "stock"
-            )
-            tif = TimeInForce.GTC if asset_class_str == "crypto" else TimeInForce.DAY
+            asset_class_str = "crypto" if _is_crypto_symbol(symbol) else "stock"
+            # Alpaca crypto market orders require IOC; equity uses DAY.
+            tif = TimeInForce.IOC if asset_class_str == "crypto" else TimeInForce.DAY
             flatten_req = MarketOrderRequest(
                 symbol=symbol,
                 qty=pos_qty,

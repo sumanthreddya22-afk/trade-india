@@ -1,3 +1,0 @@
-# strategy/wheel_blocklist.yaml
-# Symbols never to wheel. One symbol per line under `symbols:`.
-symbols: []

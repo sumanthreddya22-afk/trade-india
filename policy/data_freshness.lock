@@ -1,0 +1,6 @@
+{
+  "lock_version": "2026-05-13.v4-phase0-skeleton",
+  "_note": "Skeleton only — per-lane staleness thresholds (equity 5 min, crypto 60 s, options 60 s during RTH) land in Phase 3 alongside the Alpaca adapter hardening.",
+  "owner": "L1 Data Ingest",
+  "phase_when_populated": 3
+}

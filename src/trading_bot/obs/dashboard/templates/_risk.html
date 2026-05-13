@@ -1,0 +1,48 @@
+<div id="risk" class="card p-6 lg:col-span-2"
+     hx-get="/fragment/risk" hx-trigger="every 60s" hx-swap="outerHTML">
+  <div class="flex items-baseline justify-between">
+    <div>
+      <div class="label">Safety Limits</div>
+      <h3 class="text-xl font-semibold mt-1">How close to a self-imposed halt</h3>
+    </div>
+    {% if s.halt and s.halt.halted %}
+    <span class="px-2 py-1 rounded text-xs bg-rose-500/20 border border-rose-500/40 text-rose-300" title="The bot has stopped placing new trades because a safety limit was breached. Existing positions are still managed.">Trading paused · {{ s.halt.reason }}</span>
+    {% else %}
+    <span class="px-2 py-1 rounded text-xs bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">Trading allowed</span>
+    {% endif %}
+  </div>
+
+  {% if s.halt %}
+  <div class="grid grid-cols-3 gap-3 mt-4 text-sm">
+    <div class="rounded bg-slate-900/60 border border-slate-800 p-3" title="Profit/loss since the start of today, as a % of equity.">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500">Today's P&amp;L</div>
+      <div class="text-{{ fmt.pnl_color(s.halt.daily_pnl_pct) }}-400 font-semibold mt-1">{{ fmt.pct(s.halt.daily_pnl_pct, sign=true) }}</div>
+    </div>
+    <div class="rounded bg-slate-900/60 border border-slate-800 p-3" title="Profit/loss since Monday, as a % of equity.">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500">This week's P&amp;L</div>
+      <div class="text-{{ fmt.pnl_color(s.halt.weekly_pnl_pct) }}-400 font-semibold mt-1">{{ fmt.pct(s.halt.weekly_pnl_pct, sign=true) }}</div>
+    </div>
+    <div class="rounded bg-slate-900/60 border border-slate-800 p-3" title="How many trading days in a row have ended in the red. The bot pauses if this hits the cap.">
+      <div class="text-[10px] uppercase tracking-wider text-slate-500">Losing days in a row</div>
+      <div class="font-semibold mt-1">{{ s.halt.consecutive_losing_days }}</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="space-y-3 mt-5">
+    {% for r in s.risk_headroom %}
+    {% set color = "rose" if r.severity == "halt" else ("amber" if r.severity == "warn" else "cyan") %}
+    <div>
+      <div class="flex items-baseline justify-between text-sm">
+        <span class="text-slate-300">{{ r.rule }}</span>
+        <span class="text-slate-400 text-xs">{{ r.note }}</span>
+      </div>
+      <div class="h-2 bg-slate-800 rounded-full mt-1 overflow-hidden">
+        <div class="h-full bg-{{ color }}-400" style="width: {{ fmt.clamp_pct(r.used_pct) }}%"></div>
+      </div>
+    </div>
+    {% else %}
+    <div class="text-sm text-slate-500 italic">Risk state unavailable.</div>
+    {% endfor %}
+  </div>
+</div>

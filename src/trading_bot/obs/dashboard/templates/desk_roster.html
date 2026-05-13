@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-950">
+<head>
+  <meta charset="utf-8">
+  <title>Trading Bot — Desk Roster</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { background: linear-gradient(180deg,#070b15 0%,#0a0f1c 100%);
+           color: #e2e8f0; font-family: ui-sans-serif,system-ui,-apple-system,sans-serif; }
+    .card { background: rgba(15,23,42,.85); border:1px solid #1e293b; border-radius: 16px; }
+    .label { font-size: 11px; letter-spacing: .15em; text-transform: uppercase;
+             color:#06b6d4; font-weight:600; }
+    .pipeline-tab { display: inline-block; padding: 8px 16px; border-radius: 999px;
+                    background: #0f172a; border: 1px solid #1e293b; color: #94a3b8;
+                    font-size: 13px; font-weight: 500; margin-right: 8px; cursor: pointer; }
+    .pipeline-tab.active { background: rgba(6,182,212,.1); border-color: #06b6d4; color: #67e8f9; }
+    .role-pill { display: inline-block; padding: 2px 8px; border-radius: 4px;
+                 font-size: 11px; font-weight: 500; }
+    .role-pill.judge { background: rgba(245,158,11,.15); color: #fbbf24; }
+    .role-pill.reviewer { background: rgba(59,130,246,.15); color: #93c5fd; }
+    .role-pill.classifier { background: rgba(168,85,247,.15); color: #c4b5fd; }
+    .role-pill.summary { background: rgba(34,197,94,.15); color: #86efac; }
+    .stance-tag { font-size: 11px; color: #64748b; font-style: italic; }
+    .specialty-chip { display: inline-block; padding: 2px 8px; margin: 2px;
+                       background: #0f172a; border: 1px solid #1e293b;
+                       border-radius: 4px; font-size: 11px; color: #94a3b8; }
+    .accuracy-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+                    margin-top: 8px; font-size: 11px; }
+    .stat-pill { display: inline-flex; align-items: center; gap: 4px;
+                  padding: 2px 8px; border-radius: 4px;
+                  background: #0b1322; border: 1px solid #1e293b;
+                  color: #94a3b8; }
+    .stat-pill.hit-strong { color: #86efac; border-color: rgba(34,197,94,.3); }
+    .stat-pill.hit-weak { color: #fca5a5; border-color: rgba(239,68,68,.3); }
+    .stat-pill.hit-mid { color: #fde68a; border-color: rgba(245,158,11,.3); }
+    .stat-pill.no-data { color: #475569; font-style: italic; }
+    a { color: #22d3ee; }
+  </style>
+</head>
+<body class="min-h-full">
+  <div class="max-w-7xl mx-auto p-8">
+    <header class="mb-8">
+      <div class="flex items-center justify-between">
+        <div>
+          <p class="label">Trading Desk</p>
+          <h1 class="text-3xl font-bold mt-1">Roster</h1>
+          <p class="text-sm text-slate-400 mt-2">
+            {{ total }} named personas across {{ groups|length }} pipelines.
+            Every LLM call in the system runs through one of these.
+          </p>
+        </div>
+        <a href="/" class="text-sm text-slate-400 hover:text-cyan-400">&larr; back</a>
+      </div>
+    </header>
+
+    <!-- Pipeline tabs -->
+    <div class="mb-6">
+      {% for pipeline_name in ['shared', 'stocks', 'crypto', 'options'] %}
+        {% set count = (groups[pipeline_name] | length) if groups.get(pipeline_name) else 0 %}
+        <a href="#{{ pipeline_name }}"
+           class="pipeline-tab {% if pipeline_name == 'shared' %}active{% endif %}">
+          {{ pipeline_name|capitalize }}
+          <span class="text-xs opacity-60 ml-1">({{ count }})</span>
+        </a>
+      {% endfor %}
+    </div>
+
+    <!-- Roster grouped by pipeline -->
+    {% for pipeline_name in ['shared', 'stocks', 'crypto', 'options'] %}
+      {% set personas = groups.get(pipeline_name, []) %}
+      <section id="{{ pipeline_name }}" class="mb-12">
+        <h2 class="text-xl font-semibold mb-4 text-slate-200">
+          {{ pipeline_name|capitalize }} Desk
+          <span class="text-sm text-slate-500 font-normal">— {{ personas|length }} personas</span>
+        </h2>
+
+        {% if personas %}
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {% for p in personas %}
+              <article class="card p-5">
+                <div class="flex items-start justify-between mb-3">
+                  <div>
+                    <h3 class="text-base font-semibold text-slate-100">{{ p.full_name }}</h3>
+                    <p class="text-xs text-slate-400">{{ p.role_title }}, {{ p.years_experience }}yr</p>
+                  </div>
+                  <span class="role-pill {{ p.model_tier }}">{{ p.model_tier }}</span>
+                </div>
+
+                <p class="text-xs text-slate-500 mb-3">{{ p.firm_pedigree }}</p>
+
+                <div class="mb-3">
+                  <p class="stance-tag mb-1">stance: {{ p.default_stance }}</p>
+                  <div>
+                    {% for s in p.specialties[:5] %}
+                      <span class="specialty-chip">{{ s }}</span>
+                    {% endfor %}
+                  </div>
+                </div>
+
+                <div class="flex items-center justify-between border-t border-slate-800 pt-3 mt-3
+                            text-xs text-slate-500">
+                  <code class="bg-slate-900/60 px-2 py-0.5 rounded">{{ p.debate_role }}</code>
+                  <span>{{ p.prompt_version }}</span>
+                </div>
+                {% if p.model %}
+                  {% set _m = p.model %}
+                  {% if 'opus' in _m %}{% set _mlabel = 'Opus 4.7' %}{% set _mbg = 'rgba(245,158,11,.18)' %}{% set _mfg = '#fcd34d' %}
+                  {% elif 'sonnet' in _m %}{% set _mlabel = 'Sonnet 4.6' %}{% set _mbg = 'rgba(99,102,241,.18)' %}{% set _mfg = '#a5b4fc' %}
+                  {% elif 'haiku' in _m %}{% set _mlabel = 'Haiku 4.5' %}{% set _mbg = 'rgba(14,165,233,.18)' %}{% set _mfg = '#7dd3fc' %}
+                  {% else %}{% set _mlabel = _m %}{% set _mbg = 'rgba(100,116,139,.18)' %}{% set _mfg = '#cbd5e1' %}{% endif %}
+                  <div class="mt-2 text-[11px]" title="model id: {{ _m }}">
+                    <span class="text-slate-500">model:</span>
+                    <span style="background: {{ _mbg }}; color: {{ _mfg }};
+                                 padding: 1px 6px; border-radius: 4px;
+                                 font-family: ui-monospace,monospace;">{{ _mlabel }}</span>
+                  </div>
+                {% endif %}
+
+                {% if p.accuracy %}
+                  {% set acc = p.accuracy %}
+                  <div class="accuracy-row">
+                    {% if acc.hit_rate_pct is not none %}
+                      {% set hr = acc.hit_rate_pct %}
+                      {% if hr >= 60 %}
+                        <span class="stat-pill hit-strong">hit {{ hr }}%</span>
+                      {% elif hr >= 40 %}
+                        <span class="stat-pill hit-mid">hit {{ hr }}%</span>
+                      {% else %}
+                        <span class="stat-pill hit-weak">hit {{ hr }}%</span>
+                      {% endif %}
+                      <span class="stat-pill" title="verdicts with known outcome / total">
+                        {{ acc.n_outcomes_known }}/{{ acc.n_verdicts }} known
+                      </span>
+                    {% elif acc.n_verdicts > 0 %}
+                      <span class="stat-pill" title="judge verdicts cast (outcome data not yet joined)">
+                        {{ acc.n_verdicts }} verdicts
+                      </span>
+                    {% endif %}
+                    <span class="stat-pill" title="debate runs participated in (last 30d)">
+                      {{ acc.n_runs }} runs
+                    </span>
+                    {% if acc.last_run_at %}
+                      <span class="stat-pill" title="most recent debate participation">
+                        last {{ acc.last_run_at[:10] }}
+                      </span>
+                    {% endif %}
+                  </div>
+                {% else %}
+                  <div class="accuracy-row">
+                    <span class="stat-pill no-data">no debates yet</span>
+                  </div>
+                {% endif %}
+              </article>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-sm text-slate-500 italic">
+            (no personas registered yet — Phase {{
+              {'stocks':'2','options':'3'}.get(pipeline_name, '?')
+            }} will populate)
+          </p>
+        {% endif %}
+      </section>
+    {% endfor %}
+  </div>
+</body>
+</html>

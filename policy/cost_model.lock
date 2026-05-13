@@ -1,0 +1,6 @@
+{
+  "lock_version": "2026-05-13.v4-phase0-skeleton",
+  "_note": "Skeleton only — pessimistic cost model parameters (stocks/crypto/options bps, fees, slippage) land in Phase 3 per Plan §9.",
+  "owner": "L7 Execution Kernel",
+  "phase_when_populated": 3
+}

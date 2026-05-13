@@ -1,0 +1,97 @@
+<section id="decision_activity" class="card p-6"
+         hx-get="/fragment/decision_activity"
+         hx-trigger="decision.created from:body, every 60s"
+         hx-swap="outerHTML">
+  <div class="flex items-baseline justify-between flex-wrap gap-2">
+    <div>
+      <div class="label">Decision Log</div>
+      <h3 class="text-xl font-semibold mt-1">What the bot looked at recently
+        {% if s.decision_activity %}
+          <span class="text-slate-500 text-sm font-normal">
+            — last {{ s.decision_activity.window_hours }}h · {{ s.decision_activity.total }} decisions logged
+          </span>
+        {% endif %}
+      </h3>
+      <p class="text-xs text-slate-500 mt-1">
+        Every symbol the bot looked at — what it decided to do, and why. Most
+        of the time the answer is "wait" because filters weren't met. The
+        breakdown below shows which filters fire most often.
+      </p>
+    </div>
+    {% if s.decision_activity and s.decision_activity.last_decision_at %}
+      <span class="text-xs text-slate-500">
+        last: {{ s.decision_activity.last_decision_at | et('%H:%M:%S ET') }}
+      </span>
+    {% endif %}
+  </div>
+
+  {% if not s.decision_activity or s.decision_activity.total == 0 %}
+    <div class="mt-4 text-sm text-slate-500 italic">
+      No decisions logged in the last 24 hours. The bot may be idle or scanning paused.
+    </div>
+  {% else %}
+    <div class="mt-5 grid grid-cols-1 md:grid-cols-2 gap-6">
+
+      <div>
+        <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">
+          Action breakdown
+        </div>
+        <table class="w-full text-sm">
+          <tbody class="divide-y divide-slate-800/60">
+            {% set action_labels = {
+              "placed_order": ("Trade placed", "emerald"),
+              "rejected_by_risk": ("Blocked by risk limits", "rose"),
+              "rejected_by_risk_debate": ("Blocked by adversarial risk review", "fuchsia"),
+              "rejected_by_intel": ("Blocked by news/sentiment filter", "rose"),
+              "skipped_restricted": ("Skipped (restricted symbol)", "rose"),
+              "skipped_existing_position": ("Skipped (already holding it)", "amber"),
+              "skipped_pending_order": ("Skipped (order already in flight)", "amber"),
+              "skipped_intel": ("Skipped (waiting on news/sentiment)", "amber"),
+              "skipped_no_signal": ("Skipped (no entry signal)", "amber"),
+              "skipped_signal_filter": ("Skipped (signal filter)", "amber"),
+              "hold": ("Wait — filters not met", "slate"),
+              "api_error": ("Broker error — see Decision Pipeline", "rose"),
+              "escalate_to_human": ("Needs your review", "cyan"),
+            } %}
+            {% for action, count in s.decision_activity.action_counts %}
+              {% set tup = action_labels.get(action) %}
+              {% set label = tup[0] if tup else action.replace('_', ' ') %}
+              {% set color = tup[1] if tup else "slate" %}
+              <tr class="pos-row">
+                <td class="py-1.5 pr-2">
+                  <span class="px-2 py-0.5 rounded bg-{{ color }}-500/10 border border-{{ color }}-500/30 text-{{ color }}-300 text-xs">
+                    {{ label }}
+                  </span>
+                </td>
+                <td class="py-1.5 text-right tabular-nums">{{ count }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div>
+        <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">
+          Top rejection reasons
+        </div>
+        {% if s.decision_activity.top_rejection_reasons %}
+          <table class="w-full text-sm">
+            <tbody class="divide-y divide-slate-800/60">
+              {% for reason, count in s.decision_activity.top_rejection_reasons %}
+                <tr class="pos-row">
+                  <td class="py-1.5 pr-2 text-slate-300 text-xs">
+                    {{ reason[:80] }}
+                  </td>
+                  <td class="py-1.5 text-right tabular-nums text-slate-400">{{ count }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="text-sm text-slate-500 italic">No rejections in this window.</p>
+        {% endif %}
+      </div>
+
+    </div>
+  {% endif %}
+</section>

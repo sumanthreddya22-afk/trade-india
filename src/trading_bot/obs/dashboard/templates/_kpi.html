@@ -1,0 +1,59 @@
+<section id="kpi" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4"
+         hx-get="/fragment/kpi"
+         hx-trigger="trade.closed from:body, position.changed from:body, order.filled from:body, every 120s"
+         hx-swap="outerHTML">
+  <div class="card p-5" title="Total account value (cash + market value of all positions). The 'since start' line is cumulative P&amp;L vs the account's funding baseline — includes realized wins, realized losses, fees, slippage, and current unrealized.">
+    <div class="label">Account Value</div>
+    <div class="kpi-num text-emerald-400 mt-2">{{ fmt.usd(s.kpi.equity) }}</div>
+    <div class="kpi-sub">
+      {{ s.kpi.open_position_count }} open position{{ "" if s.kpi.open_position_count == 1 else "s" }}
+      {% if s.kpi.inception_pnl is not none and s.kpi.inception_pnl_pct is not none %}
+        · <span class="text-{{ fmt.pnl_color(s.kpi.inception_pnl) }}-400">{{ fmt.usd(s.kpi.inception_pnl, sign=true) }} ({{ fmt.pct(s.kpi.inception_pnl_pct, sign=true) }})</span> since start
+      {% endif %}
+    </div>
+  </div>
+  <div class="card p-5" title="Account value change since yesterday's close.">
+    <div class="label">Today's P&amp;L</div>
+    <div class="kpi-num text-{{ fmt.pnl_color(s.kpi.today_pnl_pct) }}-400 mt-2">{{ fmt.pct(s.kpi.today_pnl_pct, sign=true) }}</div>
+    <div class="kpi-sub">since yesterday's close</div>
+  </div>
+  <div class="card p-5" title="Profit/loss across positions that are still open. Becomes realized once closed. NOTE: this is open-only — closed-trade P&amp;L rolls into Account Value's 'since start' line.">
+    <div class="label">Open Trades P&amp;L</div>
+    <div class="kpi-num text-{{ fmt.pnl_color(s.kpi.open_pnl) }}-400 mt-2">{{ fmt.usd(s.kpi.open_pnl, sign=true) }}</div>
+    <div class="kpi-sub">on currently open positions</div>
+  </div>
+  <div class="card p-5" title="Cash sitting idle, ready to deploy on the next trade.">
+    <div class="label">Cash on Hand</div>
+    <div class="kpi-num text-cyan-400 mt-2">{{ fmt.pct(s.kpi.cash_pct) }}</div>
+    <div class="kpi-sub">{{ fmt.usd(s.kpi.cash) }} available</div>
+  </div>
+  <div class="card p-5" title="Share of the account currently tied up in open positions.">
+    <div class="label">Money at Work</div>
+    <div class="kpi-num text-cyan-400 mt-2">{{ fmt.pct(s.kpi.invested_pct) }}</div>
+    <div class="kpi-sub">deployed in positions</div>
+  </div>
+  <div class="card p-5" title="Largest peak-to-trough decline in account value over the last 30 days.">
+    <div class="label">Worst Drop (30d)</div>
+    <div class="kpi-num text-rose-400 mt-2">{{ fmt.pct(s.kpi.max_drawdown_pct) }}</div>
+    <div class="kpi-sub">peak-to-trough</div>
+  </div>
+  <div class="card p-5" title="Strategy-coach fallback gate. When HALTED, all stock + crypto trading is gated off (wheel still runs). Set by strategy_coach when 30d alpha < 1.5x SPY, or manually via tools/clear_fallback_flag.py.">
+    <div class="label">Trading Gate</div>
+    {% if s.kpi.fallback_active is none %}
+      <div class="kpi-num text-slate-400 mt-2">—</div>
+      <div class="kpi-sub">state unknown</div>
+    {% elif s.kpi.fallback_active %}
+      <div class="kpi-num text-rose-400 mt-2">HALTED</div>
+      <div class="kpi-sub">
+        by {{ s.kpi.fallback_set_by or "?" }}
+        {% if s.kpi.fallback_reason %} · {{ s.kpi.fallback_reason }}{% endif %}
+      </div>
+    {% else %}
+      <div class="kpi-num text-emerald-400 mt-2">OPEN</div>
+      <div class="kpi-sub">
+        cleared by {{ s.kpi.fallback_set_by or "?" }}
+        {% if s.kpi.fallback_reason %} · {{ s.kpi.fallback_reason }}{% endif %}
+      </div>
+    {% endif %}
+  </div>
+</section>

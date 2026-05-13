@@ -1,0 +1,6 @@
+{
+  "lock_version": "2026-05-13.v4-phase0-skeleton",
+  "_note": "Skeleton only — short sleeve readiness checklist (borrow availability, locate API, hard-to-borrow rates) lands in the SHORT phase per the roadmap. Long-only at seed.",
+  "owner": "L0 Governance",
+  "phase_when_populated": "SHORT"
+}

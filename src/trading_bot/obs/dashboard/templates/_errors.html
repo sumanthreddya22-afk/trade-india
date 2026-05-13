@@ -1,0 +1,11 @@
+<section id="errors"
+         hx-get="/fragment/errors" hx-trigger="every 60s" hx-swap="outerHTML">
+  {% if s.errors %}
+  <div class="card border-amber-500/30 bg-amber-500/5 p-4">
+    <div class="text-amber-400 text-xs uppercase tracking-wider font-semibold mb-2">Non-fatal errors during snapshot build ({{ s.errors|length }})</div>
+    <ul class="text-sm text-amber-200/80 list-disc list-inside space-y-1">
+      {% for e in s.errors %}<li>{{ e }}</li>{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</section>

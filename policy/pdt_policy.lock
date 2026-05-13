@@ -1,0 +1,6 @@
+{
+  "lock_version": "2026-05-13.v4-phase0-skeleton",
+  "_note": "Skeleton only — PDT day-trade threshold and equity boundary land in Phase 2. FINRA intraday-margin transition (Notice 25-XX, eff 2026-06-04, full 2026-10-20) will be tracked here without code changes.",
+  "owner": "L6 Risk Kernel",
+  "phase_when_populated": 2
+}

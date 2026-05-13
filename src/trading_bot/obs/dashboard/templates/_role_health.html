@@ -1,0 +1,81 @@
+<section id="role_health"
+         class="card p-5"
+         hx-get="/fragment/role_health"
+         hx-trigger="every 60s"
+         hx-swap="outerHTML">
+  <div class="flex items-center justify-between mb-4">
+    <span class="label" title="Each background job (scanner, reconciler, news warmer, etc.) is one 'role'. This card shows whether each is running cleanly.">Background Jobs</span>
+    <span class="text-[11px] text-slate-500">success rate over last 30 days</span>
+  </div>
+
+  {% if not lab.role_health %}
+    <div class="text-sm text-slate-500">No background jobs have run in the last 30 days.</div>
+  {% else %}
+    <p class="text-[11px] text-slate-500 mb-3">
+      Color reflects the most recent run, not the 30-day average — so one
+      blip on a rarely-used job doesn't make everything red. Green = healthy;
+      amber = needs a glance; red = failing now.
+    </p>
+    <div class="grid grid-cols-2 lg:grid-cols-3 gap-2">
+      {% for r in lab.role_health %}
+        {% set rate = r.success_rate_pct %}
+        {% set last_ok = r.last_status == "ok" %}
+        {% set low_sample = r.runs_30d < 10 %}
+        {# Tone matrix:
+             RED   — most recent run errored AND rate < 70  → ongoing failure
+             AMBER — most recent run errored OR  rate < 95
+                     OR (low sample with ANY past failure)  → flag for attention
+             GREEN — latest run ok AND rate >= 95           → healthy #}
+        {% if (not last_ok) and rate < 70 %}
+          {% set tone_bg = "bg-rose-950/40" %}
+          {% set tone_border = "border-rose-800/50" %}
+          {% set tone_text = "text-rose-300" %}
+          {% set tone_label = "failing" %}
+        {% elif (not last_ok) or rate < 95 %}
+          {% set tone_bg = "bg-amber-950/40" %}
+          {% set tone_border = "border-amber-800/50" %}
+          {% set tone_text = "text-amber-300" %}
+          {% set tone_label = "watch" %}
+        {% else %}
+          {% set tone_bg = "bg-emerald-950/40" %}
+          {% set tone_border = "border-emerald-800/50" %}
+          {% set tone_text = "text-emerald-300" %}
+          {% set tone_label = "ok" %}
+        {% endif %}
+        <div class="rounded-lg border {{ tone_border }} {{ tone_bg }} px-3 py-2"
+             title="{% if r.last_error %}Last error: {{ r.last_error }}{% else %}Last run: {{ r.last_status }} ({{ r.last_run_at | et('%b %d %-I:%M %p ET') }}){% endif %}">
+          <div class="flex items-baseline justify-between gap-2">
+            <span class="text-[12px] font-mono text-slate-300 truncate">{{ r.role_name }}</span>
+            <span class="text-sm font-semibold font-mono {{ tone_text }}">{{ "%.0f"|format(rate) }}%</span>
+          </div>
+          {# Phase 2 — named bot operators per role. Renders the people the bot
+             is "running on behalf of" for this scheduled job. Empty list →
+             rendered as "automated · no LLM" so a data fetcher still has a
+             label. #}
+          {% if r.operators %}
+            <div class="mt-1.5 flex flex-wrap gap-1" title="Operators staffing this job">
+              {% for op in r.operators %}
+                <span class="inline-flex items-center px-1.5 py-0.5 rounded bg-slate-900/70 border border-slate-700/60 text-[10px]"
+                      title="{{ op.name }} · {{ op.title }} ({{ op.pipeline }} · {{ op.debate_role }})">
+                  <span class="text-slate-200 font-medium">{{ op.name.split(' ')[0] }} {{ op.name.split(' ')[-1][0] }}.</span>
+                  {% if op.debate_role.endswith('_judge') %}
+                    <span class="ml-1 text-amber-300/80">⚖</span>
+                  {% endif %}
+                </span>
+              {% endfor %}
+            </div>
+          {% else %}
+            <div class="mt-1.5 text-[10px] text-slate-600 italic">automated · no LLM</div>
+          {% endif %}
+          <div class="text-[10px] text-slate-500 mt-1 flex justify-between">
+            <span>{{ r.runs_today }} today</span>
+            <span>
+              {% if low_sample %}<span class="text-slate-600" title="Low sample size — % can swing on a single failure">⚠ </span>{% endif %}
+              {{ r.runs_30d }} in 30d
+            </span>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</section>

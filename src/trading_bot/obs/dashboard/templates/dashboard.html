@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-950">
+<head>
+  <meta charset="utf-8">
+  <title>Trading Bot — Command Center</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="/static/tailwind.js"></script>
+  <script src="/static/htmx.min.js"></script>
+  <script src="/static/chart.umd.js"></script>
+  {# Real-time event bus bridge — opens EventSource(/api/stream) and
+     re-dispatches named events on document.body so HTMX fragments can
+     refresh on push via hx-trigger="<event> from:body, every <fallback>s". #}
+  <script defer src="/static/event_bus.js"></script>
+  <style>
+    :root { --bg: #0a0f1c; --card: #0f172a; --border: #1e293b; }
+    body { background: linear-gradient(180deg,#070b15 0%,#0a0f1c 100%); color: #e2e8f0; font-family: ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+    .card { background: rgba(15,23,42,.85); border:1px solid #1e293b; border-radius: 16px; }
+    .label { font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color:#06b6d4; font-weight:600; }
+    .kpi-num { font-size: 32px; font-weight: 700; line-height: 1.1; letter-spacing:-.02em; }
+    .kpi-sub { font-size: 12px; color:#64748b; margin-top:4px; }
+    .pulse-dot { width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 12px #10b981; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .nav-item { display:flex;align-items:center;gap:.75rem;padding:.55rem .75rem;border-radius:.5rem;font-size:14px;color:#94a3b8;cursor:pointer;}
+    .nav-item.active { background:#0f172a;color:#e2e8f0;border:1px solid #1e293b;}
+    .nav-item:hover { color:#e2e8f0;}
+    .pos-row:hover { background:rgba(15,23,42,.6); }
+    .scroll-thin::-webkit-scrollbar { width:6px;height:6px;}
+    .scroll-thin::-webkit-scrollbar-thumb { background:#1e293b;border-radius:3px;}
+    .gradient-text { background: linear-gradient(90deg,#22d3ee,#a78bfa);-webkit-background-clip:text;background-clip:text;color:transparent;}
+    .filter-btn.active { box-shadow: 0 0 0 1px rgba(34,211,238,.6) inset; }
+    .range-btn.active { font-weight:600; }
+    /* HTMX swap pulse so a refreshing card is briefly highlighted. */
+    .htmx-settling { transition: opacity .15s ease-out; }
+    .htmx-swapping { opacity: .6; }
+
+    /* Real-time stream status pill. Body[data-stream-status] is set by
+       /static/event_bus.js based on the EventSource connection state. */
+    .stream-pill { display:inline-flex;align-items:center;gap:.4rem;padding:.15rem .55rem;border-radius:9999px;font-size:11px;font-weight:600;letter-spacing:.05em;border:1px solid transparent; }
+    .stream-pill::before { content:""; width:6px;height:6px;border-radius:50%; }
+    body[data-stream-status="live"] .stream-pill { background:rgba(16,185,129,.12); color:#34d399; border-color:rgba(16,185,129,.35); }
+    body[data-stream-status="live"] .stream-pill::before { background:#10b981; box-shadow:0 0 6px #10b981; animation: pulse 2s infinite; }
+    body[data-stream-status="reconn"] .stream-pill { background:rgba(245,158,11,.12); color:#fbbf24; border-color:rgba(245,158,11,.35); }
+    body[data-stream-status="reconn"] .stream-pill::before { background:#f59e0b; }
+    body[data-stream-status="down"] .stream-pill { background:rgba(244,63,94,.12); color:#fb7185; border-color:rgba(244,63,94,.35); }
+    body[data-stream-status="down"] .stream-pill::before { background:#f43f5e; }
+    body[data-stream-status="off"] .stream-pill { background:rgba(100,116,139,.12); color:#94a3b8; border-color:rgba(100,116,139,.35); }
+    body[data-stream-status="off"] .stream-pill::before { background:#64748b; }
+    .stream-pill .label::after { content: attr(data-label); }
+    body[data-stream-status="live"] .stream-pill .label::after { content: "STREAM"; }
+    body[data-stream-status="reconn"] .stream-pill .label::after { content: "RECONN"; }
+    body[data-stream-status="down"] .stream-pill .label::after { content: "OFFLINE"; }
+    body[data-stream-status="off"] .stream-pill .label::after { content: "PAUSED"; }
+
+    /* Live price ticks (Phase 8). Cell flashes briefly green/red on
+       up/down ticks. data-tick-source="live" tags cells that have
+       received at least one push update so the operator can see which
+       holdings are actually streaming. */
+    [data-tick-symbol].tick-up   { animation: tickUp .35s ease-out; }
+    [data-tick-symbol].tick-down { animation: tickDown .35s ease-out; }
+    @keyframes tickUp   { 0% { background-color: rgba(16,185,129,.28); } 100% { background-color: transparent; } }
+    @keyframes tickDown { 0% { background-color: rgba(244,63,94,.28); } 100% { background-color: transparent; } }
+    [data-tick-symbol][data-tick-source="live"]::after { content: " ●"; color: #34d399; opacity: .6; font-size: 8px; vertical-align: super; }
+  </style>
+</head>
+<body class="min-h-full" data-stream-status="off">
+
+<div class="flex min-h-screen">
+
+  <!-- ───────────────────── Sidebar ───────────────────── -->
+  <aside class="w-56 shrink-0 border-r border-slate-800/70 px-3 py-5 hidden md:flex flex-col">
+    <div class="flex items-center gap-2 px-2 mb-8">
+      <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-400 to-emerald-500 grid place-items-center text-slate-900 font-bold">TB</div>
+      <div>
+        <div class="text-sm font-semibold leading-tight">Trading Bot</div>
+        <div class="text-xs text-slate-500">Paper command</div>
+      </div>
+    </div>
+    <nav class="space-y-1" id="sidebar-nav">
+      <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-1 mb-1">Right Now</div>
+      <a href="#strategy_mode" data-section="strategy_mode" class="nav-item active"><span>◆</span> What it's doing</a>
+      <a href="#regime" data-section="regime" class="nav-item"><span>🌡️</span> Market mood</a>
+      <a href="#kpi" data-section="kpi" class="nav-item"><span>📊</span> Account</a>
+      <a href="#risk" data-section="risk" class="nav-item"><span>🛡️</span> Safety limits</a>
+      <a href="#exposure" data-section="exposure" class="nav-item"><span>📈</span> Holdings</a>
+      <a href="#equity" data-section="equity" class="nav-item"><span>💹</span> Account history</a>
+      <a href="#orders" data-section="orders" class="nav-item"><span>📋</span> Live orders</a>
+      <a href="#activity_feed" data-section="activity_feed" class="nav-item"><span>📡</span> Live activity</a>
+      <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-3 mb-1">Recent Work</div>
+      <a href="#decision_activity" data-section="decision_activity" class="nav-item"><span>📜</span> Decision log</a>
+      <a href="#last_scan" data-section="last_scan" class="nav-item"><span>🧠</span> Last scan</a>
+      <a href="#opportunities" data-section="opportunities" class="nav-item"><span>🎯</span> Watchlist</a>
+      <a href="#stats" data-section="stats" class="nav-item"><span>📓</span> Track record</a>
+      <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-3 mb-1">Strategy</div>
+      <a href="#lab_evolution" data-section="lab_evolution" class="nav-item"><span>⚗</span> Tuning</a>
+      <a href="#calibrator" data-section="calibrator" class="nav-item"><span>◎</span> Backtest vs reality</a>
+      <a href="#proposals" data-section="proposals" class="nav-item"><span>✦</span> New ideas</a>
+      <a href="#llm_spend" data-section="llm_spend" class="nav-item"><span>💸</span> AI spend</a>
+      <div class="text-[10px] uppercase tracking-wider text-slate-600 px-2 mt-3 mb-1">System</div>
+      <a href="#role_health" data-section="role_health" class="nav-item"><span>◍</span> Background jobs</a>
+      <a href="#scheduled" data-section="scheduled" class="nav-item"><span>⏱</span> Scheduled jobs</a>
+      <a href="#freshness" data-section="freshness" class="nav-item"><span>🕒</span> Data health</a>
+      <a href="#email_firehose" data-section="email_firehose" class="nav-item"><span>📨</span> Inbox volume</a>
+      <a href="#process_registry" data-section="process_registry" class="nav-item"><span>⚙</span> Processes</a>
+      <a href="/desk" class="nav-item"><span>👥</span> Desk roster</a>
+      <a href="/architecture" class="nav-item"><span>📚</span> How it works</a>
+    </nav>
+
+    <div class="mt-auto">
+      {% include "_sidebar_status.html" %}
+    </div>
+  </aside>
+
+  <!-- ───────────────────── Main ───────────────────── -->
+  <main class="flex-1 px-6 lg:px-10 py-6 space-y-6 max-w-[1600px]">
+
+    {% include "_header.html" %}
+
+    {# Action Required banner — top of page. Renders nothing on a healthy day. #}
+    {% include "_action_required.html" %}
+
+    {# Most important real-time numbers first. #}
+    {% include "_kpi.html" %}
+
+    {# Strategy mode + Market mood: equal-height pair, balanced widths. #}
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {% include "_strategy_mode.html" %}
+      {% include "_regime.html" %}
+    </section>
+
+    {% include "_risk.html" %}
+
+    {# Holdings carries stop-loss column + click-to-expand drill-down (full width — it's the densest source of truth on the page). #}
+    {% include "_exposure.html" %}
+
+    {# Equity curve + live orders side-by-side. #}
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {% include "_equity.html" %}
+      {% include "_orders.html" %}
+    </section>
+
+    {# Live Activity — what the bot is doing right now. #}
+    {% include "_activity_feed.html" %}
+
+    {# ─── Recent Work ──────────────────────────────────────────────── #}
+    <div class="pt-3 pb-1">
+      <h2 class="text-[11px] uppercase tracking-[0.2em] text-cyan-400 font-semibold">Recent Work</h2>
+      <p class="text-xs text-slate-500 mt-1">What the bot considered, scanned, and traded.</p>
+    </div>
+
+    {% include "_decision_activity.html" %}
+    {# Lessons + last-scan as a pair: balances Recent Work's visual weight
+       and avoids three full-width cards stacked vertically. #}
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {% include "_lessons.html" %}
+      {% include "_last_scan.html" %}
+    </section>
+
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {% include "_opportunities.html" %}
+      {% include "_stats.html" %}
+    </section>
+
+    {# ─── Strategy ────────────────────────────────────────────────── #}
+    <div class="pt-3 pb-1">
+      <h2 class="text-[11px] uppercase tracking-[0.2em] text-cyan-400 font-semibold">Strategy — How It's Improving Itself</h2>
+      <p class="text-xs text-slate-500 mt-1">Nightly auto-tuning, weekly new ideas, and a sanity check that backtest results still hold up in real trading.</p>
+    </div>
+
+    {% include "_lab_evolution.html" %}
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {% include "_calibrator.html" %}
+      {% include "_llm_spend.html" %}
+    </section>
+    {% include "_proposals.html" %}
+    {% include "_threshold_overrides.html" %}
+    {% include "_intel_pool.html" %}
+
+    {# ─── System Health ───────────────────────────────────────────── #}
+    <div class="pt-3 pb-1">
+      <h2 class="text-[11px] uppercase tracking-[0.2em] text-cyan-400 font-semibold">System Health</h2>
+      <p class="text-xs text-slate-500 mt-1">Background jobs, data feeds, email volume, and which bot processes are running.</p>
+    </div>
+
+    {% include "_role_health.html" %}
+    {% include "_scheduled.html" %}
+    <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {% include "_freshness.html" %}
+      {% include "_email_firehose.html" %}
+      {% include "_process_registry.html" %}
+    </section>
+
+    <footer class="text-xs text-slate-600 pt-4 pb-8 text-center">
+      Trading Bot Dashboard · Local · 127.0.0.1 · Per-section auto-refresh
+    </footer>
+
+  </main>
+</div>
+
+<script>
+  // Scroll-spy: highlight the sidebar nav item whose section is in view.
+  (function() {
+    const items = document.querySelectorAll("#sidebar-nav .nav-item[data-section]");
+    if (!items.length || !("IntersectionObserver" in window)) return;
+    const map = new Map();
+    items.forEach(a => {
+      const id = a.dataset.section;
+      const el = document.getElementById(id);
+      if (el) map.set(el, a);
+    });
+    if (!map.size) return;
+    const setActive = (a) => {
+      items.forEach(x => x.classList.toggle("active", x === a));
+    };
+    const io = new IntersectionObserver((entries) => {
+      // Pick the entry closest to the top that is intersecting.
+      const visible = entries.filter(e => e.isIntersecting);
+      if (!visible.length) return;
+      visible.sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+      const a = map.get(visible[0].target);
+      if (a) setActive(a);
+    }, { rootMargin: "-30% 0px -60% 0px", threshold: [0, 0.25, 0.5, 1] });
+    map.forEach((_, el) => io.observe(el));
+    items.forEach(a => a.addEventListener("click", () => setActive(a)));
+  })();
+
+  // Pause HTMX polling while tab is hidden — saves Alpaca calls when the
+  // dashboard is in a background tab.
+  (function() {
+    if (!window.htmx) return;
+    document.addEventListener("visibilitychange", () => {
+      const hidden = document.hidden;
+      document.querySelectorAll("[hx-trigger]").forEach(el => {
+        const orig = el.dataset.hxTriggerOrig || el.getAttribute("hx-trigger");
+        if (!el.dataset.hxTriggerOrig) el.dataset.hxTriggerOrig = orig;
+        el.setAttribute("hx-trigger", hidden ? "manual-paused-while-hidden" : orig);
+        if (htmx.process) htmx.process(el);
+      });
+    });
+  })();
+</script>
+</body>
+</html>

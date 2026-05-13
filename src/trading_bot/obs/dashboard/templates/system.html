@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-950">
+<head>
+  <meta charset="utf-8">
+  <title>Trading Bot — Pipelines</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <script src="/static/tailwind.js"></script>
+  <script src="/static/htmx.min.js"></script>
+  <script defer src="/static/event_bus.js"></script>
+  <style>
+    body { background: linear-gradient(180deg,#070b15 0%,#0a0f1c 100%);
+           color: #e2e8f0;
+           font-family: ui-sans-serif,system-ui,-apple-system,sans-serif; }
+    .label { font-size: 11px; letter-spacing: .15em; text-transform: uppercase;
+             color:#06b6d4; font-weight:600; }
+    .card  { background: rgba(15,23,42,.85); border:1px solid #1e293b;
+             border-radius: 16px; }
+    .pulse-dot { width:8px; height:8px; border-radius:50%; background:#10b981;
+                  box-shadow:0 0 12px #10b981; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* Pipeline column header */
+    .pipeline-header { padding: 18px 20px; border-radius: 14px 14px 0 0;
+                       border-bottom: 1px solid #1e293b; }
+    .pipeline-cyan    { background: linear-gradient(180deg,
+                          rgba(6,182,212,.10), rgba(6,182,212,.02)); }
+    .pipeline-amber   { background: linear-gradient(180deg,
+                          rgba(245,158,11,.10), rgba(245,158,11,.02)); }
+    .pipeline-fuchsia { background: linear-gradient(180deg,
+                          rgba(217,70,239,.10), rgba(217,70,239,.02)); }
+    .accent-cyan    { color: #67e8f9; }
+    .accent-amber   { color: #fcd34d; }
+    .accent-fuchsia { color: #f0abfc; }
+
+    /* Stage card */
+    .stage { position: relative; padding: 14px 16px; border-radius: 12px;
+             border: 1px solid #1e293b; background: rgba(11,18,34,.6);
+             transition: border-color .15s ease; }
+    .stage:hover { border-color: #334155; }
+    .stage.scout, .stage.entry, .stage.hold, .stage.wheel, .stage.lesson,
+    .stage.universe, .stage.risk, .stage.broker, .stage.steward,
+    .stage.monitor, .stage.reconcile, .stage.audit, .stage.state {
+       border-left-width: 3px;
+    }
+    .stage.universe   { border-left-color: #94a3b8; }
+    .stage.scout      { border-left-color: #38bdf8; }
+    .stage.entry      { border-left-color: #f97316; }
+    .stage.hold       { border-left-color: #fb7185; }
+    .stage.wheel      { border-left-color: #d946ef; }
+    .stage.lesson     { border-left-color: #34d399; }
+    .stage.risk       { border-left-color: #fbbf24; }
+    .stage.broker     { border-left-color: #a78bfa; }
+    .stage.steward    { border-left-color: #67e8f9; }
+    .stage.monitor    { border-left-color: #facc15; }
+    .stage.reconcile  { border-left-color: #818cf8; }
+    .stage.audit      { border-left-color: #64748b; }
+    .stage.state      { border-left-color: #c4b5fd; }
+
+    /* Health dots */
+    .h-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+    .h-ok    { background: #10b981; box-shadow: 0 0 6px rgba(16,185,129,.6); }
+    .h-warn  { background: #f59e0b; }
+    .h-fail  { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,.7); }
+    .h-off   { background: #475569; }
+
+    /* Operator chip */
+    .op { display: inline-flex; align-items: center; gap: 4px;
+          padding: 2px 8px; margin: 2px;
+          background: rgba(15,23,42,.6);
+          border: 1px solid #1e293b;
+          border-radius: 6px;
+          font-size: 11px; color: #cbd5e1; }
+    .op-judge { color: #fcd34d; border-color: rgba(245,158,11,.4); }
+    .op-judge .icon { color: #fbbf24; }
+    .op-clickable { cursor: pointer; }
+    .op-clickable:hover { border-color: #38bdf8; color: #e2e8f0; background: rgba(56,189,248,.08); }
+    /* Tiny model badge inside the chip — shows what tier the bot rides */
+    .op .model {
+      font-size: 9px; line-height: 1; padding: 1px 4px; margin-left: 2px;
+      border-radius: 4px; font-family: ui-monospace, SFMono-Regular, monospace;
+      letter-spacing: .02em; opacity: .85;
+    }
+    .op .model-opus   { background: rgba(245,158,11,.18); color: #fcd34d; }
+    .op .model-sonnet { background: rgba(99,102,241,.18); color: #a5b4fc; }
+    .op .model-haiku  { background: rgba(14,165,233,.18); color: #7dd3fc; }
+    .op .model-other  { background: rgba(100,116,139,.18); color: #cbd5e1; }
+
+    /* Connector arrow between stages — drawn with a single thin line */
+    .arrow {
+      position: relative;
+      width: 100%;
+      height: 18px;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .arrow::before {
+      content: ""; width: 1px; height: 100%;
+      background: linear-gradient(180deg, transparent 0%, #334155 50%, transparent 100%);
+    }
+    .arrow::after {
+      content: "▾";
+      position: absolute; bottom: -1px;
+      color: #334155; font-size: 10px;
+    }
+
+    /* Summary pill */
+    .pill { display: inline-flex; align-items: center; gap: 6px;
+            padding: 4px 10px; border-radius: 999px;
+            font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+    .pill-ok    { background: rgba(16,185,129,.12); color: #34d399;
+                  border: 1px solid rgba(16,185,129,.4); }
+    .pill-warn  { background: rgba(245,158,11,.12); color: #fbbf24;
+                  border: 1px solid rgba(245,158,11,.4); }
+    .pill-fail  { background: rgba(239,68,68,.12); color: #fca5a5;
+                  border: 1px solid rgba(239,68,68,.4); }
+    .pill-off   { background: rgba(100,116,139,.12); color: #94a3b8;
+                  border: 1px solid rgba(100,116,139,.4); }
+
+    /* Count badge */
+    .count {
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 13px; font-weight: 600;
+    }
+    .count-zero { color: #64748b; }
+    .count-pos  { color: #e2e8f0; }
+  </style>
+</head>
+<body class="min-h-full">
+
+<main class="px-6 lg:px-10 py-6 max-w-[1700px] mx-auto">
+  {% include "_header.html" %}
+
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold mt-3">Pipelines</h1>
+    <p class="text-sm text-slate-400 mt-1">
+      Each column is one independent pipeline. The flow runs top to bottom:
+      sources → roll-up → scout debate → entry/wheel debate → hold debate →
+      lesson loop. Operator names are the bots staffing each LLM stage;
+      the scale icon (⚖) marks the judge of record.
+    </p>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+    {% for ps in pipelines %}
+      {% set p = ps.pipeline %}
+      <section class="card flex flex-col"
+               id="pipeline-{{ p.id }}">
+        {# ── Column header ─────────────────────────────────────────── #}
+        <div class="pipeline-header pipeline-{{ p.color }}">
+          <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold flex items-center gap-2 accent-{{ p.color }}">
+              <span class="text-xl">{{ p.icon }}</span>
+              {{ p.label }}
+            </h2>
+            {% if ps.summary_tone == 'ok' %}
+              <span class="pill pill-ok">✓ {{ ps.summary }}</span>
+            {% elif ps.summary_tone == 'warn' %}
+              <span class="pill pill-warn">⚠ {{ ps.summary }}</span>
+            {% elif ps.summary_tone == 'fail' %}
+              <span class="pill pill-fail">✗ {{ ps.summary }}</span>
+            {% else %}
+              <span class="pill pill-off">○ {{ ps.summary }}</span>
+            {% endif %}
+          </div>
+          <p class="text-xs text-slate-400 mt-2">{{ p.description }}</p>
+        </div>
+
+        {# ── Stage stack ───────────────────────────────────────────── #}
+        <div class="p-4 space-y-0">
+          {% for st in ps.stages %}
+            <div class="stage {{ st.stage.kind }}"
+                 data-stage-id="{{ st.stage.id }}"
+                 data-health="{{ st.health }}"
+                 title="{% if st.last_error %}Last error: {{ st.last_error }}{% elif st.last_run_at %}Last run: {{ st.last_status }} ({{ st.last_run_at | et('%b %d %-I:%M %p ET') }}){% else %}Never run{% endif %}">
+              {# Title + health #}
+              <div class="flex items-start justify-between gap-3">
+                <div class="flex items-start gap-2 min-w-0">
+                  <span class="text-base shrink-0">{{ st.stage.icon }}</span>
+                  <div class="min-w-0">
+                    <div class="text-sm font-semibold text-slate-100 leading-tight">
+                      {{ st.stage.label }}
+                    </div>
+                    {% if st.stage.role_name %}
+                      <div class="text-[10px] text-slate-500 mt-0.5 font-mono truncate">
+                        role · {{ st.stage.role_name }}
+                      </div>
+                    {% endif %}
+                  </div>
+                </div>
+                <span class="h-dot h-{{ st.health }}"
+                      title="{{ st.health|upper }}"></span>
+              </div>
+
+              {# Description #}
+              {% if st.stage.description %}
+                <p class="text-[11px] text-slate-400 mt-2 leading-snug">
+                  {{ st.stage.description }}
+                </p>
+              {% endif %}
+
+              {# Known-gap note — hand-curated in pipelines_topology.py to
+                 surface why a stage is silently failing (e.g. legacy LLM
+                 transport, missing API keys, dry-run mode). #}
+              {% if st.stage.blocked_note %}
+                <p class="text-[10px] text-amber-400/80 mt-1 italic leading-snug">
+                  ⚠ blocked: {{ st.stage.blocked_note }}
+                </p>
+              {% endif %}
+
+              {# Operators (named bots) — only shown for LLM stages #}
+              {% if st.operators %}
+                <div class="mt-2 -mx-1 flex flex-wrap">
+                  {% for op in st.operators %}
+                    {% set _m = op.model or '' %}
+                    {% if 'opus' in _m %}{% set _mclass = 'model-opus' %}{% set _mlabel = 'Opus' %}
+                    {% elif 'sonnet' in _m %}{% set _mclass = 'model-sonnet' %}{% set _mlabel = 'Sonnet' %}
+                    {% elif 'haiku' in _m %}{% set _mclass = 'model-haiku' %}{% set _mlabel = 'Haiku' %}
+                    {% else %}{% set _mclass = 'model-other' %}{% set _mlabel = '?' %}{% endif %}
+                    <span class="op {% if op.is_judge %}op-judge{% endif %}{% if st.stage.table_name %} op-clickable{% endif %}"
+                          {% if st.stage.table_name %}onclick="showDebateTranscript('{{ st.stage.table_name }}','{{ op.name | e }}')"{% endif %}
+                          title="{{ op.name }} · {{ op.title }} ({{ op.debate_role }}) · model={{ _m or 'unknown' }}{{ ' · click for transcripts' if st.stage.table_name else '' }}">
+                      {% if op.is_judge %}<span class="icon">⚖</span>{% endif %}
+                      <span>{{ op.name }}</span>
+                      {% if _m %}<span class="model {{ _mclass }}">{{ _mlabel }}</span>{% endif %}
+                    </span>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="mt-2 text-[10px] text-slate-600 italic">
+                  automated · no LLM
+                </div>
+              {% endif %}
+
+              {# Count + activity #}
+              <div class="mt-2 flex items-center justify-between text-[11px]">
+                <span class="count {% if st.count > 0 %}count-pos{% else %}count-zero{% endif %}">
+                  {{ "{:,}".format(st.count) }}
+                  <span class="text-slate-500 font-normal">
+                    {{ st.stage.count_label or "" }}
+                  </span>
+                </span>
+                {% if st.last_run_at %}
+                  <span class="text-slate-500"
+                        title="last run">
+                    {{ st.last_run_at | et('%-I:%M %p') }}
+                  </span>
+                {% elif st.stage.role_name %}
+                  <span class="text-slate-600 italic">never run</span>
+                {% endif %}
+              </div>
+            </div>
+
+            {# Connector arrow between stages, except after the last stage #}
+            {% if not loop.last %}
+              <div class="arrow"></div>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </section>
+    {% endfor %}
+  </div>
+
+  <footer class="text-xs text-slate-600 pt-8 pb-4 text-center">
+    Trading Bot · Pipelines view · auto-refreshes every 60s ·
+    <a href="/" class="hover:text-cyan-300">← command center</a> ·
+    <a href="/desk" class="hover:text-cyan-300">trading desk roster →</a>
+  </footer>
+</main>
+
+<script>
+  // Auto-refresh every 60s without nuking scroll position.
+  setTimeout(() => window.location.reload(), 60000);
+</script>
+
+<!-- ── Debate Transcript Modal ─────────────────────────────────────────── -->
+<div id="transcript-modal"
+     class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+     style="backdrop-filter:blur(4px)"
+     onclick="if(event.target===this)closeTranscript()">
+  <div class="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-4xl mx-4"
+       style="max-height:85vh;display:flex;flex-direction:column">
+    <div class="flex items-center justify-between px-5 py-3 border-b border-slate-700 flex-shrink-0">
+      <span id="transcript-title" class="text-sm font-semibold text-slate-100"></span>
+      <button onclick="closeTranscript()"
+              class="text-slate-400 hover:text-slate-100 text-lg leading-none ml-4">✕</button>
+    </div>
+    <div id="transcript-body" class="overflow-y-auto p-5" style="gap:1.5rem;display:flex;flex-direction:column"></div>
+  </div>
+</div>
+
+<script>
+function showDebateTranscript(table, agentName) {
+  const modal = document.getElementById('transcript-modal');
+  const title = document.getElementById('transcript-title');
+  const body  = document.getElementById('transcript-body');
+  title.textContent = agentName + ' — Last 2 Debates';
+  body.innerHTML = '<div style="color:#94a3b8">Loading…</div>';
+  modal.classList.remove('hidden');
+
+  fetch('/api/agent/debates?table=' + encodeURIComponent(table) + '&limit=2')
+    .then(r => r.json())
+    .then(data => {
+      if (!data.rows || !data.rows.length) {
+        body.innerHTML = '<div style="color:#94a3b8;font-style:italic">No debates recorded yet.</div>';
+        return;
+      }
+      const cols = data.col_labels;
+      body.innerHTML = data.rows.map(row => {
+        const verdictColor = row.verdict === 'place'  ? '#34d399'
+                           : row.verdict === 'elevate'? '#34d399'
+                           : row.verdict === 'skip'   ? '#f87171'
+                           : '#fbbf24';
+        const reviewers = cols.map(label => {
+          const text = row[label.toLowerCase()] || '—';
+          return `<div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#64748b;margin-bottom:4px">${escH(label)}</div>
+            <div style="font-size:12px;color:#cbd5e1;line-height:1.6;white-space:pre-wrap">${escH(text)}</div>
+          </div>`;
+        }).join('');
+        const gridCols = cols.length === 2 ? '1fr 1fr' : '1fr 1fr 1fr';
+        return `<div style="background:rgba(30,41,59,.6);border:1px solid #1e293b;border-radius:10px;padding:16px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+            <span style="font-family:monospace;color:#e2e8f0;font-weight:600">${escH(row.subject)}</span>
+            <span style="font-size:11px;font-weight:600;color:${verdictColor};background:rgba(0,0,0,.3);padding:2px 8px;border-radius:4px">
+              ${escH(row.verdict)} · ${escH(row.confidence)}
+            </span>
+            <span style="font-size:11px;color:#64748b;margin-left:auto">${fmtDt(row.run_at)}</span>
+          </div>
+          <div style="margin-bottom:12px">
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#64748b;margin-bottom:4px">Judge</div>
+            <div style="font-size:12px;color:#cbd5e1;line-height:1.6">${escH(row.judge_reason || '—')}</div>
+          </div>
+          <div style="display:grid;grid-template-columns:${gridCols};gap:12px;padding-top:12px;border-top:1px solid #1e293b">
+            ${reviewers}
+          </div>
+        </div>`;
+      }).join('');
+    })
+    .catch(err => {
+      body.innerHTML = '<div style="color:#f87171">Error: ' + escH(String(err)) + '</div>';
+    });
+}
+
+function closeTranscript() {
+  document.getElementById('transcript-modal').classList.add('hidden');
+}
+
+function escH(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function fmtDt(s) {
+  if (!s) return '';
+  try {
+    const d = new Date((s + '').replace(' ','T') + 'Z');
+    return d.toLocaleString('en-US', {
+      timeZone:'America/New_York', month:'short', day:'numeric',
+      hour:'numeric', minute:'2-digit', hour12:true
+    }) + ' ET';
+  } catch(e) { return s; }
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeTranscript(); });
+</script>
+
+</body>
+</html>

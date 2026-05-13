@@ -1,0 +1,16 @@
+{
+  "lock_version": "2026-05-13.v4-phase0-skeleton",
+  "_note": "Persona file SHA-256 anchors. Phase 2 risk kernel will refuse to start if any persona file on disk doesn't match its hash here.",
+  "owner": "L0 Governance",
+  "phase_when_populated": 0,
+  "personas": [
+    "prompts/roles/quant_pm.v1.md",
+    "prompts/roles/quant_research_lead.v1.md",
+    "prompts/roles/risk_validator.v1.md",
+    "prompts/roles/trading_systems_engineer.v1.md",
+    "prompts/roles/execution_engineer.v1.md",
+    "prompts/roles/ai_mlops.v1.md",
+    "prompts/roles/sre_ops.v1.md",
+    "prompts/roles/compliance.v1.md"
+  ]
+}
