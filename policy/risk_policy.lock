@@ -1,6 +1,70 @@
 {
-  "lock_version": "2026-05-13.v4-phase0-skeleton",
-  "_note": "Skeleton only — full numeric limits (account / asset-class / lane / strategy / symbol / order tiers from Plan §6) land in Phase 2.",
-  "owner": "L6 Risk Kernel",
-  "phase_when_populated": 2
+  "lock_version": "2026-05-13.v4-phase2",
+  "_source": "Plan v4 §6 — Risk Kernel Concrete Numerical Limits",
+  "_note": "Loosening any threshold (raising any cap, raising any max-loss tolerance) requires a new dated lock version, a commit signed with the operator's git identity, AND a 7-day cooldown before the system honors it. Tightening is immediate.",
+
+  "account": {
+    "daily_drawdown_pct_of_equity": 1.0,
+    "_daily_drawdown_breach": "halt new entries for the session; existing positions managed by exits only",
+
+    "trailing_drawdown_pct_of_equity": 5.0,
+    "trailing_drawdown_window_days": 60,
+    "_trailing_drawdown_breach": "lane mode -> observe-only; require new validation lock to resume",
+
+    "intraday_pnl_floor_pct_of_equity": -1.5,
+    "_intraday_pnl_breach": "halt new entries; existing exits allowed"
+  },
+
+  "asset_class": {
+    "equity_gross_max_pct": 80.0,
+    "_equity_breach": "reduce-only mode; new buys rejected",
+
+    "crypto_gross_max_pct": 15.0,
+    "_crypto_breach": "reduce-only mode; emergency liquidation rule documented",
+
+    "options_buying_power_util_max_pct": 30.0,
+    "_options_breach": "no new option opens"
+  },
+
+  "lane": {
+    "per_lane_allocation_max_pct": 40.0,
+    "_lane_alloc_breach": "lane status -> reduce-only",
+
+    "per_lane_daily_loss_max_pct": 0.5,
+    "_lane_loss_breach": "lane halted for the session"
+  },
+
+  "strategy": {
+    "realized_plus_unrealized_loss_30d_max_pct": 1.5,
+    "_strategy_loss_breach": "strategy moved to observe-only; mutation request opened"
+  },
+
+  "symbol": {
+    "per_symbol_gross_max_pct": 5.0,
+    "_per_symbol_breach": "order qty reduced to fit; reason logged"
+  },
+
+  "order": {
+    "per_order_at_risk_max_pct": 2.0,
+    "_per_order_breach": "order rejected; reason logged",
+
+    "stop_coverage_required_within_seconds": 60,
+    "_stop_coverage_breach": "auto-flatten the position (auto-flatten enforcement lands Phase 3 alongside execution sequencer)"
+  },
+
+  "kill_switches": {
+    "broker_api_error_rate_max_pct": 5.0,
+    "broker_api_error_rate_window_minutes": 5,
+
+    "unknown_position_max_age_minutes": 15,
+
+    "wall_clock_skew_max_seconds": 2,
+
+    "data_freshness_breach": "see policy/data_freshness.lock"
+  },
+
+  "cooldowns": {
+    "loosen_cooldown_days": 7,
+    "tighten_cooldown_days": 0
+  }
 }

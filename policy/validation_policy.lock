@@ -1,6 +1,53 @@
 {
-  "lock_version": "2026-05-13.v4-phase0-skeleton",
-  "_note": "Skeleton only — full thresholds (research_candidate / paper_candidate / live_candidate gates, multiple_testing, cost_model_ref, benchmarks, cooldowns) land in Phase 4. See Plan v4 §4 for the target shape.",
-  "owner": "L0 Governance",
-  "phase_when_populated": 4
+  "lock_version": "2026-05-13.v4-phase2",
+  "_source": "Plan v4 §4 — Validation Policy Lock; tiered gates",
+
+  "tiers": {
+    "research_candidate": {
+      "_description": "Sandbox -> shadow",
+      "min_oos_dsr": 0.50,
+      "max_pbo": 0.50,
+      "min_walk_forward_folds": 5,
+      "min_oos_period_days": 252,
+      "min_trades_per_regime": 30
+    },
+    "paper_candidate": {
+      "_description": "Shadow -> tiny/scaled paper",
+      "min_oos_dsr": 0.70,
+      "max_pbo": 0.35,
+      "min_walk_forward_folds": 6,
+      "min_oos_period_days": 504,
+      "min_trades_per_regime": 50,
+      "min_paper_obs_days": 60,
+      "min_paper_trade_count_or_rebalances": 25,
+      "max_drawdown_paper_pct": 0.08
+    },
+    "live_candidate": {
+      "_description": "Paper -> live capital",
+      "min_oos_dsr": 0.85,
+      "max_pbo": 0.25,
+      "min_paper_obs_days_per_rebalance_period": {
+        "daily": 60,
+        "weekly": 180,
+        "monthly": 365
+      },
+      "min_paper_rebalance_events": 12,
+      "min_sharpe_tstat_net": 2.0,
+      "max_drawdown_paper_pct": 0.06,
+      "min_excess_over_benchmark_annual_pct": 1.5,
+      "requires_human_signoff": true
+    }
+  },
+
+  "multiple_testing": {
+    "method": "BH_FDR",
+    "alpha": 0.10
+  },
+
+  "cost_model_ref": "policy/cost_model.lock",
+  "benchmarks": ["CASH_TBILL", "SPY_BUY_HOLD"],
+
+  "loosen_cooldown_days": 7,
+  "tighten_cooldown_days": 0,
+  "_cooldown_note": "Loosening any threshold (lower DSR floor, higher PBO ceiling, lower paper minimum, wider drawdown allowance) requires a new dated lock version, a commit signed with the operator's git identity, AND a 7-day cooldown before the system honors it. Tightening is immediate."
 }

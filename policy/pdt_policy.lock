@@ -1,6 +1,27 @@
 {
-  "lock_version": "2026-05-13.v4-phase0-skeleton",
-  "_note": "Skeleton only — PDT day-trade threshold and equity boundary land in Phase 2. FINRA intraday-margin transition (Notice 25-XX, eff 2026-06-04, full 2026-10-20) will be tracked here without code changes.",
-  "owner": "L6 Risk Kernel",
-  "phase_when_populated": 2
+  "lock_version": "2026-05-13.v4-phase2",
+  "_source": "Plan v4 §6 PDT note + FINRA Notice 25-XX",
+  "_note": "v3 inverts v2's PDT rule: at entry time the risk kernel asks 'if I had to exit this position later today via a stop or emergency, would that be the 4th day-trade in the rolling 5-business-day window?' If yes, the entry is blocked. Once a position exists, ANY exit is permitted regardless of the day-trade count — PDT is treated as a softly-penalty restriction the operator accepts in exchange for honoring stops.",
+
+  "day_trade_threshold": 3,
+  "_day_trade_threshold_note": "PDT triggers on the 4th day-trade in a rolling 5-business-day window when equity is below the boundary below. Current FINRA rule.",
+
+  "equity_boundary_usd": 25000,
+  "_equity_boundary_note": "Accounts at or above this boundary are not flagged PDT. The boundary stays $25k until FINRA Notice 25-XX completes its transition.",
+
+  "rolling_window_business_days": 5,
+
+  "finra_notice_25xx": {
+    "effective_date": "2026-06-04",
+    "full_transition_date": "2026-10-20",
+    "_note": "FINRA intraday-margin transition (Notice 25-XX). This lock file MUST be re-dated as the FINRA values change so the kernel honors the new boundary without code changes."
+  },
+
+  "day_trade_count_source": "alpaca_account_endpoint",
+  "_day_trade_count_source_note": "Read on every kernel cycle from the broker (Alpaca exposes day_trade_count on the account endpoint). The bot does NOT maintain a parallel count.",
+
+  "exit_policy": {
+    "exits_always_allowed": true,
+    "_exits_note": "Stops, take-profits, and emergency exits are ALWAYS allowed, regardless of day_trade_count. The plan's exact words: 'Once a position exists, any exit is permitted regardless of the day-trade count.'"
+  }
 }

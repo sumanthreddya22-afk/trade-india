@@ -22,9 +22,10 @@ The full plan lives at:
 | Live param mutation | **Blocked** unless `TRADING_BOT_ALLOW_LIVE_PARAM_WRITES=1` (default off). |
 | Crypto exposure cap | 15 % of equity. **Executed 2026-05-13** — 12 sells, $5,114 proceeds, 58.19% → 15.02%. |
 | Position classification | `bot \| external \| manual \| unknown` on every position. Runtime halt-on-unknown lands in Phase 2. |
-| Policy locks | 9 skeleton `.lock` files in `policy/`, anchored by `policy/HASHES`. Real content lands in the owning phase. |
-| Persona files | 8 personas under `prompts/roles/`. Runtime hash check lands in Phase 2. |
+| Policy locks | **Phase 2 populated** — 7 locks carry real numerics (validation, risk, pdt, lane_caps, cost_model, data_freshness, role_personas); 2 remain skeletons (source_reliability → Phase 1.5; short_policy → SHORT phase). All anchored by `policy/HASHES`; loader hash-verifies at boot. |
+| Persona files | 8 personas under `prompts/roles/`. Runtime hash check enforced by `kernel/boot.py`. |
 | Ledger schema | **Shipped Phase 1** — 6 hash-chained append-only tables + `order_current` view; UUIDv7 order_uid; idempotent client_order_id; orphan recovery; reconciliation; off-host mirror; single-writer lock. Init via `tools/init_ledger.py`; verify via `tools/verify_ledger.py`. |
+| Risk kernel | **Shipped Phase 2** — `risk.precheck.evaluate` is the single-entry gate. 7 cap categories (account / asset-class / lane / strategy / symbol / order / pdt) + 8 kill switches + halt router. Boot integrity check via `tools/boot_check.py`. |
 
 Autonomy level (Plan §16): **L2 — autonomous research, no autonomous live
 trading**. The bot may run sandbox experiments and validation packets; it may

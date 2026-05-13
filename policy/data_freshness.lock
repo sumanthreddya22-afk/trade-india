@@ -1,6 +1,22 @@
 {
-  "lock_version": "2026-05-13.v4-phase0-skeleton",
-  "_note": "Skeleton only — per-lane staleness thresholds (equity 5 min, crypto 60 s, options 60 s during RTH) land in Phase 3 alongside the Alpaca adapter hardening.",
-  "owner": "L1 Data Ingest",
-  "phase_when_populated": 3
+  "lock_version": "2026-05-13.v4-phase2",
+  "_source": "Plan v4 §6 — Risk kernel kill switches; staleness thresholds per lane",
+
+  "per_lane_max_age_seconds": {
+    "equity": 300,
+    "_equity_note": "5 minutes max staleness for bars/quotes during RTH.",
+
+    "crypto": 60,
+    "_crypto_note": "Crypto trades 24/7; 60s max staleness.",
+
+    "options": 60,
+    "_options_note": "60s max staleness during RTH for options chains."
+  },
+
+  "_breach_action": "no new intents for that symbol; existing exits still permitted",
+
+  "watermark_source": "ingest layer",
+  "_watermark_source_note": "Each ingest module (Phase 1: alpaca_bars/quotes; Phase 1.5: alt-data sources) writes a freshness watermark per source_id. The risk kernel reads watermarks at intent time; if a lane's relevant watermark exceeds its threshold, that lane is blocked.",
+
+  "implementation_status": "Phase 1.5 (alt-data) and Phase 3 (Alpaca adapter hardening) will populate watermarks."
 }

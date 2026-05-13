@@ -14,8 +14,8 @@ ledger-first, validation-locked, intel-aware). The plan PDF lives at
 | Phase | Plan duration | This repo |
 |---|---|---|
 | 0 — Stabilize | 1 wk | **Shipped 2026-05-13** — cleanup, edge thesis, 8 personas, locks skeleton, feature flags, classifier, tests. Crypto exposure unwound to 15%. |
-| 1 — Ledger schema | 2 wk | **Shipped 2026-05-13** — 6 hash-chained append-only tables + `order_current` view; UUIDv7 order_uid; idempotent client_order_id; orphan recovery; reconciliation; off-host mirror; single-writer lock; 12 test files (107 tests pass). |
-| 2 — Risk kernel + locks populated | 2 wk | Skeleton only (`src/trading_bot/risk/`). |
+| 1 — Ledger schema | 2 wk | **Shipped 2026-05-13** — 6 hash-chained append-only tables + `order_current` view; UUIDv7 order_uid; idempotent client_order_id; orphan recovery; reconciliation; off-host mirror; single-writer lock. |
+| 2 — Risk kernel + locks populated | 2 wk | **Shipped 2026-05-13** — 9 locks populated (7 real + 2 skeleton); 7 cap checks + 8 kill switches + halt router + precheck orchestrator; `kernel/boot.py` startup integrity gate; 173 tests pass (46 + 61 + 66). |
 | 3 — Cost model + Alpaca hardening | 1 wk | — |
 | 4 — Strategy registry | 1 wk | Skeleton only. |
 | 5 — Research factory | 3 wk | Survivor backtests migrated; PBO/DSR/walk-forward not yet wrapped. |
