@@ -151,16 +151,25 @@ def clear(
 
 
 def active_kills(conn: sqlite3.Connection) -> set[str]:
-    """Return the set of detectors whose latest event is 'fire'."""
+    """Return the set of detectors whose latest event is 'fire'.
+
+    If the kill_switch_event table does not yet exist (fresh DB before
+    any kill has been recorded), returns an empty set rather than
+    raising — that matches the operational semantics (no recorded fires
+    → no active kills).
+    """
     cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT detector, event_kind FROM kill_switch_event e
-        WHERE ledger_seq IN (
-            SELECT MAX(ledger_seq) FROM kill_switch_event GROUP BY detector
+    try:
+        cur.execute(
+            """
+            SELECT detector, event_kind FROM kill_switch_event e
+            WHERE ledger_seq IN (
+                SELECT MAX(ledger_seq) FROM kill_switch_event GROUP BY detector
+            )
+            """
         )
-        """
-    )
+    except sqlite3.OperationalError:
+        return set()
     return {det for det, kind in cur.fetchall() if kind == "fire"}
 
 

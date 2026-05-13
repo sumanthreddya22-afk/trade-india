@@ -34,6 +34,7 @@ TRACKED_GLOBS: tuple[str, ...] = (
     "policy/*.lock",
     "prompts/roles/*.md",
     "docs/edge_thesis_v*.md",
+    "research/search_space_v*.json",
 )
 
 

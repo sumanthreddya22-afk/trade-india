@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "thesis_id": "edge_thesis_v1",
+  "_source": "Plan v4 §8 — registered search space for the mutation engine. LLM may propose mutation_ids that map to a dimension below; LLM cannot add new dimensions.",
+  "_note": "Dimensions are pre-committed BEFORE any mutation runs. Adding a dimension is a loosening action; it requires a new dated search_space_vN.json + the validation policy cooldown.",
+
+  "dimensions": {
+    "parameter:lookback_months": {
+      "kind": "parameter",
+      "domain": [3, 6, 9, 12, 18, 24],
+      "default": 12,
+      "_note": "Time-series momentum lookback window in months. v1 default is the 12-month TSM baseline."
+    },
+    "parameter:skip_months": {
+      "kind": "parameter",
+      "domain": [0, 1, 2],
+      "default": 1,
+      "_note": "Skip the most recent N months when computing the momentum signal."
+    },
+    "parameter:rebalance_cadence": {
+      "kind": "parameter",
+      "domain": ["monthly", "weekly"],
+      "default": "monthly",
+      "_note": "Rebalance frequency. v1 thesis is monthly; weekly is allowed only after passing its own validation."
+    },
+    "parameter:vol_lookback_days": {
+      "kind": "parameter",
+      "domain": [10, 20, 40, 60],
+      "default": 20,
+      "_note": "Realised-vol window for equal-risk sizing."
+    },
+    "parameter:max_per_name_gross_pct": {
+      "kind": "parameter",
+      "domain": [10, 15],
+      "default": 15,
+      "_note": "Per-name gross cap. Tighter (10) is allowed; looser is forbidden (risk policy caps elsewhere)."
+    },
+    "parameter:max_total_gross_pct": {
+      "kind": "parameter",
+      "domain": [50, 60],
+      "default": 60
+    },
+
+    "feature:signal_sign_only": {
+      "kind": "feature",
+      "domain": [true, false],
+      "default": true,
+      "_note": "When true: long iff signal>0, flat otherwise. v1 thesis uses sign-only."
+    },
+
+    "universe:etf_set": {
+      "kind": "universe",
+      "domain": [
+        ["SPY","QQQ","IWM","EFA","EEM","TLT","IEF","GLD","DBC","VNQ"],
+        ["SPY","QQQ","IWM","EFA","TLT","IEF","GLD","DBC","VNQ"],
+        ["SPY","QQQ","IWM","TLT","IEF","GLD"]
+      ],
+      "default_index": 0,
+      "_note": "Universes must be options-eligible, tight spreads, no leveraged/inverse, no single-stock idio risk. The default is the 10-name v1 universe."
+    }
+  },
+
+  "mutation_budget": {
+    "_source": "Plan v4 §8 mutation discipline",
+    "candidates_per_family_per_month_max": 64,
+    "multiple_testing": "BH_FDR",
+    "alpha": 0.10
+  },
+
+  "exclusions": {
+    "_note": "Combinations explicitly forbidden — these die at intake.",
+    "rules": [
+      {
+        "if": {"parameter:rebalance_cadence": "weekly"},
+        "require": {"validation_artifact_id": "must reference a weekly-cadence Tier-1 pass"}
+      }
+    ]
+  }
+}
