@@ -19,12 +19,12 @@ The full plan lives at:
 | Item | State |
 |---|---|
 | LLM in trading hot path | **Quarantined** behind `TRADING_BOT_ENABLE_LLM_HOTPATH` (default off). |
-| Live param mutation | **Blocked** unless `TRADING_BOT_ALLOW_LIVE_PARAM_WRITES=1` (default off). Auto-tune still computes observations into shadow rows. |
-| Crypto exposure cap | 15 % of equity. Phase 0 unwind: see `tools/phase0_crypto_unwind.py`. |
+| Live param mutation | **Blocked** unless `TRADING_BOT_ALLOW_LIVE_PARAM_WRITES=1` (default off). |
+| Crypto exposure cap | 15 % of equity. **Executed 2026-05-13** — 12 sells, $5,114 proceeds, 58.19% → 15.02%. |
 | Position classification | `bot \| external \| manual \| unknown` on every position. Runtime halt-on-unknown lands in Phase 2. |
 | Policy locks | 9 skeleton `.lock` files in `policy/`, anchored by `policy/HASHES`. Real content lands in the owning phase. |
 | Persona files | 8 personas under `prompts/roles/`. Runtime hash check lands in Phase 2. |
-| Ledger schema | Deferred to Phase 1. |
+| Ledger schema | **Shipped Phase 1** — 6 hash-chained append-only tables + `order_current` view; UUIDv7 order_uid; idempotent client_order_id; orphan recovery; reconciliation; off-host mirror; single-writer lock. Init via `tools/init_ledger.py`; verify via `tools/verify_ledger.py`. |
 
 Autonomy level (Plan §16): **L2 — autonomous research, no autonomous live
 trading**. The bot may run sandbox experiments and validation packets; it may
