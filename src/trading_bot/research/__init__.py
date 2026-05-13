@@ -38,6 +38,25 @@ from trading_bot.research.walkforward import (
     Fold, WalkforwardSchedule, build_folds,
 )
 
+# Phase 6
+from trading_bot.research.bh_fdr import (
+    BHFDRReport, BHFDRRow, adjust as bh_fdr_adjust, apply as bh_fdr_apply,
+)
+from trading_bot.research.mutation_engine import (
+    Candidate, DEFAULT_BUDGET_PER_FAMILY,
+    list_candidates, propose_candidates,
+    record_candidate, record_outcome,
+)
+from trading_bot.research.mutation_schema import ensure_mutation_tables
+from trading_bot.research.persona_runner import (
+    PersonaHashMismatch, PersonaInvocationError,
+    SubprocessPersonaRunner, verify_persona_hash,
+)
+from trading_bot.research import sandbox  # noqa: F401
+from trading_bot.research.run_mutation_cycle import (
+    BacktestT, MutationCycleReport, run_cycle as run_mutation_cycle,
+)
+
 __all__ = [
     "ALLOWED_SUBJECT_KINDS",
     "ALLOWED_VERDICTS",
@@ -67,4 +86,24 @@ __all__ = [
     "run_intake",
     "sharpe_ratio",
     "validate_persona_output",
+    # Phase 6
+    "BHFDRReport",
+    "BHFDRRow",
+    "BacktestT",
+    "Candidate",
+    "DEFAULT_BUDGET_PER_FAMILY",
+    "MutationCycleReport",
+    "PersonaHashMismatch",
+    "PersonaInvocationError",
+    "SubprocessPersonaRunner",
+    "bh_fdr_adjust",
+    "bh_fdr_apply",
+    "ensure_mutation_tables",
+    "list_candidates",
+    "propose_candidates",
+    "record_candidate",
+    "record_outcome",
+    "run_mutation_cycle",
+    "sandbox",
+    "verify_persona_hash",
 ]
