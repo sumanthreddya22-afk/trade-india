@@ -15,8 +15,8 @@ ledger-first, validation-locked, intel-aware). The plan PDF lives at
 |---|---|---|
 | 0 — Stabilize | 1 wk | **Shipped 2026-05-13** — cleanup, edge thesis, 8 personas, locks skeleton, feature flags, classifier, tests. Crypto exposure unwound to 15%. |
 | 1 — Ledger schema | 2 wk | **Shipped 2026-05-13** — 6 hash-chained append-only tables + `order_current` view; UUIDv7 order_uid; idempotent client_order_id; orphan recovery; reconciliation; off-host mirror; single-writer lock. |
-| 2 — Risk kernel + locks populated | 2 wk | **Shipped 2026-05-13** — 9 locks populated (7 real + 2 skeleton); 7 cap checks + 8 kill switches + halt router + precheck orchestrator; `kernel/boot.py` startup integrity gate; 173 tests pass (46 + 61 + 66). |
-| 3 — Cost model + Alpaca hardening | 1 wk | — |
+| 2 — Risk kernel + locks populated | 2 wk | **Shipped 2026-05-13** — 9 locks populated (7 real + 2 skeleton); 7 cap checks + 8 kill switches + halt router + precheck orchestrator; `kernel/boot.py` startup integrity gate. |
+| 3 — Cost model + Alpaca hardening | 1 wk | **Shipped 2026-05-13** — 3-lens cost model (raw / broker_paper / pessimistic); order_router (precheck → freshness → idempotent → broker); drift_monitor (20-trade rolling); ingest layer with data_watermark + corporate_action (hash-chained); 211 tests pass. |
 | 4 — Strategy registry | 1 wk | Skeleton only. |
 | 5 — Research factory | 3 wk | Survivor backtests migrated; PBO/DSR/walk-forward not yet wrapped. |
 | MVP-OP | 60 calendar days | Wall-clock gate. |

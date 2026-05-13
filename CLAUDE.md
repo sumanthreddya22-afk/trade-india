@@ -26,6 +26,7 @@ The full plan lives at:
 | Persona files | 8 personas under `prompts/roles/`. Runtime hash check enforced by `kernel/boot.py`. |
 | Ledger schema | **Shipped Phase 1** — 6 hash-chained append-only tables + `order_current` view; UUIDv7 order_uid; idempotent client_order_id; orphan recovery; reconciliation; off-host mirror; single-writer lock. Init via `tools/init_ledger.py`; verify via `tools/verify_ledger.py`. |
 | Risk kernel | **Shipped Phase 2** — `risk.precheck.evaluate` is the single-entry gate. 7 cap categories (account / asset-class / lane / strategy / symbol / order / pdt) + 8 kill switches + halt router. Boot integrity check via `tools/boot_check.py`. |
+| Execution + ingest | **Shipped Phase 3** — `execution.order_router.submit_order` (precheck → freshness → idempotent → broker, callback-injected); `execution.cost_model` (raw / broker_paper / pessimistic lenses); `execution.drift_monitor` (20-trade rolling); `ingest.watermarks` (lane freshness); `ingest.corporate_actions` (record + cross-check, hash-chained). Live Alpaca call inside the broker callback lands Phase 5. |
 
 Autonomy level (Plan §16): **L2 — autonomous research, no autonomous live
 trading**. The bot may run sandbox experiments and validation packets; it may
