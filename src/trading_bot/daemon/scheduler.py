@@ -30,7 +30,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from trading_bot.daemon.jobs import (
     DaemonContext, job_account_snapshot, job_boot_check, job_drift_monitor,
     job_market_data_ingest, job_mutation_cycle, job_orphan_loop,
-    job_position_snapshot, job_reconciliation,
+    job_position_snapshot, job_reconciliation, job_strategy_runner,
 )
 from trading_bot.daemon.logging_setup import setup_logging
 
@@ -47,6 +47,7 @@ class DaemonConfig:
     orphan_loop_interval_seconds: int = 30
     reconciliation_cron: str = "0 23 * * *"           # 23:00 daily, local TZ
     drift_monitor_cron: str = "30 23 * * *"
+    strategy_runner_cron: str = "30 15 * * 1-5"       # 15:30 ET weekdays
     mutation_cycle_cron: str = "0 2 1 * *"            # 02:00 on the 1st
     timezone: str = "America/New_York"
     run_boot_check_on_startup: bool = True
@@ -100,6 +101,11 @@ def build_scheduler(
         replace_existing=True,
     )
     sched.add_job(
+        job_strategy_runner, CronTrigger.from_crontab(config.strategy_runner_cron),
+        args=(ctx,), id="strategy_runner", coalesce=True, max_instances=1,
+        replace_existing=True,
+    )
+    sched.add_job(
         job_mutation_cycle, CronTrigger.from_crontab(config.mutation_cycle_cron),
         args=(ctx,), id="mutation_cycle", coalesce=True, max_instances=1,
         replace_existing=True,
@@ -148,7 +154,8 @@ def run_daemon(
         for fn in (
             job_market_data_ingest, job_position_snapshot,
             job_account_snapshot, job_orphan_loop,
-            job_reconciliation, job_drift_monitor, job_mutation_cycle,
+            job_reconciliation, job_drift_monitor,
+            job_strategy_runner, job_mutation_cycle,
         ):
             log.info("daemon: tick %s", fn.__name__)
             fn(ctx)

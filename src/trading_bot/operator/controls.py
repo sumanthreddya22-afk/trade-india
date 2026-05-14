@@ -203,6 +203,12 @@ def halt(*, reason: str, operator: str = "operator",
         conn.commit()
     finally:
         conn.close()
+    # Best-effort email alert. No raises.
+    try:
+        from trading_bot.obs.notifier import send_manual_halt_alert
+        send_manual_halt_alert(operator=operator, reason=reason)
+    except Exception:
+        pass
     return {"ok": True, "ledger_seq": seq, "active": sorted(_active_kills_safe(ledger_db))}
 
 
@@ -374,6 +380,86 @@ def strategy_list(ledger_db: Optional[Path] = None) -> list[dict]:
             ]
         except sqlite3.Error:
             return []
+    finally:
+        conn.close()
+
+
+def strategy_promote(
+    *, strategy_id: str, target_status: str,
+    artifact_id: Optional[str] = None,
+    packet_id: Optional[str] = None,
+    operator: str = "operator",
+    ledger_db: Optional[Path] = None,
+) -> dict:
+    """Promote a strategy to ``target_status``.
+
+    Wraps the existing ``registry.promotion.gate``. On allowed=True,
+    writes a new ``strategy_version`` row with the new status (rows
+    are immutable; advancing status = new version).
+    """
+    import json as _json
+    from trading_bot.registry import (
+        get_active_version, promotion, register_version,
+    )
+
+    ledger_db = ledger_db or (Path.cwd() / DEFAULT_LEDGER_PATH)
+    if not ledger_db.exists():
+        return {"ok": False, "reason": "ledger missing"}
+
+    val_lock_path = DEFAULT_POLICY_DIR / "validation_policy.lock"
+    if not val_lock_path.exists():
+        return {"ok": False, "reason": f"missing {val_lock_path}"}
+    val_lock = _json.loads(val_lock_path.read_text())
+
+    conn = connect_writer(ledger_db)
+    try:
+        try:
+            current = get_active_version(conn, strategy_id)
+        except Exception as e:  # VersionNotFound or other
+            return {"ok": False, "reason": f"strategy not registered: {e}"}
+
+        decision = promotion.gate(
+            conn,
+            strategy_id=strategy_id,
+            strategy_ver=current.strategy_ver,
+            target_status=target_status,
+            validation_policy_lock=val_lock,
+            promotion_packet_id=packet_id,
+        )
+        if not decision.allowed:
+            return {
+                "ok": False, "allowed": False,
+                "reason": decision.reason,
+                "target_status": target_status,
+                "tier_required": decision.tier_required,
+                "human_signoff_required": decision.human_signoff_required,
+            }
+
+        # Allowed → write new strategy_version row with target_status.
+        new_ver = register_version(
+            conn,
+            strategy_id=strategy_id,
+            strategy_ver=current.strategy_ver + 1,
+            code_hash=current.code_hash,
+            config_hash=current.config_hash,
+            thesis_id=current.thesis_id,
+            hypothesis_id=current.hypothesis_id,
+            validation_artifact_id=decision.artifact_id or artifact_id,
+            lane=current.lane,
+            status=target_status,
+            expiry_date=current.expiry_date,
+            owner=f"{operator} (promoted from {current.status})",
+        )
+        conn.commit()
+        return {
+            "ok": True, "allowed": True,
+            "strategy_id": strategy_id,
+            "previous_version": current.strategy_ver,
+            "previous_status": current.status,
+            "new_version": new_ver.strategy_ver,
+            "new_status": new_ver.status,
+            "artifact_id": decision.artifact_id,
+        }
     finally:
         conn.close()
 
@@ -594,5 +680,6 @@ def _run_mutate_stub(*, strategy_id: str, description: str, operator: str) -> di
 __all__ = [
     "INTAKE_MODES", "OPERATOR_HALT",
     "halt", "resume", "risk_profile_set", "risk_profile_show",
-    "status_snapshot", "strategy_list", "strategy_submit",
+    "status_snapshot", "strategy_list", "strategy_promote",
+    "strategy_submit",
 ]

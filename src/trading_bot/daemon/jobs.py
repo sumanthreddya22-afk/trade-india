@@ -380,6 +380,35 @@ def job_drift_monitor(ctx: DaemonContext) -> str:
         conn.close()
 
 
+@_wrap("strategy_runner")
+def job_strategy_runner(ctx: DaemonContext) -> str:
+    """Tick every enabled strategy.
+
+    For each strategy with status in {tiny_paper, scaled_paper, live}:
+      * evaluate the signal as-of today (or skip if not a rebalance day)
+      * convert target weights to OrderIntents
+      * submit each intent via execution.order_router
+
+    Strategies at ``research_only`` or ``shadow`` are NOT ticked — they
+    are paper-observed via the backtest harness instead. (Plan v4 §7
+    lane state transitions.)
+
+    Skips cleanly if no broker is wired (--no-broker mode).
+    """
+    if ctx.positions_fetcher is None or ctx.account_fetcher is None:
+        return "skipped: broker not wired"
+    if ctx.broker_submit is None:
+        return "skipped: broker_submit not wired"
+
+    import os
+    if os.environ.get("TRADING_BOT_ENABLE_STRATEGY_RUNNER", "").lower() not in {"1", "true", "yes"}:
+        return "skipped: TRADING_BOT_ENABLE_STRATEGY_RUNNER not set"
+
+    from trading_bot.daemon.strategy_dispatch import dispatch_all_strategies
+    out = dispatch_all_strategies(ctx)
+    return f"ok: {out}"
+
+
 @_wrap("mutation_cycle")
 def job_mutation_cycle(ctx: DaemonContext) -> str:
     # Monthly cadence. No-op until the operator has registered a thesis
@@ -406,5 +435,6 @@ __all__ = [
     "job_orphan_loop",
     "job_position_snapshot",
     "job_reconciliation",
+    "job_strategy_runner",
     "record_heartbeat",
 ]

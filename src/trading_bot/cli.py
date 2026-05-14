@@ -139,6 +139,25 @@ def strategy_list() -> None:
     click.echo(json.dumps(controls.strategy_list(), indent=2, default=str))
 
 
+@strategy.command("promote", help="Promote a strategy to a new lane status.")
+@click.option("--id", "strategy_id", required=True, help="strategy_id (e.g. ETF_MOMENTUM_v1)")
+@click.option("--to", "target_status", required=True,
+              type=click.Choice(["shadow", "tiny_paper", "scaled_paper", "live"]))
+@click.option("--artifact", "artifact_id", default=None,
+              help="validation_artifact_id (auto-resolved from latest pass if omitted)")
+@click.option("--packet", "packet_id", default=None,
+              help="promotion_packet_id (required for live target)")
+def strategy_promote(strategy_id: str, target_status: str,
+                     artifact_id: str | None, packet_id: str | None) -> None:
+    from trading_bot.operator import controls
+    out = controls.strategy_promote(
+        strategy_id=strategy_id, target_status=target_status,
+        artifact_id=artifact_id, packet_id=packet_id,
+        operator=os.environ.get("USER", "operator"),
+    )
+    click.echo(json.dumps(out, indent=2, default=str))
+
+
 @strategy.command("submit", help="Submit a natural-language strategy hypothesis.")
 @click.option("--name", required=True, help="Short strategy name (e.g. MEAN_REV_v1).")
 @click.option("--description", required=True,
