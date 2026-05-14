@@ -1,0 +1,34 @@
+{
+  "_lock_version": "DRAFT-2026-05-14",
+  "_purpose": "Mean Reversion mutation search space (Phase 7 scaffold). Operator reviews + edits before this is hashed in policy/HASHES and the mutation engine starts proposing.",
+  "_status": "DRAFT — not yet hashed; mutation_engine will refuse to read this file until it appears in policy/HASHES.",
+  "strategy_family": "mean_reversion_v1",
+  "budget_per_family_per_month": 32,
+  "mutations": [
+    {
+      "mutation_id": "MR.LOOKBACK",
+      "description": "Lookback window for z-score (daily bars).",
+      "values": [20, 50, 100]
+    },
+    {
+      "mutation_id": "MR.ZSCORE_ENTRY",
+      "description": "Entry threshold (absolute z-score).",
+      "values": [1.5, 2.0, 2.5]
+    },
+    {
+      "mutation_id": "MR.ZSCORE_EXIT",
+      "description": "Exit threshold (absolute z-score, 0 = full reversion).",
+      "values": [0.0, 0.5]
+    },
+    {
+      "mutation_id": "MR.HOLD_MAX_BARS",
+      "description": "Max bars to hold before forced exit.",
+      "values": [5, 10, 15]
+    },
+    {
+      "mutation_id": "MR.UNIVERSE",
+      "description": "Symbol universe restriction (must match a defined enum).",
+      "values": ["sp500_top100", "sp500_top500"]
+    }
+  ]
+}

@@ -33,6 +33,9 @@ KILL_TYPES = (
     "clock_skew",
     "sqlite_integrity",
     "intraday_pnl_floor",
+    # Operator-initiated halt. Not a detector — fired by the operator
+    # via `bot halt` / dashboard. Cleared explicitly by `bot resume`.
+    "manual_operator_halt",
 )
 
 DDL_KILL_SWITCH_EVENT = """

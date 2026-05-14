@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tradingbot.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/__USER__/Trading/.venv/bin/bot</string>
+        <string>daemon</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/__USER__/Trading</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- If the daemon exits too fast 5 times in a row, give up so we
+         don't crash-loop on a busted ledger. Operator must `launchctl
+         load` again after fixing. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/__USER__/Trading/data/daemon.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/__USER__/Trading/data/daemon.err.log</string>
+
+    <!-- Run as the operator (NOT root). Plan v4: nothing in the
+         trading kernel runs privileged. -->
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

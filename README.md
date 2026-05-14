@@ -22,9 +22,9 @@ ledger-first, validation-locked, intel-aware). The plan PDF lives at
 | MVP-OP | 60 calendar days | Wall-clock gate. |
 | 6 — Mutation engine | 2 wk | **Shipped 2026-05-13** — `mutation_log` + `mutation_outcome` (hash-chained, append-only); `propose_candidates` enumerates from hash-locked search space, refuses unknown mutation_ids; BH-FDR adjust + apply; `SubprocessPersonaRunner` with hash check (operator wires `claude --json` command); `sandbox.activated()` blocks `execution/kernel/risk.precheck` imports; `run_mutation_cycle` end-to-end driver. 319 tests pass. |
 | ALPHA | ~365 calendar days | Wall-clock gate. |
-| 7 — Second lane | 3 wk | — |
-| 8 — Wheel lane | 4 wk | — |
-| 9 — Live readiness | 2 wk | — |
+| 7 — Daemon + dashboard + 2nd-lane scaffold | 3 wk | **Shipped 2026-05-14** — APScheduler-based daemon (`bot daemon`) tickling boot_check / market_data_ingest / position_snapshot / orphan_loop / reconciliation / drift_monitor / mutation_cycle with `daemon_heartbeat` table; `AlpacaAdapter` live wiring; FastAPI operator dashboard (`bot dashboard`) with status / halt / risk-profile / NL strategy intake (draft \| intake \| mutate); CLI (`bot <command>`); risk profiles (safe / neutral / aggressive); `manual_operator_halt` kill switch; Mean Reversion lane scaffold + template thesis. 346 tests pass. |
+| 8 — Wheel lane | 4 wk | **Scaffolded** — `src/trading_bot/execution/options/README_BLOCKED.md` documents the 3 operator decisions (data subscription, risk policy extension, tax-lot election) blocking implementation. |
+| 9 — Live readiness | 2 wk | **Templates shipped** — `docs/runbooks/` contains incident_response, dr_drill, tax_lot_policy, live_ramp_checklist, daily_ops, mutation_cycle_setup. Each requires operator sign-off before live ramp. |
 
 **Trading is halted** until Phase 9 ships and the operator signs the live
 readiness packet. Two safety flags currently make this explicit:
@@ -81,3 +81,48 @@ See `CLAUDE.md` for the full directory taxonomy and the v4 hard rules.
 ```bash
 venv/bin/python -m pytest tests/
 ```
+
+## Operator commands (Phase 7+)
+
+```bash
+bot status                           # one-shot JSON snapshot
+bot daemon                           # run the long-lived scheduler
+bot daemon --once                    # tick every job once and exit (smoke)
+bot dashboard                        # serve operator UI on http://127.0.0.1:8765/
+bot digest                           # last 24h summary (account, jobs, fills, orders)
+bot digest --hours 6                 # narrower window
+bot digest --json                    # JSON for piping
+bot halt --reason "..."              # fire manual_operator_halt
+bot resume --reason "..."            # clear it
+bot risk-profile show                # current profile + diffs vs each preset
+bot risk-profile {safe|neutral|aggressive}
+bot strategy list
+bot strategy submit --name X --description "..." --mode {draft|intake|mutate}
+bot verify                           # boot check + ledger chain verify
+```
+
+## Running 24/7 on this Mac (development mode)
+
+```bash
+# 1. One-time smoke test against your Alpaca paper account:
+source .venv/bin/activate
+python tools/alpaca_smoke.py            # read-only; prints account + positions
+
+# 2. One-shot daemon tick (verifies wiring without scheduling):
+bot daemon --once
+
+# 3. Install + start the auto-start launchd units:
+bash tools/install_local_launchd.sh
+
+# 4. Visit http://127.0.0.1:8765/ — dashboard.
+# 5. Tail logs:
+tail -F data/daemon.log
+
+# To stop:
+bash tools/install_local_launchd.sh stop
+```
+
+## Migrating to a new machine
+
+See [`MIGRATION.md`](MIGRATION.md). Use `tools/package_for_macmini.sh` to
+build a tarball of the repo (excludes secrets + live state).

@@ -1,0 +1,51 @@
+# Edge thesis v2 — Mean Reversion (TEMPLATE — operator fills in)
+
+## Hypothesis
+
+(One paragraph. What edge do you think exists? Be specific about the
+mechanism — supply/demand imbalance, behavioral overshoot, microstructure?)
+
+## Mechanism (causal story)
+
+(Why does the edge exist? Who is on the other side of the trade and why?
+If you can't answer this, you don't have a thesis, you have a hope.)
+
+## Universe
+
+(Which symbols? Why these and not others? Liquidity threshold, market-cap
+floor, correlation with existing book.)
+
+## Signal definition (precise)
+
+(Exact computation. Inputs: bars / quotes / fundamentals. Lookback. Trigger
+threshold. Hold horizon. Use formulas, not English.)
+
+## Expected regimes
+
+(When does this work? When does it break? Cite history: e.g. "worked
+2010–2018; broke in COVID; recovered 2022.")
+
+## Kill criteria
+
+(What evidence would convince you to retire this thesis? Be concrete:
+"Sharpe < 0.3 over a 6-month rolling window", "max drawdown > 8%",
+"correlation to seed thesis > 0.7 sustained 30 days".)
+
+## Cost assumptions
+
+- Slippage (bps):
+- Commission per share / per trade:
+- Borrow cost (if shorts allowed):
+- Pessimistic-lens additive overhead: +X bps
+
+## Falsification plan
+
+(How will you backtest this honestly? Walk-forward folds, locked
+holdout, regime stratification. What does success look like at Tier-1
+vs Tier-2 vs Tier-3?)
+
+## Operator sign-off
+
+- Author:
+- Date:
+- Git commit:

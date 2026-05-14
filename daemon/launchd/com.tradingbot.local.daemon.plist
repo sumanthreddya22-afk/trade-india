@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Local-Mac daemon launchd unit. Use this on your dev Mac to run the
+  bot 24/7 without the Mac mini. Differences from the Mac mini plist:
+    * WorkingDirectory points at the main checkout, not the worktree.
+    * Slightly longer ThrottleInterval (60s) so iteration on the
+      worktree doesn't churn the daemon while you're editing.
+
+  Install:
+    cp daemon/launchd/com.tradingbot.local.daemon.plist ~/Library/LaunchAgents/
+    sed -i '' "s|__USER__|$USER|g; s|__PYTHON_BIN__|$(which python3.11)|g" \
+        ~/Library/LaunchAgents/com.tradingbot.local.daemon.plist
+    launchctl load ~/Library/LaunchAgents/com.tradingbot.local.daemon.plist
+
+  Tail the log:
+    tail -F /Users/$USER/Trading/data/daemon.log
+
+  Stop:
+    launchctl unload ~/Library/LaunchAgents/com.tradingbot.local.daemon.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tradingbot.local.daemon</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/__USER__/Trading/.venv/bin/bot</string>
+        <string>daemon</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/__USER__/Trading</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/__USER__/Trading/data/daemon.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/__USER__/Trading/data/daemon.stderr.log</string>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+</dict>
+</plist>

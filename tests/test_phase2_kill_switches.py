@@ -20,8 +20,11 @@ def killtab(ledger_conn):
     return ledger_conn
 
 
-def test_kill_types_constant_has_eight() -> None:
-    assert len(KILL_TYPES) == 8
+def test_kill_types_constant_has_eight_detectors_plus_one_operator() -> None:
+    # 8 system-fired detectors per Plan v4 §6 + 1 operator-initiated
+    # halt (manual_operator_halt, fired via the dashboard / `bot halt`).
+    assert len(KILL_TYPES) == 9
+    assert "manual_operator_halt" in KILL_TYPES
 
 
 def test_fire_then_active(killtab) -> None:

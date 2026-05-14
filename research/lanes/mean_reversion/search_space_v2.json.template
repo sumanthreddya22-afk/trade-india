@@ -1,0 +1,33 @@
+{
+  "_lock_version": "TEMPLATE — set to YYYY-MM-DD before sealing",
+  "_purpose": "Mean Reversion mutation search space. Schema mirrors search_space_v1.json; mutation_engine rejects unknown mutation_ids.",
+  "strategy_family": "mean_reversion_v1",
+  "budget_per_family_per_month": 64,
+  "mutations": [
+    {
+      "mutation_id": "MR.LOOKBACK",
+      "description": "Lookback window for z-score (bars).",
+      "values": [10, 20, 50, 100]
+    },
+    {
+      "mutation_id": "MR.ZSCORE_ENTRY",
+      "description": "Entry threshold (absolute z-score).",
+      "values": [1.5, 2.0, 2.5, 3.0]
+    },
+    {
+      "mutation_id": "MR.ZSCORE_EXIT",
+      "description": "Exit threshold (absolute z-score).",
+      "values": [0.0, 0.25, 0.5]
+    },
+    {
+      "mutation_id": "MR.HOLD_MAX_BARS",
+      "description": "Max bars to hold before forced exit.",
+      "values": [3, 5, 10, 20]
+    },
+    {
+      "mutation_id": "MR.UNIVERSE",
+      "description": "Symbol universe restriction.",
+      "values": ["sp500_top100", "sp500_all", "etf_10"]
+    }
+  ]
+}
