@@ -116,6 +116,14 @@ def fire(
         (row["event_ts"], row["detector"], row["event_kind"],
          row["reason"], row["actor"], prev, this_hash),
     )
+    # Best-effort email alert. Never raises. The notifier auto-dedups
+    # so a kill switch firing every 60s during a partial outage produces
+    # one email, not a flood.
+    try:
+        from trading_bot.obs.notifier import send_kill_switch_alert
+        send_kill_switch_alert(detector=detector, reason=reason, actor=actor)
+    except Exception:
+        pass
     return cur.lastrowid
 
 

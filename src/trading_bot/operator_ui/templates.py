@@ -176,7 +176,7 @@ def status_page(snap: dict, auto_refresh_seconds: int = 30) -> str:
     heartbeats = snap.get("heartbeats") or []
     hb_rows = "".join(
         f"<tr><td>{h['job_name']}</td>"
-        f"<td>{h['last_run_ts']}</td>"
+        f"<td>{h.get('last_run_et') or h['last_run_ts']}</td>"
         f'<td><span class="pill {("ok" if h["last_status"]=="ok" else "warn" if h["last_status"]=="skipped" else "bad")}">{h["last_status"]}</span></td>'
         f"<td><small class='muted'>{(h['last_detail'] or '')[:140]}</small></td>"
         f"<td>{h['last_duration_s']:.2f}s</td></tr>"
@@ -199,7 +199,7 @@ def status_page(snap: dict, auto_refresh_seconds: int = 30) -> str:
       <dt>market</dt>           <dd>{rth_pill}</dd>
       <dt>profile</dt>          <dd>{snap.get('current_profile','—')}</dd>
       <dt>active kills</dt>     <dd>{kills_html}</dd>
-      <dt>snapshot ts</dt>      <dd><small class="muted">{snap.get('ts','')}</small></dd>
+      <dt>now (ET)</dt>         <dd><small class="muted">{snap.get('ts_et', snap.get('ts',''))}</small></dd>
       <dt>ledger</dt>           <dd><small class="muted">{snap.get('ledger_db','?')}</small></dd>
     </dl>
   </div>

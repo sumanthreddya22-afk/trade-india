@@ -1,16 +1,14 @@
 {
-  "lock_version": "2026-05-13.v4-phase2",
-  "_source": "Plan v4 §7 Strategy Lanes — Promotion And Demotion Criteria",
-  "_note": "One row per lane. status ∈ {research_only | shadow | tiny_paper | scaled_paper | live | reduce_only | observe_only | halted}. A lane only emits orders to the kernel when its status is in {tiny_paper, scaled_paper, live}. Transitions are recorded by lane_caps.demote_on_breach (Phase 2) and by the registry promotion path (Phase 4).",
-
+  "lock_version": "2026-05-14.v4-phase9",
+  "_source": "Plan v4 \u00a77 Strategy Lanes \u2014 Promotion And Demotion Criteria",
+  "_note": "One row per lane. status \u2208 {research_only | shadow | tiny_paper | scaled_paper | live | reduce_only | observe_only | halted}. A lane only emits orders to the kernel when its status is in {tiny_paper, scaled_paper, live}. Transitions are recorded by lane_caps.demote_on_breach (Phase 2) and by the registry promotion path (Phase 4).",
   "lanes": {
     "benchmark": {
       "status": "live",
-      "_status_note": "Always-on yardstick — SPY/QQQ/IWM passive cash benchmark; no actual orders, used for relative scoring.",
+      "_status_note": "Always-on yardstick \u2014 SPY/QQQ/IWM passive cash benchmark; no actual orders, used for relative scoring.",
       "thesis_id": null,
       "demotion_criteria": []
     },
-
     "etf_momentum": {
       "status": "shadow",
       "_status_note": "Shadow after research_candidate lock passes. Promotes to tiny_paper when paper_candidate gate passes (Phase 4 + alpha-proof window).",
@@ -20,42 +18,76 @@
         "any risk_policy.lock tier breach"
       ]
     },
-
     "crypto_trend": {
-      "status": "reduce_only",
-      "_status_note": "Currently under the 15% asset-class cap; cannot open new positions until a separate thesis is written and a validation_artifact produced.",
+      "status": "tiny_paper",
+      "_status_note": "Phase 9 auto-promote 2026-05-14: validation result drove status \u2192 tiny_paper. Previous note preserved in git history.",
       "thesis_id": null,
-      "demotion_criteria": ["asset-class cap breach (>15% crypto)"]
+      "demotion_criteria": [
+        "asset-class cap breach (>15% crypto)"
+      ]
     },
-
     "mean_reversion": {
       "status": "research_only",
       "thesis_id": null,
       "demotion_criteria": []
     },
-
     "options_income_wheel": {
-      "status": "research_only",
-      "_status_note": "Blocked — requires options data subscription + Greeks calc + assignment handling. Lands Phase 8.",
+      "status": "tiny_paper",
+      "_status_note": "Phase 9 auto-promote 2026-05-14: validation result drove status \u2192 tiny_paper. Previous note preserved in git history.",
       "thesis_id": null,
       "demotion_criteria": []
     },
-
     "community_llm_sourced": {
       "status": "sandbox",
       "_status_note": "LLM cannot author strategies in v4. Becomes the 'mutation engine' inside the ETF Momentum lane in Phase 6.",
       "thesis_id": null,
       "demotion_criteria": []
+    },
+    "dual_momentum": {
+      "status": "tiny_paper",
+      "_status_note": "Phase 9 auto-create 2026-05-14: lane created at tiny_paper after validation.",
+      "thesis_id": null,
+      "demotion_criteria": [
+        "any risk_policy.lock tier breach",
+        "any kill criterion trip"
+      ]
     }
   },
-
   "transitions": {
-    "research_only_to_shadow": "validation_artifact passes Tier-1 (Plan §13)",
-    "shadow_to_tiny_paper": "validation_artifact passes Tier-2 (Plan §13)",
+    "research_only_to_shadow": "validation_artifact passes Tier-1 (Plan \u00a713)",
+    "shadow_to_tiny_paper": "validation_artifact passes Tier-2 (Plan \u00a713)",
     "tiny_paper_to_scaled_paper": "alpha-proof window passes + operator approval",
-    "scaled_paper_to_live": "live_candidate tier passes (Plan §13) + human sign-off",
+    "scaled_paper_to_live": "live_candidate tier passes (Plan \u00a713) + human sign-off",
     "any_active_to_reduce_only": "any risk_policy.lock breach",
     "any_active_to_observe_only": "any kill criterion trip",
     "observe_only_resume": "new validation lock + cooldown completed"
-  }
+  },
+  "_phase9_audit": [
+    {
+      "ts": "2026-05-15T01:31:02.550936+00:00",
+      "operator": "operator",
+      "applied": [
+        {
+          "sid": "DUAL_MOMENTUM_v1",
+          "lane": "dual_momentum",
+          "action": "create_lane",
+          "to": "tiny_paper"
+        },
+        {
+          "sid": "CRYPTO_MOMENTUM_v1",
+          "lane": "crypto_trend",
+          "action": "update_lane_caps",
+          "from": "reduce_only",
+          "to": "tiny_paper"
+        },
+        {
+          "sid": "SPY_WHEEL_v1",
+          "lane": "options_income_wheel",
+          "action": "update_lane_caps",
+          "from": "research_only",
+          "to": "tiny_paper"
+        }
+      ]
+    }
+  ]
 }

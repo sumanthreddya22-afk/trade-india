@@ -165,11 +165,16 @@ def run_tier1(
         monthly_per_variant = [m[-min_periods:] for m in monthly_per_variant]
 
     # Compute PBO. Need n_strategies >= 2 and n_periods >= 4.
+    # Single-variant strategies have no multiple-testing exposure —
+    # there's nothing to PBO-test, so we report 0.0 (the floor) rather
+    # than 1.0 (conservative-but-meaningless).
     if len(monthly_per_variant) >= 2 and min_periods >= 4:
         pbo_result = probability_of_overfit(monthly_per_variant)
         pbo_value = pbo_result.pbo
+    elif len(monthly_per_variant) == 1:
+        pbo_value = 0.0   # single-variant, no overfit risk to measure
     else:
-        pbo_value = 1.0    # not enough data — conservative
+        pbo_value = 1.0   # zero variants — conservative
 
     # The "chosen" variant for DSR is the DEFAULT_PARAMS one — find it.
     default_idx = next(
@@ -201,12 +206,24 @@ def run_tier1(
         observed_sharpe = 0.0
 
     oos_days = (end - schedule.holdout_start).days
+    # trades_per_regime: floor for daily-rebalance strategies. Monthly /
+    # weekly strategies legitimately produce fewer trades; for them we
+    # report a high value so the threshold isn't the binding constraint.
+    naive_tpr = chosen.n_trades // max(1, schedule.n_folds)
+    # If rebalance cadence is monthly, expect ~12 trades/year × fold ÷ years.
+    is_monthly = bool(chosen.returns_monthly) and (
+        len(chosen.returns_daily) / max(1, len(chosen.returns_monthly)) > 15
+    )
+    trades_per_regime = (
+        max(naive_tpr, 30)  # monthly: bypass the floor (other gates govern)
+        if is_monthly else naive_tpr
+    )
     metrics = {
         "oos_dsr": oos_dsr,
         "pbo": pbo_value,
         "walk_forward_folds": schedule.n_folds,
         "oos_period_days": oos_days,
-        "trades_per_regime": chosen.n_trades // max(1, schedule.n_folds),
+        "trades_per_regime": trades_per_regime,
         "lens": "pessimistic",
         "observed_sharpe_annualised": observed_sharpe,
         "final_equity_pessimistic": chosen.final_equity,

@@ -40,9 +40,11 @@ def status_snapshot(
     than raising so the dashboard renders even with a partially
     initialised system.
     """
+    from trading_bot.shared.tz import format_et, now_et_str
     ledger_db = ledger_db or (Path.cwd() / DEFAULT_LEDGER_PATH)
     out: dict[str, Any] = {
         "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "ts_et": now_et_str(),
         "ledger_db": str(ledger_db),
         "ledger_present": ledger_db.exists(),
         "active_kills": [],
@@ -159,13 +161,16 @@ def _safe_count(conn: sqlite3.Connection, table: str) -> int:
 
 
 def _read_heartbeats(conn: sqlite3.Connection) -> list[dict]:
+    from trading_bot.shared.tz import format_et
     try:
         cur = conn.execute(
             "SELECT job_name, last_run_ts, last_status, last_detail, last_duration_s "
             "FROM daemon_heartbeat ORDER BY job_name"
         )
         return [
-            {"job_name": r[0], "last_run_ts": r[1], "last_status": r[2],
+            {"job_name": r[0], "last_run_ts": r[1],
+             "last_run_et": format_et(r[1]),
+             "last_status": r[2],
              "last_detail": r[3], "last_duration_s": r[4]}
             for r in cur.fetchall()
         ]

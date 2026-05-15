@@ -162,36 +162,71 @@ class AlpacaAdapter:
     def submit_order(
         self, *, client_order_id: str, symbol: str, qty: float, side: str,
         order_type: str = "market", limit_price: Optional[float] = None,
-        time_in_force: str = "day", **_ignored,
+        time_in_force: str = "day", asset_class: str = "us_equity",
+        **_ignored,
     ) -> dict:
+        """Single entry point for stocks, crypto, options.
+
+        Routes by asset_class:
+          * us_equity / equity → standard equity order (TIF=DAY default)
+          * crypto → IOC required for crypto market orders
+          * us_option / option → OCC-symbol order. Crucially the
+            "sell" side becomes "sell_to_open" if we have no long
+            position in this contract — Alpaca infers position_intent
+            from the held qty.
+        """
         try:
-            from alpaca.trading.enums import OrderSide, TimeInForce
+            from alpaca.trading.enums import (
+                AssetClass, OrderSide, TimeInForce,
+            )
             from alpaca.trading.requests import (
                 LimitOrderRequest, MarketOrderRequest,
             )
-            side_enum = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
-            tif_enum = TimeInForce[time_in_force.upper()]
-            if order_type == "limit" and limit_price is not None:
-                req = LimitOrderRequest(
-                    symbol=symbol, qty=qty, side=side_enum,
-                    time_in_force=tif_enum, limit_price=limit_price,
-                    client_order_id=client_order_id,
-                )
+            side_lower = side.lower()
+            side_enum = OrderSide.BUY if side_lower == "buy" else OrderSide.SELL
+            ac = (asset_class or "us_equity").lower()
+
+            # Time-in-force: crypto requires IOC for market orders;
+            # options + equity default DAY.
+            if ac == "crypto":
+                tif_enum = TimeInForce.IOC
             else:
-                req = MarketOrderRequest(
-                    symbol=symbol, qty=qty, side=side_enum,
-                    time_in_force=tif_enum,
-                    client_order_id=client_order_id,
-                )
+                # Allow operator override via param; fall back to DAY.
+                try:
+                    tif_enum = TimeInForce[time_in_force.upper()]
+                except KeyError:
+                    tif_enum = TimeInForce.DAY
+
+            kwargs = dict(
+                symbol=symbol, qty=qty, side=side_enum,
+                time_in_force=tif_enum,
+                client_order_id=client_order_id,
+            )
+            if order_type == "limit" and limit_price is not None:
+                req = LimitOrderRequest(limit_price=limit_price, **kwargs)
+            else:
+                req = MarketOrderRequest(**kwargs)
             resp = self.trading.submit_order(req)
             return {
                 "ok": True,
                 "broker_order_id": str(getattr(resp, "id", "")),
                 "status": str(getattr(resp, "status", "accepted")),
+                "asset_class": ac,
             }
         except Exception as e:  # noqa: BLE001
             log.warning("alpaca: submit_order failed: %s", e)
             return {"ok": False, "broker_order_id": None, "error": str(e)}
+
+    def fetch_option_positions(self) -> list[dict]:
+        """Just options rows from get_all_positions, normalised."""
+        positions = self.fetch_positions()
+        out = []
+        for p in positions:
+            sym = p.get("symbol", "")
+            # OCC symbols are SPY250516P00450000 style — 15-char min.
+            if len(sym) >= 15 and any(c.isdigit() for c in sym):
+                out.append(p)
+        return out
 
     def lookup_by_client_order_id(self, client_order_id: str) -> Optional[dict]:
         try:

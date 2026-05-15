@@ -34,6 +34,9 @@ log = logging.getLogger(__name__)
 # here AND register the version row.
 STRATEGY_MODULE = {
     "ETF_MOMENTUM_v1": "trading_bot.strategies.etf_momentum_v1",
+    "DUAL_MOMENTUM_v1": "trading_bot.strategies.dual_momentum_v1",
+    "CRYPTO_MOMENTUM_v1": "trading_bot.strategies.crypto_momentum_v1",
+    "SPY_WHEEL_v1": "trading_bot.strategies.spy_wheel_v1",
 }
 
 # Statuses where the daemon will tick the strategy. Plan v4 §7.
