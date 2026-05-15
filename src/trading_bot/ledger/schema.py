@@ -336,3 +336,43 @@ def read_schema_version(conn) -> int | None:
         return int(row[0]) if row else None
     except Exception:
         return None
+
+
+def ensure_schema(conn) -> str:
+    """Apply ``ALL_DDL`` against an existing ledger DB when its stored
+    ``schema_version`` matches the code's ``SCHEMA_VERSION``. Idempotent
+    on every table (``IF NOT EXISTS`` everywhere), so it only adds
+    tables/indexes/triggers that were appended within the same version.
+
+    Returns one of:
+      * ``"ok"``      — DDL applied (or already current)
+      * ``"unstamped"`` — no schema_meta row; DDL applied + version stamped
+      * ``"mismatch"``  — stored version != SCHEMA_VERSION; NO-OP, the
+        caller (boot_check) reports the mismatch and the operator runs
+        a proper migration. Auto-applying across an incompatible bump
+        would silently mask the migration.
+
+    Mirrors only carry a subset of tables but accept the full DDL
+    because every statement is ``IF NOT EXISTS``.
+
+    This exists because v4 has shipped two *additive* schema growth
+    rounds at the same SCHEMA_VERSION=1 (feature_snapshot in Phase 10,
+    drift_event in Phase 11). The boot check verifies the chain on
+    every hash-chained table, so a table missing from a long-running
+    live DB causes a fail-closed daemon refusal. This helper reconciles
+    that on startup without re-running the full ``init_ledger.py``
+    tool by hand.
+    """
+    existing = read_schema_version(conn)
+    if existing is not None and existing != SCHEMA_VERSION:
+        return "mismatch"
+    cur = conn.cursor()
+    for stmt in ALL_DDL:
+        cur.execute(stmt)
+    cur.execute(
+        "INSERT OR REPLACE INTO schema_meta(key, value, updated_at) VALUES "
+        "(?, ?, datetime('now'))",
+        ("schema_version", str(SCHEMA_VERSION)),
+    )
+    conn.commit()
+    return "unstamped" if existing is None else "ok"

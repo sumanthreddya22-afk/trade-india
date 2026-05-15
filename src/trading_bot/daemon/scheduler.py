@@ -142,6 +142,29 @@ def run_daemon(
             format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         )
 
+    # Reconcile additive schema growth against the live DBs before the
+    # boot check. Same-version DDL is IF-NOT-EXISTS everywhere, so this
+    # only adds tables/indexes/triggers that shipped since the DB was
+    # last initialised. Across an incompatible SCHEMA_VERSION bump this
+    # is a no-op — boot_check then surfaces the mismatch and the operator
+    # runs the proper migration. See ``ledger.ensure_schema`` for the
+    # full safety contract.
+    try:
+        from trading_bot.ledger import connect_writer, ensure_schema
+        for db_path in (ctx.ledger_db, ctx.mirror_db):
+            if not db_path.exists():
+                continue
+            conn = connect_writer(db_path)
+            try:
+                status = ensure_schema(conn)
+            finally:
+                conn.close()
+            log.info(
+                "daemon: ensure_schema(%s) → %s", db_path.name, status,
+            )
+    except Exception:  # noqa: BLE001
+        log.exception("daemon: ensure_schema failed; continuing to boot_check")
+
     if config.run_boot_check_on_startup:
         log.info("daemon: running startup boot check")
         result = job_boot_check(ctx)

@@ -52,6 +52,7 @@ from trading_bot.ledger.schema import (
     HASH_CHAINED_TABLES,
     SCHEMA_VERSION,
     create_ledger,
+    ensure_schema,
     read_schema_version,
 )
 from trading_bot.ledger.state_event import (
@@ -84,6 +85,7 @@ __all__ = [
     "connect_writer",
     "create_ledger",
     "current_state",
+    "ensure_schema",
     "find_orphans",
     "hash_position_vector",
     "init_mirror",
