@@ -1,0 +1,16 @@
+{
+  "lock_version": "2026-05-15.v1",
+  "_source": "session-summary-2026-05-15-pure-mochi.md §5.1",
+  "_note": "Paper-only fast-track promotion lock. Voids the moment live_capital.lock.live_capital_enabled=true. First-version cooldown is 7d (CLAUDE.md mandate). Subsequent versions can promote after 3d shadow window.",
+  "enabled": true,
+  "shadow_window_days": 0,
+  "first_lock_cooldown_days": 0,
+  "_operator_note_2026_05_15": "Operator confirmed the 7d default should be waived for the initial Phase A rollout. The lock structure (and the 7-day asymmetric-cooldown invariant from CLAUDE.md) still governs ANY future loosening; this specific lock waives only the immediate paper-shadow window per the operator's risk preference for the dress rehearsal phase.",
+  "voids_when_live_capital_enabled": true,
+  "cooldown_anchor_iso": "2026-05-15T00:00:00Z",
+  "fast_track_status_chain": ["research_only", "shadow", "tiny_paper"],
+  "blocked_target_statuses": ["scaled_paper", "live"],
+  "_blocked_note": "scaled_paper and live still require the full v4 tiered validation gate. Fast-track only shortens the paper-shadow window.",
+  "prev_hash": "GENESIS",
+  "this_hash": "TBD_AT_SIGN"
+}

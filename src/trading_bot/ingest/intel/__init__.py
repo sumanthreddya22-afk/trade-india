@@ -19,13 +19,25 @@ This separation enforces:
 from __future__ import annotations
 
 from trading_bot.ingest.intel.base import (
+    BaseIntelFeed,
     IntelFeed,
     IntelRecord,
     IntelUnavailable,
 )
+from trading_bot.ingest.intel.cboe import CboeFeed
+from trading_bot.ingest.intel.crypto_fear_greed import CryptoFearGreedFeed
 from trading_bot.ingest.intel.cryptopanic import CryptoPanicFeed
 from trading_bot.ingest.intel.edgar import EdgarFeed
+from trading_bot.ingest.intel.etfdatabase_flows import EtfDatabaseFlowsFeed
+from trading_bot.ingest.intel.finra_short_interest import (
+    FinraShortInterestFeed,
+)
 from trading_bot.ingest.intel.fred import FredFeed
+from trading_bot.ingest.intel.funding_rates import FundingRatesFeed
+from trading_bot.ingest.intel.glassnode import GlassnodeFeed
+from trading_bot.ingest.intel.treasury_yield_curve import (
+    TreasuryYieldCurveFeed,
+)
 
 
 def snapshot_payload(
@@ -56,11 +68,19 @@ def snapshot_payload(
 
 
 __all__ = [
+    "BaseIntelFeed",
+    "CboeFeed",
+    "CryptoFearGreedFeed",
     "CryptoPanicFeed",
     "EdgarFeed",
+    "EtfDatabaseFlowsFeed",
+    "FinraShortInterestFeed",
     "FredFeed",
+    "FundingRatesFeed",
+    "GlassnodeFeed",
     "IntelFeed",
     "IntelRecord",
     "IntelUnavailable",
+    "TreasuryYieldCurveFeed",
     "snapshot_payload",
 ]

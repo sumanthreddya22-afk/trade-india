@@ -1,0 +1,15 @@
+{
+  "lock_version": "2026-05-15.v1",
+  "_source": "session-summary-2026-05-15-pure-mochi.md §5.1",
+  "_note": "ETF Momentum v3 universe filter. Replaces hardcoded 10-ETF allowlist. Structured filter: no leveraged/inverse, min AUM, min age, top-N by ADV.",
+  "asset_class": "us_equity",
+  "must_have_attributes": ["ETF"],
+  "exclude_attributes": ["LEVERAGED", "INVERSE", "VOLATILITY"],
+  "min_aum_usd": 1000000000,
+  "min_age_days": 1095,
+  "tradable_required": true,
+  "fractionable_preferred": true,
+  "top_n_by_adv": 30,
+  "min_universe_size": 5,
+  "_min_universe_size_note": "if fewer than 5 ETFs match, halt strategy for this decision (DiscoveryUnavailable)"
+}

@@ -1,0 +1,27 @@
+{
+  "lock_version": "2026-05-15.v1",
+  "_source": "session-summary-2026-05-15-pure-mochi.md §5.1 (Option 3 sleeves)",
+  "asset_class": "us_equity",
+  "sleeves": {
+    "equity": {
+      "must_have_attributes": ["ETF"],
+      "exclude_attributes": ["LEVERAGED", "INVERSE", "VOLATILITY", "FIXED_INCOME"],
+      "broad_market_keywords": ["SPDR S&P 500", "Russell 1000", "Total Stock Market", "Total Market", "Total US", "Core S&P"],
+      "fallback_classifier_allowlist": ["SPY", "VOO", "IVV", "QQQ", "VTI", "ITOT", "SCHB", "IWM", "DIA", "MDY"],
+      "min_aum_usd": 5000000000,
+      "min_age_days": 1095,
+      "top_n_by_adv": 3
+    },
+    "treasury": {
+      "must_have_attributes": ["ETF", "FIXED_INCOME"],
+      "exclude_attributes": ["LEVERAGED", "INVERSE"],
+      "duration_keywords": ["20+ Year Treasury", "7-10 Year Treasury", "Long-Term Treasury", "Intermediate Treasury", "Long Bond"],
+      "fallback_classifier_allowlist": ["TLT", "IEF", "VGLT", "TLH", "EDV", "ZROZ", "VGIT", "SPTL"],
+      "min_aum_usd": 1000000000,
+      "min_age_days": 1095,
+      "top_n_by_adv": 2
+    }
+  },
+  "_classifier_note": "If Alpaca asset attributes do not include FIXED_INCOME or sleeve-specific tags, the sleeve classifier uses the fallback_classifier_allowlist intersected with the broad ETF filter. This keeps the universe data-driven where Alpaca's metadata is rich and falls back gracefully where it isn't.",
+  "min_universe_size_per_sleeve": 1
+}

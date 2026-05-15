@@ -40,6 +40,12 @@ STRATEGY_MODULE = {
     "DUAL_MOMENTUM_v1": "trading_bot.strategies.dual_momentum_v1",
     "CRYPTO_MOMENTUM_v1": "trading_bot.strategies.crypto_momentum_v1",
     "SPY_WHEEL_v1": "trading_bot.strategies.spy_wheel_v1",
+    # v3 cohort (Phase A — daily cadence, policy-locked universe)
+    "ETF_MOMENTUM_v3": "trading_bot.strategies.etf_momentum_v3",
+    "DUAL_MOMENTUM_v3": "trading_bot.strategies.dual_momentum_v3",
+    "CRYPTO_MOMENTUM_v3": "trading_bot.strategies.crypto_momentum_v3",
+    # Phase B
+    "SPY_WHEEL_v3": "trading_bot.strategies.spy_wheel_v3",
 }
 
 # Statuses where the daemon will tick the strategy. Plan v4 §7.

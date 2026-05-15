@@ -1,0 +1,53 @@
+{
+  "lock_version": "2026-05-15.v1",
+  "_source": "session-summary-2026-05-15-pure-mochi.md §8.4",
+  "_note": "Per-strategy intel feature opt-in. Adding a new intel_feature to a strategy = new strategy_version + 7-day cooldown.",
+  "strategies": {
+    "dual_momentum_v3": {
+      "price_features": ["momentum_12_1", "momentum_6_1"],
+      "intel_features": []
+    },
+    "etf_momentum_v3": {
+      "price_features": ["momentum_12_1"],
+      "intel_features": [
+        "etfdatabase_flow_30d",
+        "fred_yield_curve_slope"
+      ]
+    },
+    "crypto_momentum_v3": {
+      "price_features": ["momentum_30d", "momentum_7d"],
+      "intel_features": [
+        "glassnode_mvrv_z",
+        "coinglass_oi_delta_24h",
+        "funding_rate_8h_zscore",
+        "cryptopanic_sentiment_24h"
+      ]
+    },
+    "spy_wheel_v3": {
+      "price_features": ["iv_rank_30d"],
+      "intel_features": [
+        "cboe_putcall_ratio",
+        "cboe_skew",
+        "marketchameleon_unusual_activity_score"
+      ]
+    }
+  },
+  "available_intel_features": {
+    "fred_yield_curve_slope": {"feed_id": "treasury_yield_curve", "kind": "macro_scalar", "asof_lag_days": 1},
+    "treasury_10y": {"feed_id": "treasury_yield_curve", "kind": "macro_scalar", "asof_lag_days": 1},
+    "crypto_fear_greed_index": {"feed_id": "crypto_fear_greed", "kind": "macro_scalar", "asof_lag_days": 0},
+    "cboe_skew": {"feed_id": "cboe", "kind": "macro_scalar", "asof_lag_days": 1},
+    "fred_unemployment_4w_delta": {"feed_id": "fred", "kind": "macro_scalar", "asof_lag_days": 30},
+    "finra_short_interest_pct": {"feed_id": "finra_short_interest", "kind": "per_symbol_scalar", "asof_lag_days": 14},
+    "etfdatabase_flow_30d": {"feed_id": "etfdatabase_flows", "kind": "per_symbol_scalar", "asof_lag_days": 1},
+    "glassnode_mvrv_z": {"feed_id": "glassnode", "kind": "per_symbol_scalar", "asof_lag_days": 1},
+    "coinglass_oi_delta_24h": {"feed_id": "coinglass", "kind": "per_symbol_scalar", "asof_lag_days": 0},
+    "funding_rate_8h_zscore": {"feed_id": "funding_rates", "kind": "per_symbol_scalar", "asof_lag_days": 0},
+    "cryptopanic_sentiment_24h": {"feed_id": "cryptopanic", "kind": "per_symbol_scalar", "asof_lag_days": 0},
+    "cboe_putcall_ratio": {"feed_id": "cboe", "kind": "macro_scalar", "asof_lag_days": 1},
+    "cboe_skew": {"feed_id": "cboe", "kind": "macro_scalar", "asof_lag_days": 1},
+    "marketchameleon_unusual_activity_score": {"feed_id": "marketchameleon", "kind": "per_symbol_scalar", "asof_lag_days": 1},
+    "form_4_insider_cluster_30d": {"feed_id": "sec_form_4", "kind": "per_symbol_scalar", "asof_lag_days": 2},
+    "form_13f_buyer_count_q": {"feed_id": "sec_form_13f", "kind": "per_symbol_scalar", "asof_lag_days": 60}
+  }
+}

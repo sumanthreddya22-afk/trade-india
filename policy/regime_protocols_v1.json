@@ -1,0 +1,96 @@
+{
+  "lock_version": "2026-05-15.v1",
+  "_source": "session-summary-2026-05-15-pure-mochi.md §10",
+  "_note": "Five-regime classifier with asset-class-tuned thresholds. Manual override always wins. Recovery requires classifier + Claude synthesis + 14d failsafe.",
+  "regimes": ["normal", "caution", "stress", "crisis", "recovery"],
+  "asset_classes": {
+    "stocks": {
+      "thresholds": {
+        "vix_caution": 18.0,
+        "vix_stress": 25.0,
+        "vix_crisis": 35.0,
+        "drawdown_caution_pct": 5.0,
+        "drawdown_stress_pct": 8.0,
+        "drawdown_crisis_pct": 15.0,
+        "fear_greed_caution_max": 30,
+        "fear_greed_crisis_max": 10
+      },
+      "fast_triggers": {
+        "spy_daily_loss_pct": 5.0,
+        "treasury_spread_jump_bps": 50
+      },
+      "permissive_multiplier": 1.0
+    },
+    "crypto": {
+      "thresholds": {
+        "annualized_vol_caution_pct": 60.0,
+        "annualized_vol_stress_pct": 90.0,
+        "annualized_vol_crisis_pct": 130.0,
+        "drawdown_caution_pct": 10.0,
+        "drawdown_stress_pct": 16.0,
+        "drawdown_crisis_pct": 30.0,
+        "fear_greed_caution_max": 30,
+        "fear_greed_crisis_max": 10
+      },
+      "fast_triggers": {
+        "stablecoin_depeg_pct": 2.0,
+        "stablecoin_depeg_min_minutes": 10,
+        "btc_daily_loss_pct": 10.0
+      },
+      "permissive_multiplier": 2.0
+    },
+    "options": {
+      "thresholds": {
+        "vix_caution": 16.0,
+        "vix_stress": 22.0,
+        "vix_crisis": 30.0,
+        "drawdown_caution_pct": 4.0,
+        "drawdown_stress_pct": 7.0,
+        "drawdown_crisis_pct": 12.0,
+        "put_call_caution": 1.0
+      },
+      "fast_triggers": {
+        "vix_one_day_jump_pct": 30.0,
+        "skew_percentile_min": 99.0
+      },
+      "permissive_multiplier": 0.667
+    }
+  },
+  "per_strategy_protocol": {
+    "DUAL_MOMENTUM_v3": {
+      "normal": {"size_multiplier": 1.0, "new_entries": true},
+      "caution": {"size_multiplier": 0.5, "new_entries": true},
+      "stress": {"size_multiplier": 0.5, "new_entries": false, "hold_only": true},
+      "crisis": {"size_multiplier": 0.0, "close_equity_pct": 0.5, "rotate_to_treasury": true},
+      "recovery": {"size_multiplier": 0.5, "new_entries": true, "gated_by_claude": true}
+    },
+    "ETF_MOMENTUM_v3": {
+      "normal": {"size_multiplier": 1.0, "new_entries": true},
+      "caution": {"size_multiplier": 0.5, "new_entries": true},
+      "stress": {"size_multiplier": 0.5, "new_entries": false, "hold_only": true},
+      "crisis": {"size_multiplier": 0.0, "close_all": true, "to_cash": true},
+      "recovery": {"size_multiplier": 0.25, "ramp_to_100_over_days": 14, "gated_by_claude": true}
+    },
+    "CRYPTO_MOMENTUM_v3": {
+      "normal": {"size_multiplier": 1.0, "new_entries": true},
+      "caution": {"size_multiplier": 0.5, "new_entries": true},
+      "stress": {"size_multiplier": 0.5, "new_entries": false, "hold_only": true},
+      "crisis": {"size_multiplier": 0.0, "close_all": true, "to_cash": true},
+      "recovery": {"size_multiplier": 0.25, "ramp_to_100_over_days": 14, "gated_by_claude": true}
+    },
+    "SPY_WHEEL_v3": {
+      "normal": {"size_multiplier": 1.0, "new_short_puts": true},
+      "caution": {"size_multiplier": 0.75, "new_short_puts": false},
+      "stress": {"close_calls": true, "hold_puts": true, "new_short_puts": false},
+      "crisis": {"close_all": true},
+      "recovery": {"new_short_puts": false, "gated_by_claude": true}
+    }
+  },
+  "recovery_policy": {
+    "claude_synthesis_required": true,
+    "classifier_confirmation_required": true,
+    "failsafe_auto_recovery_days": 14,
+    "ramp_steps_pct": [25, 50, 75, 100],
+    "ramp_interval_days": 4
+  }
+}

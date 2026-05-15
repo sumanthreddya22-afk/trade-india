@@ -1,7 +1,7 @@
 {
-  "lock_version": "2026-05-13.v4-phase2",
-  "_source": "Plan v4 §1A — Role-Prompting Framework",
-  "_note": "Persona files are hash-anchored in policy/HASHES. The L3/L8 sandbox runner (Phase 5) pins each persona's content at call time and refuses to run on hash mismatch. role_personas_runtime.check_persona_hash(path) is shipped Phase 2.",
+  "lock_version": "2026-05-15.v4-phase12",
+  "_source": "Plan v4 §1A — Role-Prompting Framework + 2026-05-15 autonomy expansion",
+  "_note": "Persona files are hash-anchored in policy/HASHES. The L3/L8 sandbox runner pins each persona's content at call time and refuses to run on hash mismatch.",
 
   "personas": [
     "prompts/roles/quant_pm.v1.md",
@@ -11,13 +11,24 @@
     "prompts/roles/execution_engineer.v1.md",
     "prompts/roles/ai_mlops.v1.md",
     "prompts/roles/sre_ops.v1.md",
-    "prompts/roles/compliance.v1.md"
+    "prompts/roles/compliance.v1.md",
+    "prompts/roles/drift_postmortem.v1.md",
+    "prompts/roles/universe_audit_analyst.v1.md",
+    "prompts/roles/regime_analyst.v1.md",
+    "prompts/roles/mutation_reviewer.v1.md",
+    "prompts/roles/search_space_expander.v1.md",
+    "prompts/roles/strategy_scout.v1.md",
+    "prompts/roles/strategy_implementer.v1.md"
   ],
 
   "hash_check_required_at": [
     "L3 hypothesis intake (Phase 5)",
     "L8 daily postmortem writer (Phase 1+ writer; Phase 5 runner)",
-    "Tier-2 / Tier-3 promotion panel (Phase 4)"
+    "Tier-2 / Tier-3 promotion panel (Phase 4)",
+    "drift_postmortem job (drift_event / universe_audit_event / regime_event triggers)",
+    "regime_analyst job (crisis -> recovery synthesis path)",
+    "mutation_reviewer + search_space_expander jobs (weekly / monthly)",
+    "research-bot scout + implementer jobs (nightly)"
   ],
 
   "_adversarial_pair_note": "Every L3 hypothesis intake runs paired calls: quant_research_lead.v1 (proposer/supporter) and risk_validator.v1 (critic). Both transcripts are written to strategy_decision regardless of who wins. If risk_validator returns verdict='block' with confidence > 0.7, the hypothesis is dead unless a human operator records a documented override."

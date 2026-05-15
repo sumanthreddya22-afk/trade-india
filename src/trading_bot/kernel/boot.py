@@ -25,13 +25,14 @@ from typing import List
 
 from trading_bot.ledger import (
     DEFAULT_LEDGER_PATH, DEFAULT_MIRROR_PATH, SCHEMA_VERSION,
-    HashChainBroken, connect_reader, read_schema_version,
-    verify_all_chained,
+    HashChainBroken, connect_reader, connect_writer, ensure_schema,
+    read_schema_version, verify_all_chained,
 )
 from trading_bot.risk import (
     DEFAULT_POLICY_DIR, PolicyHashMismatch, active_kills,
     ensure_kill_switch_table, verify_policy_hashes,
 )
+from trading_bot.shared.llm_transport import claude_cli_available, claude_cli_path
 
 
 @dataclass
@@ -65,6 +66,23 @@ def run_boot_checks(
     ledger_db = ledger_db or Path.cwd() / DEFAULT_LEDGER_PATH
     mirror_db = mirror_db or Path.cwd() / DEFAULT_MIRROR_PATH
     rep = BootReport()
+
+    # 0. additive-DDL reconciliation — match the daemon's startup behaviour
+    # (commit 08a9966). New ledger tables added at the same SCHEMA_VERSION
+    # are applied here so the hash-chain verification below doesn't trip on
+    # a missing table.
+    for label, db in (("ledger", ledger_db), ("mirror", mirror_db)):
+        if not db.exists():
+            continue
+        try:
+            conn = connect_writer(db)
+            try:
+                status = ensure_schema(conn)
+                rep._record(f"ensure_schema:{label}", "ok", status)
+            finally:
+                conn.close()
+        except Exception as e:  # pragma: no cover - defensive
+            rep._record(f"ensure_schema:{label}", "fail", str(e))
 
     # 1. integrity_check on ledger + mirror
     for label, db in (("ledger", ledger_db), ("mirror", mirror_db)):
@@ -118,7 +136,17 @@ def run_boot_checks(
         finally:
             conn.close()
 
-    # 5. surface active kill switches (informational; not a boot failure)
+    # 5. claude CLI availability (Phase 12 — single LLM transport)
+    if claude_cli_available():
+        rep._record("claude_cli", "ok", claude_cli_path())
+    else:
+        rep._record(
+            "claude_cli", "fail",
+            f"binary not found at {claude_cli_path()!r}; "
+            "set TRADING_BOT_CLAUDE_CLI_PATH or install the Claude CLI",
+        )
+
+    # 6. surface active kill switches (informational; not a boot failure)
     if ledger_db.exists():
         # We need a writer to ensure_kill_switch_table; but read-only
         # suffices for active_kills. If the table doesn't exist yet,

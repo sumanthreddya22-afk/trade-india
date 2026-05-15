@@ -32,6 +32,7 @@ HASHES_PATH = REPO_ROOT / "policy" / "HASHES"
 # repo root. Order does not matter — the writer sorts by relative path.
 TRACKED_GLOBS: tuple[str, ...] = (
     "policy/*.lock",
+    "policy/*.json",
     "prompts/roles/*.md",
     "docs/edge_thesis_v*.md",
     "research/search_space_v*.json",

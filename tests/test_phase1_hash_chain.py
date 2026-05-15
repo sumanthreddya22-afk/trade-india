@@ -59,13 +59,18 @@ def test_verify_chain_after_inserts(ledger_conn) -> None:
 
 
 def test_verify_all_chained_passes_on_empty(ledger_conn) -> None:
+    from trading_bot.ledger.schema import HASH_CHAINED_TABLES
     result = verify_all_chained(ledger_conn)
     assert all(v == 0 for v in result.values())
-    assert set(result.keys()) == {
+    # Every hash-chained table is verified — set equality with the
+    # canonical list keeps this honest as new tables are added.
+    assert set(result.keys()) == set(HASH_CHAINED_TABLES)
+    # Phase 1 baseline tables must still be in the set.
+    assert {
         "order_state_event", "fill_event", "position_snapshot",
         "strategy_decision", "reconciliation_proof", "feature_snapshot",
         "drift_event",
-    }
+    }.issubset(result.keys())
 
 
 def test_tamper_with_this_hash_is_detected(ledger_conn) -> None:

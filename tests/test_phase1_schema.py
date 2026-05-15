@@ -62,11 +62,13 @@ def test_schema_version_recorded(ledger_conn) -> None:
 
 
 def test_hash_chained_tables_constant_matches() -> None:
-    assert set(HASH_CHAINED_TABLES) == {
+    # Phase 1 minimum set must always be present; later phases add more.
+    baseline = {
         "order_state_event", "fill_event", "position_snapshot",
         "strategy_decision", "reconciliation_proof", "feature_snapshot",
         "drift_event",
     }
+    assert baseline.issubset(set(HASH_CHAINED_TABLES))
 
 
 def test_create_ledger_is_idempotent(ledger_conn) -> None:

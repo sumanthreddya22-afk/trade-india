@@ -29,8 +29,11 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from trading_bot.daemon.jobs import (
     DaemonContext, job_account_snapshot, job_boot_check, job_drift_monitor,
-    job_market_data_ingest, job_mutation_cycle, job_orphan_loop,
-    job_position_snapshot, job_reconciliation, job_strategy_runner,
+    job_intel_refresh, job_market_data_ingest, job_mutation_cycle,
+    job_mutation_review, job_orphan_loop, job_position_snapshot,
+    job_reconciliation, job_regime_monitor, job_search_space_proposal,
+    job_source_scout, job_strategy_intake, job_strategy_runner,
+    job_universe_audit,
 )
 from trading_bot.daemon.logging_setup import setup_logging
 
@@ -48,7 +51,23 @@ class DaemonConfig:
     reconciliation_cron: str = "0 23 * * *"           # 23:00 daily, local TZ
     drift_monitor_cron: str = "30 23 * * *"
     strategy_runner_cron: str = "30 15 * * 1-5"       # 15:30 ET weekdays
-    mutation_cycle_cron: str = "0 2 1 * *"            # 02:00 on the 1st
+    # Phase C: mutation cycle is now nightly across all v3 families.
+    mutation_cycle_cron: str = "0 3 * * *"            # 03:00 daily
+    # Phase A: universe audit weekly (Sundays 22:00).
+    universe_audit_cron: str = "0 22 * * 0"
+    # Phase A: regime monitor — every 30 min during RTH approximation.
+    # The job itself is cheap (no signals = no-op) so a tight interval
+    # is safe; production crons can tighten further.
+    regime_monitor_interval_min: int = 30
+    # Phase C: weekly mutation review (Sundays 23:00).
+    mutation_review_cron: str = "0 23 * * 0"
+    # Phase C: monthly search-space proposal (1st of month 04:00).
+    search_space_proposal_cron: str = "0 4 1 * *"
+    # Phase D: research-bot jobs.
+    source_scout_interval_hours: int = 6
+    strategy_intake_cron: str = "0 2 * * *"           # 02:00 nightly
+    # Intel cache refresh — every 6h is enough for daily-cadence feeds.
+    intel_refresh_interval_hours: int = 6
     timezone: str = "America/New_York"
     run_boot_check_on_startup: bool = True
     enable_file_logging: bool = True
@@ -108,6 +127,51 @@ def build_scheduler(
     sched.add_job(
         job_mutation_cycle, CronTrigger.from_crontab(config.mutation_cycle_cron),
         args=(ctx,), id="mutation_cycle", coalesce=True, max_instances=1,
+        replace_existing=True,
+    )
+    # Phase A — universe audit + regime monitor.
+    sched.add_job(
+        job_universe_audit,
+        CronTrigger.from_crontab(config.universe_audit_cron),
+        args=(ctx,), id="universe_audit", coalesce=True, max_instances=1,
+        replace_existing=True,
+    )
+    sched.add_job(
+        job_regime_monitor,
+        IntervalTrigger(minutes=config.regime_monitor_interval_min),
+        args=(ctx,), id="regime_monitor", coalesce=True, max_instances=1,
+        replace_existing=True,
+    )
+    # Phase C — weekly mutation review + monthly search-space proposal.
+    sched.add_job(
+        job_mutation_review,
+        CronTrigger.from_crontab(config.mutation_review_cron),
+        args=(ctx,), id="mutation_review", coalesce=True, max_instances=1,
+        replace_existing=True,
+    )
+    sched.add_job(
+        job_search_space_proposal,
+        CronTrigger.from_crontab(config.search_space_proposal_cron),
+        args=(ctx,), id="search_space_proposal", coalesce=True, max_instances=1,
+        replace_existing=True,
+    )
+    # Phase D — research-bot pipeline.
+    sched.add_job(
+        job_source_scout,
+        IntervalTrigger(hours=config.source_scout_interval_hours),
+        args=(ctx,), id="source_scout", coalesce=True, max_instances=1,
+        replace_existing=True,
+    )
+    sched.add_job(
+        job_strategy_intake,
+        CronTrigger.from_crontab(config.strategy_intake_cron),
+        args=(ctx,), id="strategy_intake", coalesce=True, max_instances=1,
+        replace_existing=True,
+    )
+    sched.add_job(
+        job_intel_refresh,
+        IntervalTrigger(hours=config.intel_refresh_interval_hours),
+        args=(ctx,), id="intel_refresh", coalesce=True, max_instances=1,
         replace_existing=True,
     )
     return sched
@@ -179,6 +243,11 @@ def run_daemon(
             job_account_snapshot, job_orphan_loop,
             job_reconciliation, job_drift_monitor,
             job_strategy_runner, job_mutation_cycle,
+            # v4 Phase A-D additions
+            job_universe_audit, job_regime_monitor,
+            job_mutation_review, job_search_space_proposal,
+            job_source_scout, job_strategy_intake,
+            job_intel_refresh,
         ):
             log.info("daemon: tick %s", fn.__name__)
             fn(ctx)

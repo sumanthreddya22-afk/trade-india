@@ -1,0 +1,34 @@
+{
+  "lock_version": "2026-05-15.v1",
+  "_source": "session-summary-2026-05-15-pure-mochi.md §7.1",
+  "_note": "Taxonomy used by the research bot to dedup ideas and check data availability before codegen.",
+  "factor_categories": [
+    "value", "size", "momentum", "trend", "low_volatility", "quality",
+    "carry", "term_structure", "seasonality", "calendar", "sentiment",
+    "flows", "fundamentals_event", "options_flow", "on_chain",
+    "macro_overlay", "regime_overlay", "pairs_relative_value"
+  ],
+  "timeframes": ["intraday", "daily", "weekly", "monthly"],
+  "instruments": ["us_equity", "us_etf", "crypto", "us_option"],
+  "data_needs": [
+    "price_bars",
+    "intraday_bars",
+    "fundamentals",
+    "options_chain",
+    "insider_filings",
+    "13f_holdings",
+    "earnings_calendar",
+    "earnings_estimates",
+    "news_text",
+    "sentiment_score",
+    "macro_indicators",
+    "yield_curve",
+    "on_chain_metrics",
+    "funding_rates",
+    "open_interest",
+    "implied_vol_surface",
+    "short_interest",
+    "etf_flows"
+  ],
+  "ip_status_values": ["public_replication", "proprietary_skip", "ambiguous"]
+}

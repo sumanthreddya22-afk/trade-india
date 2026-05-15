@@ -483,14 +483,266 @@ def job_strategy_runner(ctx: DaemonContext) -> str:
 
 @_wrap("mutation_cycle")
 def job_mutation_cycle(ctx: DaemonContext) -> str:
-    # Monthly cadence. No-op until the operator has registered a thesis
-    # *and* opted in by setting ENABLE_MUTATION_CYCLE=1.
+    # Nightly cadence under v4 Phase C — runs across all registered v3
+    # families. Skips until the operator has opted in with
+    # TRADING_BOT_ENABLE_MUTATION_CYCLE=1 and (optionally) configured a
+    # persona-runner command via TRADING_BOT_MUTATION_PERSONA_CMD.
     import os
     if os.environ.get("TRADING_BOT_ENABLE_MUTATION_CYCLE", "").lower() not in {"1", "true", "yes"}:
         return "skipped: TRADING_BOT_ENABLE_MUTATION_CYCLE not set"
-    # Real wiring (search_space + backtest callable + persona_runner) is
-    # an operator step — see docs/runbooks/mutation_cycle_setup.md.
-    return "skipped: not configured (see runbook)"
+    try:
+        from trading_bot.research.mutation_runner import run_nightly_cycle
+    except ImportError:
+        return "skipped: research.mutation_runner not available"
+    out = run_nightly_cycle(ctx.ledger_db, policy_dir=ctx.policy_dir)
+    return f"ok: {out}"
+
+
+# ---------------------------------------------------------------------------
+# v4 Phase A — universe audit + regime monitor + drift postmortem chain.
+# ---------------------------------------------------------------------------
+
+@_wrap("universe_audit")
+def job_universe_audit(ctx: DaemonContext) -> str:
+    """Weekly universe audit (Sundays 22:00 ET via scheduler).
+
+    For each strategy registered with status >= shadow, recompute the
+    discovered universe, diff against last week, persist a
+    ``universe_audit_event`` row, and on breach invoke the
+    universe_audit_analyst persona via the postmortem driver.
+    """
+    try:
+        from trading_bot.research.universe_discovery import (
+            compute_audit, discover,
+        )
+        from trading_bot.ledger.universe_audit_event import (
+            latest_for_strategy, write_event as write_audit,
+        )
+        from trading_bot.obs.drift_postmortem import write_memo
+    except ImportError as e:
+        return f"skipped: import error: {e}"
+
+    # Hard-coded set of v3 strategies that opt into universe audit.
+    # When a new v3 family is registered, add it here + its policy path.
+    strategies = [
+        ("ETF_MOMENTUM_v3", ctx.policy_dir / "etf_universe_v1.json",
+         ("SPY", "QQQ", "IWM")),
+        ("CRYPTO_MOMENTUM_v3", ctx.policy_dir / "crypto_universe_v1.json",
+         ("BTC/USD", "ETH/USD")),
+    ]
+
+    conn = connect_writer(ctx.ledger_db)
+    n_breaches = 0
+    n_audited = 0
+    try:
+        for strategy_id, policy_path, fallback in strategies:
+            try:
+                ru = discover(
+                    strategy_id=strategy_id, policy_path=policy_path,
+                    asset_fetcher=getattr(ctx, "asset_fetcher", None),
+                    volume_provider=getattr(ctx, "volume_provider", None),
+                    fallback_symbols=fallback,
+                )
+            except Exception as e:  # noqa: BLE001
+                log.warning("universe_audit: discover failed for %s: %s",
+                            strategy_id, e)
+                continue
+            prev = latest_for_strategy(conn, strategy_id)
+            prev_members = prev.get("members") if prev else ()
+            audit = compute_audit(
+                strategy_id=strategy_id,
+                current_members=ru.symbols,
+                previous_members=prev_members,
+            )
+            seq = write_audit(
+                conn,
+                strategy_id=strategy_id,
+                members=audit["members"], additions=audit["additions"],
+                removals=audit["removals"], turnover_pct=audit["turnover_pct"],
+                breach=audit["breach"],
+            )
+            n_audited += 1
+            if audit["breach"]:
+                n_breaches += 1
+                # Best-effort Claude memo; failure does not crash the job.
+                try:
+                    write_memo(
+                        conn,
+                        source_event_type="universe_audit_event",
+                        source_ledger_seq=seq,
+                        event_payload=audit,
+                        persona_id="universe_audit_analyst",
+                    )
+                except Exception as e:  # noqa: BLE001
+                    log.warning("universe_audit memo failed: %s", e)
+        conn.commit()
+    finally:
+        conn.close()
+    return f"ok: audited={n_audited} breaches={n_breaches}"
+
+
+@_wrap("regime_monitor")
+def job_regime_monitor(ctx: DaemonContext) -> str:
+    """Regime classifier tick.
+
+    Reads current signals (VIX, drawdown, fear/greed where available),
+    classifies each asset class, and writes a ``regime_event`` row when
+    the regime changes from the prior tick. Manual override always wins.
+    Off-hours during normal regime: cheap; the scheduler runs this every
+    30 min RTH and every 4 h overnight.
+    """
+    try:
+        from trading_bot.risk.regime_classifier import (
+            RegimeSignals, classify,
+        )
+        from trading_bot.risk.manual_regime_override import (
+            applies_to, load as load_override,
+        )
+        from trading_bot.ledger.regime_event import (
+            current_regime, write_event as write_regime,
+        )
+    except ImportError as e:
+        return f"skipped: import error: {e}"
+
+    override = load_override(ctx.policy_dir)
+    conn = connect_writer(ctx.ledger_db)
+    try:
+        out_parts = []
+        for asset_class in ("stocks", "crypto", "options"):
+            prior = current_regime(conn, asset_class)
+
+            if override is not None and applies_to(override, asset_class):
+                new_regime = override.forced_regime or prior
+                source = "manual"
+                triggering = {"override_reason": override.reason_md}
+            else:
+                # Real-world signal fetching is operator-injected; the
+                # daemon ships a `regime_signal_provider` callable on ctx
+                # when configured. The Phase-A default is "no signals
+                # available" → classifier returns normal, which is fine
+                # for paper mode without a Yahoo / VIX feed.
+                provider = getattr(ctx, "regime_signal_provider", None)
+                if provider is None:
+                    signals = RegimeSignals()
+                else:
+                    try:
+                        signals = provider(asset_class)
+                    except Exception as e:  # noqa: BLE001
+                        log.warning(
+                            "regime_signal_provider failed for %s: %s",
+                            asset_class, e,
+                        )
+                        signals = RegimeSignals()
+                verdict = classify(asset_class=asset_class, signals=signals)
+                new_regime = verdict.regime
+                source = verdict.source
+                triggering = verdict.triggering_signals
+
+            if new_regime != prior:
+                seq = write_regime(
+                    conn,
+                    asset_class=asset_class,
+                    prior_regime=prior, new_regime=new_regime,
+                    source=source,
+                    trigger_signals=triggering,
+                    mandated_actions=[],
+                )
+                # On crisis-entry, fire a postmortem memo (best-effort).
+                if new_regime == "crisis":
+                    try:
+                        from trading_bot.obs.drift_postmortem import write_memo
+                        write_memo(
+                            conn,
+                            source_event_type="regime_event",
+                            source_ledger_seq=seq,
+                            event_payload={
+                                "asset_class": asset_class,
+                                "prior_regime": prior,
+                                "new_regime": new_regime,
+                                "source": source,
+                                "triggering": triggering,
+                            },
+                            persona_id="regime_analyst",
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        log.warning("regime crisis memo failed: %s", e)
+                out_parts.append(f"{asset_class}:{prior}->{new_regime}")
+            else:
+                out_parts.append(f"{asset_class}:{prior}=")
+        conn.commit()
+        return "ok: " + " ".join(out_parts)
+    finally:
+        conn.close()
+
+
+@_wrap("intel_refresh")
+def job_intel_refresh(ctx: DaemonContext) -> str:
+    """Refresh cache-backed intel feeds. Runs every 6 hours per
+    scheduler. Per-feed failures are non-fatal (logged + reported in
+    the summary string)."""
+    try:
+        import sys
+        sys.path.insert(0, str((ctx.policy_dir.parent / "tools").resolve()))
+        from refresh_intel_caches import refresh_all
+    except Exception as e:  # noqa: BLE001
+        return f"skipped: import error {e}"
+    results = refresh_all()
+    n_ok = sum(1 for v in results.values() if v == "ok")
+    n_fail = sum(1 for v in results.values() if v.startswith("fail:"))
+    return f"ok: {n_ok} refreshed, {n_fail} failed"
+
+
+@_wrap("source_scout")
+def job_source_scout(ctx: DaemonContext) -> str:
+    """Research-bot source scout — every 6h (Phase D).
+
+    Off by default; opt in with TRADING_BOT_ENABLE_RESEARCH_BOT=1.
+    """
+    import os
+    if os.environ.get("TRADING_BOT_ENABLE_RESEARCH_BOT", "").lower() not in {"1", "true", "yes"}:
+        return "skipped: TRADING_BOT_ENABLE_RESEARCH_BOT not set"
+    try:
+        from trading_bot.research.research_bot import run_source_scouts
+    except ImportError as e:
+        return f"skipped: {e}"
+    out = run_source_scouts(ctx.ledger_db, policy_dir=ctx.policy_dir)
+    return f"ok: {out}"
+
+
+@_wrap("strategy_intake")
+def job_strategy_intake(ctx: DaemonContext) -> str:
+    """Research-bot intake / codegen / paper-validation pipeline (Phase D)."""
+    import os
+    if os.environ.get("TRADING_BOT_ENABLE_RESEARCH_BOT", "").lower() not in {"1", "true", "yes"}:
+        return "skipped: TRADING_BOT_ENABLE_RESEARCH_BOT not set"
+    try:
+        from trading_bot.research.research_bot import run_intake_pipeline
+    except ImportError as e:
+        return f"skipped: {e}"
+    out = run_intake_pipeline(ctx.ledger_db, policy_dir=ctx.policy_dir)
+    return f"ok: {out}"
+
+
+@_wrap("mutation_review")
+def job_mutation_review(ctx: DaemonContext) -> str:
+    """Weekly Claude memo on last week's mutation outcomes (Phase C)."""
+    try:
+        from trading_bot.research.mutation_runner import run_weekly_review
+    except ImportError as e:
+        return f"skipped: {e}"
+    out = run_weekly_review(ctx.ledger_db)
+    return f"ok: {out}"
+
+
+@_wrap("search_space_proposal")
+def job_search_space_proposal(ctx: DaemonContext) -> str:
+    """Monthly Claude memo proposing search-space additions (Phase C)."""
+    try:
+        from trading_bot.research.mutation_runner import run_monthly_expansion
+    except ImportError as e:
+        return f"skipped: {e}"
+    out = run_monthly_expansion(ctx.ledger_db)
+    return f"ok: {out}"
 
 
 __all__ = [
@@ -504,9 +756,16 @@ __all__ = [
     "job_drift_monitor",
     "job_market_data_ingest",
     "job_mutation_cycle",
+    "job_intel_refresh",
+    "job_mutation_review",
     "job_orphan_loop",
     "job_position_snapshot",
     "job_reconciliation",
+    "job_regime_monitor",
+    "job_search_space_proposal",
+    "job_source_scout",
+    "job_strategy_intake",
     "job_strategy_runner",
+    "job_universe_audit",
     "record_heartbeat",
 ]

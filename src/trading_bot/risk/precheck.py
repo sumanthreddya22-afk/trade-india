@@ -30,6 +30,39 @@ from trading_bot.risk.limits import RiskLimits, parse_risk_policy
 from trading_bot.risk.policy_loader import PolicyBundle
 from trading_bot.risk.types import AccountState, Position, RiskDecision
 
+# Map of asset_class → regime_classifier asset class. Used by the
+# regime overlay check below; lazy-imported to avoid cycles.
+_ASSET_CLASS_TO_REGIME_CLASS = {
+    "us_equity": "stocks",
+    "us_option": "options",
+    "option": "options",
+    "crypto": "crypto",
+}
+
+
+def _current_regime_protocol(
+    *, conn: Optional[sqlite3.Connection], strategy_id: str, asset_class: str,
+):
+    """Return (RegimeProtocol, current_regime_str) or (None, "normal") if
+    the regime tables aren't initialised yet (fresh ledger, tests)."""
+    if conn is None:
+        return None, "normal"
+    regime_class = _ASSET_CLASS_TO_REGIME_CLASS.get(asset_class, "stocks")
+    try:
+        from trading_bot.ledger.regime_event import current_regime
+        from trading_bot.risk.regime_protocols import resolve
+    except Exception:  # noqa: BLE001
+        return None, "normal"
+    try:
+        regime = current_regime(conn, regime_class)
+    except Exception:  # noqa: BLE001
+        regime = "normal"
+    try:
+        protocol = resolve(strategy_id=strategy_id, regime=regime)
+    except Exception:  # noqa: BLE001
+        return None, regime
+    return protocol, regime
+
 
 def evaluate(
     *,
@@ -119,6 +152,27 @@ def evaluate(
     if d.verdict == "halt":
         return d
 
+    # 6b. Regime overlay (v4 Phase A — autonomy expansion).
+    # Blocks new entries when ``new_entries=False`` for the current
+    # regime; otherwise scales effective qty by ``size_multiplier``
+    # via the symbol-cap reduce path further down.
+    regime_protocol, current_regime_str = _current_regime_protocol(
+        conn=conn, strategy_id=intent.strategy_id,
+        asset_class=intent.asset_class,
+    )
+    regime_size_multiplier = 1.0
+    if regime_protocol is not None:
+        if regime_protocol.size_multiplier <= 0.0 and intent.side == "buy":
+            return RiskDecision.halt(
+                f"regime:{current_regime_str}:closed_for_new_entries "
+                f"(strategy={intent.strategy_id})"
+            )
+        if intent.side == "buy" and not regime_protocol.new_entries:
+            return RiskDecision.halt(
+                f"regime:{current_regime_str}:new_entries_blocked"
+            )
+        regime_size_multiplier = max(0.0, regime_protocol.size_multiplier)
+
     # 7. Per-symbol cap (may reduce qty)
     d = symbol_order_caps.check_per_symbol_cap(
         intent_symbol=intent.symbol, intent_qty=intent.qty,
@@ -133,6 +187,22 @@ def evaluate(
     if d.verdict == "reduce":
         effective_qty = d.adjusted_qty or 0.0
         reduce_reason = d.reason
+
+    # Apply regime size multiplier (caution=0.5, etc.) after the per-symbol
+    # cap. multiplier=1.0 is a no-op; multiplier<1 reduces; multiplier=0
+    # was already handled above as "no new entries".
+    if regime_size_multiplier < 1.0 and intent.side == "buy" and effective_qty > 0:
+        scaled = round(effective_qty * regime_size_multiplier, 6)
+        if scaled <= 0:
+            return RiskDecision.halt(
+                f"regime:{current_regime_str}:size_multiplier=0"
+            )
+        if scaled < effective_qty:
+            effective_qty = scaled
+            reduce_reason = (
+                f"regime:{current_regime_str}:size_multiplier="
+                f"{regime_size_multiplier:.2f}"
+            )
 
     # 8. Per-order at-risk capital (uses the possibly-reduced qty)
     d = symbol_order_caps.check_per_order_cap(

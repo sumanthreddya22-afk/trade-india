@@ -545,7 +545,26 @@
       "Bash(venv/bin/python -m pytest tests/test_phase3_corporate_actions.py::test_cross_check_no_rows tests/test_phase3_order_router.py::test_happy_path_submits_and_logs tests/test_phase3_watermarks.py::test_check_freshness_missing_watermark_halts --tb=short)",
       "Bash(venv/bin/python tools/register_seed_strategy.py)",
       "Bash(venv/bin/python -m pytest tests/test_phase4_validation_artifact.py::test_record_writes_row_and_evaluates --tb=short)",
-      "Bash(venv/bin/python -m pytest tests/test_phase6_*.py)"
+      "Bash(venv/bin/python -m pytest tests/test_phase6_*.py)",
+      "Bash(claude --output-format json -p)",
+      "Bash(/Users/bharathkandala/Trading/.venv/bin/python -c \"from trading_bot.shared import llm_transport, llm_throttle; print\\('transport ROLE_MODEL keys:', list\\(llm_transport.ROLE_MODEL.keys\\(\\)\\)[:5]\\); print\\('throttle daily_cap=', llm_throttle.daily_cap\\(\\)\\); print\\('cli avail=', llm_transport.claude_cli_available\\(\\)\\)\")",
+      "Bash(.venv/bin/python -m pytest tests/ -x --ignore=tests/integration -q --no-header)",
+      "Bash(.venv/bin/python -m pytest tests/ --ignore=tests/integration -q --no-header)",
+      "Bash(.venv/bin/python -m pytest tests/test_phase12_llm_transport.py -v --no-header)",
+      "Bash(.venv/bin/python -m pytest tests/test_phase12_llm_transport.py tests/test_phase1_hash_chain.py tests/test_phase1_schema.py -q --no-header)",
+      "Bash(.venv/bin/python tools/llm_smoke_test.py --skip-opus)",
+      "Bash(.venv/bin/python tools/boot_check.py)",
+      "Bash(.venv/bin/python tools/recompute_hashes.py)",
+      "Bash(.venv/bin/python -m pytest tests/test_phase12_llm_transport.py tests/test_phase2_precheck_compose.py tests/test_phase2_kill_switches.py -q --no-header)",
+      "Bash(.venv/bin/python -m pytest tests/test_phase4_promotion_gate.py -v --no-header)",
+      "Bash(.venv/bin/python -m pytest tests/test_phase8_promote_cli.py -v --no-header)",
+      "Bash(.venv/bin/python -m pytest tests/ --ignore=tests/integration -q --no-header --durations=10)",
+      "Bash(.venv/bin/python -m pytest tests/test_phase_a_universe_discovery.py tests/test_phase_a_regime.py tests/test_phase_a_v3_strategies.py tests/test_phase_b_wheel_v3.py tests/test_phase_c_paper_validation.py tests/test_phase_a_intel_features.py -v --no-header)",
+      "Bash(.venv/bin/python -m pytest tests/test_phase_a_universe_discovery.py tests/test_phase_a_regime.py tests/test_phase_c_paper_validation.py -v --no-header)",
+      "Bash(.venv/bin/python tools/register_v3_strategies.py)",
+      "Bash(.venv/bin/python tools/refresh_intel_caches.py)",
+      "Bash(.venv/bin/python -c \"import feedparser; print\\('feedparser', feedparser.__version__\\)\")",
+      "Bash(.venv/bin/python -m pytest tests/test_caveat_fixes.py -v --no-header)"
     ]
   }
 }

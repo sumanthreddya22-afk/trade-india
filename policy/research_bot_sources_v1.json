@@ -1,0 +1,133 @@
+{
+  "lock_version": "2026-05-15.v1",
+  "_source": "session-summary-2026-05-15-pure-mochi.md §7.4",
+  "sources": {
+    "academic": {
+      "arxiv": {
+        "categories": ["q-fin.PM", "q-fin.ST", "q-fin.TR", "q-fin.CP", "q-fin.RM", "q-fin.MF"],
+        "min_abstract_words": 100,
+        "scout_interval_hours": 24
+      },
+      "ssrn": {
+        "topics": ["finance", "investments", "quantitative", "derivatives", "behavioral-finance"],
+        "min_downloads": 50,
+        "scout_interval_hours": 24
+      },
+      "repec": {"series": ["finance", "econometrics"], "scout_interval_hours": 48},
+      "nber": {"categories": ["AP", "CF", "ME", "ITM"], "scout_interval_hours": 48},
+      "fed_research": {
+        "banks": ["frb-stlouis", "frb-newyork", "frb-sf", "federalreserveboard"],
+        "scout_interval_hours": 168
+      }
+    },
+    "structured_databases": {
+      "quantpedia": {"free_strategies_only": true, "min_sharpe_published": 0.5, "scout_interval_hours": 168},
+      "allocatesmartly": {"free_strategies_only": true, "scout_interval_hours": 168},
+      "portfoliocharts": {"scout_interval_hours": 168},
+      "aaii_screens": {"free_articles_only": true, "scout_interval_hours": 168},
+      "validea": {"free_articles_only": true, "scout_interval_hours": 168}
+    },
+    "open_source_code": {
+      "github": {
+        "orgs": [
+          "quantopian", "QuantConnect", "backtrader", "vectorbt", "jasonstrimpel",
+          "stefan-jansen", "robcarver17", "hudson-and-thames", "lukstei",
+          "polakowo", "cuemacro", "tradytics", "gautam1858"
+        ],
+        "search_topics": ["quantitative-trading", "algotrading", "trading-strategies", "factor-investing", "quant-research"],
+        "search_queries": ["sharpe ratio", "walk-forward", "trading strategy"],
+        "min_stars": 100,
+        "scout_interval_hours": 24
+      },
+      "kaggle": {"competition_categories": ["finance", "time-series", "forecasting"], "scout_interval_hours": 168}
+    },
+    "substack": {
+      "feeds": [
+        "quantseeker.substack.com/feed",
+        "macroops.substack.com/feed",
+        "robotwealth.com/feed",
+        "alphaarchitect.com/feed",
+        "riskandreturn.substack.com/feed",
+        "manyhats.substack.com/feed",
+        "statarbalpha.substack.com/feed",
+        "marketmusings.substack.com/feed",
+        "factorresearch.substack.com/feed",
+        "researchaffiliates.com/feed",
+        "machineslearning.substack.com/feed",
+        "twosigma.com/insights/feed",
+        "aqr.com/Insights/feed",
+        "ssga.com/insights/feed"
+      ],
+      "scout_interval_hours": 24
+    },
+    "community": {
+      "hackernews": {
+        "keyword_filter": ["quant", "trading strategy", "backtest", "factor", "alpha", "sharpe", "momentum", "mean reversion", "pairs trading"],
+        "min_upvotes": 50,
+        "scout_interval_hours": 12
+      },
+      "reddit": {
+        "subreddits": [
+          "algotrading", "quant", "quantfinance", "options",
+          "SecurityAnalysis", "Bogleheads", "investing", "StockMarket",
+          "thetagang", "wallstreetbetsOGs", "Daytrading", "FXGears"
+        ],
+        "min_upvotes": 100,
+        "min_comments": 20,
+        "scout_interval_hours": 6
+      },
+      "stackexchange_quant": {"url": "quant.stackexchange.com", "min_score": 10, "scout_interval_hours": 24},
+      "elitetrader_rss": {"forums": ["strategy-trading", "options"], "scout_interval_hours": 24}
+    },
+    "news_and_sentiment": {
+      "seeking_alpha_free": {"scout_interval_hours": 12, "free_articles_only": true},
+      "finviz_news": {"scout_interval_hours": 6},
+      "marketwatch_rss": {"feeds": ["markets", "mutual-funds", "etfs"], "scout_interval_hours": 6},
+      "investing_com_rss": {"categories": ["analysis", "strategy"], "scout_interval_hours": 12},
+      "yahoo_finance_rss": {"scout_interval_hours": 6},
+      "stocktwits_sentiment": {"tickers": "discovered_universe", "scout_interval_hours": 12},
+      "gdelt": {"already_wired": true, "themes_filter": ["MARKETS_VOLATILITY", "ECON_BANK", "FUND_MGMT"], "scout_interval_hours": 24}
+    },
+    "audio_video_transcribed": {
+      "podcasts": {
+        "feeds": [
+          "chatwithtraders.com/feed",
+          "mutinyfund.com/podcast/feed",
+          "excessreturnspod.com/feed",
+          "toptradersunplugged.com/feed",
+          "themacrocompass.com/podcast/feed",
+          "flirtingwithmodels.com/feed",
+          "mebfaber.com/feed"
+        ],
+        "transcription": "whisper-local",
+        "scout_interval_hours": 168
+      },
+      "youtube_channels": {
+        "channels": [
+          "tastytrade", "BetterSystemTrader", "QuantGalore",
+          "PatrickBoyle", "MarkMeldrum", "DataTrek",
+          "ErnieChan", "SqueezeMetrics"
+        ],
+        "transcription": "whisper-local",
+        "scout_interval_hours": 168
+      }
+    },
+    "already_wired_intel_feeds": {
+      "sec_edgar": {"phase_11": true, "use_for": "13F portfolios + insider transactions as 'what real money does'"},
+      "fred": {"phase_11": true, "use_for": "macro regime classification"},
+      "cryptopanic": {"phase_11": true, "use_for": "crypto-specific candidates"}
+    }
+  },
+  "global_quality": {
+    "max_candidates_per_day": 30,
+    "dedup_lookback_days": 90,
+    "data_availability_required": true,
+    "ip_licensing_check": true,
+    "min_distinct_sources_for_priority": 2,
+    "claude_quality_classifier_required": true
+  },
+  "meta": {
+    "source_addition_review_cadence_days": 90,
+    "claude_proposes_new_sources": true
+  }
+}

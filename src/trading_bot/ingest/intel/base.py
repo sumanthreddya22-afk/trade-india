@@ -64,5 +64,30 @@ class IntelFeed(Protocol):
 
     def fetch(self, decision_date: dt.date) -> Mapping[str, IntelRecord]: ...
 
+    def query_features(
+        self, symbol: str, asof: dt.datetime,
+    ) -> Mapping[str, Any]: ...
 
-__all__ = ["IntelFeed", "IntelRecord", "IntelUnavailable"]
+
+class BaseIntelFeed:
+    """Convenience base — implements ``query_features`` as a no-op so
+    subclasses only need to override what they actually publish.
+
+    Subclasses MUST set ``feed_id`` and implement ``fetch``. They may
+    override ``query_features`` to expose per-symbol values (e.g. an
+    insider-cluster score for SEC Form 4) used by v3 strategies via
+    ``policy/strategy_signal_features_v1.json``.
+    """
+
+    feed_id: str = "base"
+
+    def fetch(self, decision_date: dt.date) -> Mapping[str, IntelRecord]:
+        raise NotImplementedError
+
+    def query_features(
+        self, symbol: str, asof: dt.datetime,
+    ) -> Mapping[str, Any]:
+        return {}
+
+
+__all__ = ["BaseIntelFeed", "IntelFeed", "IntelRecord", "IntelUnavailable"]

@@ -174,6 +174,206 @@ CREATE TABLE IF NOT EXISTS drift_event (
 );
 """
 
+# v4 Phase 12 (2026-05-15) — LLM call observability.
+DDL_LLM_CALL_EVENT = """
+CREATE TABLE IF NOT EXISTS llm_call_event (
+    ledger_seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts        TEXT NOT NULL,
+    persona_id      TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    priority        TEXT NOT NULL,                    -- P0|P1|P2|P3
+    input_hash      TEXT NOT NULL,
+    cache_hit       INTEGER NOT NULL,                 -- 0|1
+    input_tokens    INTEGER NOT NULL DEFAULT 0,
+    output_tokens   INTEGER NOT NULL DEFAULT 0,
+    latency_ms      INTEGER NOT NULL DEFAULT 0,
+    deferred        INTEGER NOT NULL,                 -- 0|1 was queued then dispatched later
+    dropped         INTEGER NOT NULL,                 -- 0|1 P3 over-budget drop
+    prev_hash       TEXT NOT NULL,
+    this_hash       TEXT NOT NULL
+);
+"""
+
+# v4 Phase A (2026-05-15) — universe + regime + drift postmortem + paper validation.
+DDL_UNIVERSE_AUDIT_EVENT = """
+CREATE TABLE IF NOT EXISTS universe_audit_event (
+    ledger_seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts        TEXT NOT NULL,
+    strategy_id     TEXT NOT NULL,
+    universe_size   INTEGER NOT NULL,
+    members_json    TEXT NOT NULL,                    -- top-N symbols
+    additions_json  TEXT NOT NULL,                    -- joined this window
+    removals_json   TEXT NOT NULL,                    -- dropped this window
+    turnover_pct    REAL NOT NULL,
+    breach          INTEGER NOT NULL,                 -- 0|1
+    claude_memo_id  TEXT,                             -- nullable FK
+    prev_hash       TEXT NOT NULL,
+    this_hash       TEXT NOT NULL
+);
+"""
+
+DDL_DRIFT_POSTMORTEM_EVENT = """
+CREATE TABLE IF NOT EXISTS drift_postmortem_event (
+    ledger_seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts            TEXT NOT NULL,
+    source_event_type   TEXT NOT NULL,                -- drift_event|universe_audit_event|regime_event
+    source_ledger_seq   INTEGER NOT NULL,
+    persona_id          TEXT NOT NULL,
+    persona_hash        TEXT NOT NULL,
+    memo_markdown       TEXT NOT NULL,
+    prev_hash           TEXT NOT NULL,
+    this_hash           TEXT NOT NULL
+);
+"""
+
+DDL_REGIME_EVENT = """
+CREATE TABLE IF NOT EXISTS regime_event (
+    ledger_seq              INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts                TEXT NOT NULL,
+    asset_class             TEXT NOT NULL,            -- stocks|crypto|options
+    prior_regime            TEXT NOT NULL,
+    new_regime              TEXT NOT NULL,
+    source                  TEXT NOT NULL,            -- classifier|manual|claude_recovery|fast_trigger
+    trigger_signals_json    TEXT NOT NULL,
+    mandated_actions_json   TEXT NOT NULL,
+    claude_memo_id          TEXT,                     -- nullable FK
+    prev_hash               TEXT NOT NULL,
+    this_hash               TEXT NOT NULL
+);
+"""
+
+DDL_INTEL_FEATURE_SNAPSHOT = """
+CREATE TABLE IF NOT EXISTS intel_feature_snapshot (
+    ledger_seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts        TEXT NOT NULL,
+    decision_id     TEXT NOT NULL,                    -- joins to strategy_decision
+    strategy_id     TEXT NOT NULL,
+    symbol          TEXT NOT NULL,
+    feature_id      TEXT NOT NULL,
+    feature_value   TEXT NOT NULL,                    -- canonical JSON of float|str|null
+    feed_id         TEXT NOT NULL,
+    asof            TEXT NOT NULL,
+    prev_hash       TEXT NOT NULL,
+    this_hash       TEXT NOT NULL
+);
+"""
+
+# v4 Phase C (2026-05-15) — mutation paper-submit validation + review.
+DDL_PAPER_VALIDATION_EVENT = """
+CREATE TABLE IF NOT EXISTS paper_validation_event (
+    ledger_seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts            TEXT NOT NULL,
+    candidate_id        TEXT NOT NULL,
+    strategy_family     TEXT NOT NULL,
+    candidate_params    TEXT NOT NULL,                -- canonical JSON
+    num_decisions       INTEGER NOT NULL,
+    submitted_intents   INTEGER NOT NULL,
+    risk_rejected       INTEGER NOT NULL,
+    filled_intents      INTEGER NOT NULL,
+    avg_slippage_bps    REAL NOT NULL,
+    passed              INTEGER NOT NULL,             -- 0|1
+    reason              TEXT NOT NULL,
+    prev_hash           TEXT NOT NULL,
+    this_hash           TEXT NOT NULL
+);
+"""
+
+DDL_MUTATION_REVIEW_EVENT = """
+CREATE TABLE IF NOT EXISTS mutation_review_event (
+    ledger_seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts            TEXT NOT NULL,
+    review_window_iso   TEXT NOT NULL,                -- e.g. "2026-W19"
+    persona_id          TEXT NOT NULL,
+    persona_hash        TEXT NOT NULL,
+    n_candidates        INTEGER NOT NULL,
+    n_passed            INTEGER NOT NULL,
+    memo_markdown       TEXT NOT NULL,
+    prev_hash           TEXT NOT NULL,
+    this_hash           TEXT NOT NULL
+);
+"""
+
+DDL_SEARCH_SPACE_PROPOSAL_EVENT = """
+CREATE TABLE IF NOT EXISTS search_space_proposal_event (
+    ledger_seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts            TEXT NOT NULL,
+    review_month_iso    TEXT NOT NULL,                -- e.g. "2026-05"
+    persona_id          TEXT NOT NULL,
+    persona_hash        TEXT NOT NULL,
+    current_hash        TEXT NOT NULL,                -- search_space_v1.json hash at proposal time
+    proposed_additions  TEXT NOT NULL,                -- canonical JSON of proposed new dimensions
+    memo_markdown       TEXT NOT NULL,
+    prev_hash           TEXT NOT NULL,
+    this_hash           TEXT NOT NULL
+);
+"""
+
+# v4 Phase D (2026-05-15) — research bot ledger.
+DDL_SOURCE_SCOUT_EVENT = """
+CREATE TABLE IF NOT EXISTS source_scout_event (
+    ledger_seq                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts                    TEXT NOT NULL,
+    source                      TEXT NOT NULL,
+    items_seen                  INTEGER NOT NULL,
+    items_above_quality         INTEGER NOT NULL,
+    items_deduplicated          INTEGER NOT NULL,
+    items_candidates_created    INTEGER NOT NULL,
+    prev_hash                   TEXT NOT NULL,
+    this_hash                   TEXT NOT NULL
+);
+"""
+
+DDL_STRATEGY_CANDIDATE = """
+CREATE TABLE IF NOT EXISTS strategy_candidate (
+    ledger_seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts            TEXT NOT NULL,
+    source              TEXT NOT NULL,
+    source_ref          TEXT NOT NULL,
+    raw_content_hash    TEXT NOT NULL UNIQUE,
+    title               TEXT NOT NULL,
+    summary_md          TEXT NOT NULL,
+    taxonomy_tags_json  TEXT NOT NULL,
+    quality_score       REAL NOT NULL,
+    status              TEXT NOT NULL,                -- pending|approved|rejected|implemented
+    prev_hash           TEXT NOT NULL,
+    this_hash           TEXT NOT NULL
+);
+"""
+
+DDL_STRATEGY_BLUEPRINT = """
+CREATE TABLE IF NOT EXISTS strategy_blueprint (
+    ledger_seq              INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts                TEXT NOT NULL,
+    candidate_id            INTEGER NOT NULL,
+    blueprint_md            TEXT NOT NULL,
+    params_json             TEXT NOT NULL,
+    universe_filter_json    TEXT NOT NULL,
+    data_needs_json         TEXT NOT NULL,
+    data_available          INTEGER NOT NULL,         -- 0|1
+    intake_transcript_id    TEXT NOT NULL,
+    intake_verdict          TEXT NOT NULL,            -- approved|rejected
+    prev_hash               TEXT NOT NULL,
+    this_hash               TEXT NOT NULL
+);
+"""
+
+DDL_STRATEGY_CODEGEN_EVENT = """
+CREATE TABLE IF NOT EXISTS strategy_codegen_event (
+    ledger_seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts        TEXT NOT NULL,
+    blueprint_id    INTEGER NOT NULL,
+    new_family_id   TEXT NOT NULL,
+    runner_path     TEXT NOT NULL,
+    tests_path      TEXT NOT NULL,
+    ruff_pass       INTEGER NOT NULL,                 -- 0|1
+    mypy_pass       INTEGER NOT NULL,                 -- 0|1
+    test_pass       INTEGER NOT NULL,                 -- 0|1
+    registered      INTEGER NOT NULL,                 -- 0|1
+    prev_hash       TEXT NOT NULL,
+    this_hash       TEXT NOT NULL
+);
+"""
+
 # ---------------------------------------------------------------------------
 # View — derived current state per order
 # ---------------------------------------------------------------------------
@@ -220,6 +420,21 @@ DDL_INDICES = [
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_om_client_order_id ON order_master(client_order_id);",
     "CREATE INDEX IF NOT EXISTS idx_fs_strategy_ts ON feature_snapshot(strategy_id, captured_ts);",
     "CREATE INDEX IF NOT EXISTS idx_de_lane_ts ON drift_event(lane, event_ts);",
+    "CREATE INDEX IF NOT EXISTS idx_lce_persona_ts ON llm_call_event(persona_id, event_ts);",
+    "CREATE INDEX IF NOT EXISTS idx_lce_input_hash ON llm_call_event(input_hash);",
+    "CREATE INDEX IF NOT EXISTS idx_uae_strategy_ts ON universe_audit_event(strategy_id, event_ts);",
+    "CREATE INDEX IF NOT EXISTS idx_dpe_source ON drift_postmortem_event(source_event_type, source_ledger_seq);",
+    "CREATE INDEX IF NOT EXISTS idx_re_class_ts ON regime_event(asset_class, event_ts);",
+    "CREATE INDEX IF NOT EXISTS idx_ifs_decision ON intel_feature_snapshot(decision_id);",
+    "CREATE INDEX IF NOT EXISTS idx_ifs_strategy_symbol ON intel_feature_snapshot(strategy_id, symbol);",
+    "CREATE INDEX IF NOT EXISTS idx_pve_candidate ON paper_validation_event(candidate_id);",
+    "CREATE INDEX IF NOT EXISTS idx_mre_window ON mutation_review_event(review_window_iso);",
+    "CREATE INDEX IF NOT EXISTS idx_sspe_month ON search_space_proposal_event(review_month_iso);",
+    "CREATE INDEX IF NOT EXISTS idx_sse_source_ts ON source_scout_event(source, event_ts);",
+    "CREATE INDEX IF NOT EXISTS idx_sc_status ON strategy_candidate(status);",
+    "CREATE INDEX IF NOT EXISTS idx_sc_content ON strategy_candidate(raw_content_hash);",
+    "CREATE INDEX IF NOT EXISTS idx_sb_candidate ON strategy_blueprint(candidate_id);",
+    "CREATE INDEX IF NOT EXISTS idx_sce_family ON strategy_codegen_event(new_family_id);",
 ]
 
 # ---------------------------------------------------------------------------
@@ -239,6 +454,18 @@ _APPEND_ONLY_TABLES = (
     "reconciliation_proof",
     "feature_snapshot",
     "drift_event",
+    "llm_call_event",
+    "universe_audit_event",
+    "drift_postmortem_event",
+    "regime_event",
+    "intel_feature_snapshot",
+    "paper_validation_event",
+    "mutation_review_event",
+    "search_space_proposal_event",
+    "source_scout_event",
+    "strategy_candidate",
+    "strategy_blueprint",
+    "strategy_codegen_event",
 )
 
 
@@ -280,6 +507,18 @@ ALL_DDL: list[str] = [
     DDL_RECONCILIATION_PROOF,
     DDL_FEATURE_SNAPSHOT,
     DDL_DRIFT_EVENT,
+    DDL_LLM_CALL_EVENT,
+    DDL_UNIVERSE_AUDIT_EVENT,
+    DDL_DRIFT_POSTMORTEM_EVENT,
+    DDL_REGIME_EVENT,
+    DDL_INTEL_FEATURE_SNAPSHOT,
+    DDL_PAPER_VALIDATION_EVENT,
+    DDL_MUTATION_REVIEW_EVENT,
+    DDL_SEARCH_SPACE_PROPOSAL_EVENT,
+    DDL_SOURCE_SCOUT_EVENT,
+    DDL_STRATEGY_CANDIDATE,
+    DDL_STRATEGY_BLUEPRINT,
+    DDL_STRATEGY_CODEGEN_EVENT,
     DDL_ORDER_CURRENT_VIEW,
     *DDL_INDICES,
     *DDL_TRIGGERS,
@@ -304,6 +543,18 @@ TABLES: tuple[TableSpec, ...] = (
     TableSpec("reconciliation_proof", hash_chained=True),
     TableSpec("feature_snapshot", hash_chained=True),
     TableSpec("drift_event", hash_chained=True),
+    TableSpec("llm_call_event", hash_chained=True),
+    TableSpec("universe_audit_event", hash_chained=True),
+    TableSpec("drift_postmortem_event", hash_chained=True),
+    TableSpec("regime_event", hash_chained=True),
+    TableSpec("intel_feature_snapshot", hash_chained=True),
+    TableSpec("paper_validation_event", hash_chained=True),
+    TableSpec("mutation_review_event", hash_chained=True),
+    TableSpec("search_space_proposal_event", hash_chained=True),
+    TableSpec("source_scout_event", hash_chained=True),
+    TableSpec("strategy_candidate", hash_chained=True),
+    TableSpec("strategy_blueprint", hash_chained=True),
+    TableSpec("strategy_codegen_event", hash_chained=True),
 )
 
 HASH_CHAINED_TABLES: tuple[str, ...] = tuple(

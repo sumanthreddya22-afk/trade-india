@@ -19,6 +19,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Optional
 
+from pathlib import Path
+
 from trading_bot.ledger.hash_chain import compute_this_hash, last_hash
 from trading_bot.registry.schema import ensure_registry_tables
 from trading_bot.registry.strategies import (
@@ -27,6 +29,7 @@ from trading_bot.registry.strategies import (
 from trading_bot.registry.validation_artifacts import (
     TIER_LIVE, TIER_PAPER, TIER_RESEARCH, find_latest_pass,
 )
+from trading_bot.risk import DEFAULT_POLICY_DIR
 
 # Status -> required tier mapping per Plan §13 (which artifact you need
 # to BE at this status).
@@ -39,6 +42,61 @@ _REQUIRED_TIER = {
 
 # Tier-3 (live) requires a human-signed promotion_packet.
 _REQUIRES_HUMAN_SIGNOFF = frozenset({"live"})
+
+
+def _fast_track_active(policy_dir: Path = DEFAULT_POLICY_DIR) -> tuple[bool, Mapping]:
+    """Return (active, lock_payload). Active iff paper_fast_track_v1.lock
+    exists, ``enabled=true``, and ``live_capital.lock.live_capital_enabled``
+    is not True. Voids on live-capital flip."""
+    fast = policy_dir / "paper_fast_track_v1.lock"
+    if not fast.exists():
+        return False, {}
+    try:
+        payload = json.loads(fast.read_text())
+    except json.JSONDecodeError:
+        return False, {}
+    if not payload.get("enabled"):
+        return False, payload
+    if payload.get("voids_when_live_capital_enabled", True):
+        live = policy_dir / "live_capital.lock"
+        if live.exists():
+            try:
+                live_payload = json.loads(live.read_text())
+                if live_payload.get("live_capital_enabled"):
+                    return False, payload
+            except json.JSONDecodeError:
+                pass
+    return True, payload
+
+
+def fast_track_cooldown_satisfied(
+    *,
+    lock_payload: Mapping,
+    is_first_version: bool,
+    now: Optional[dt.datetime] = None,
+) -> tuple[bool, str]:
+    """Has enough wall-clock time elapsed past the anchor for the
+    fast-track lock to be honoured? Returns (satisfied, reason)."""
+    anchor_iso = lock_payload.get("cooldown_anchor_iso")
+    if not anchor_iso:
+        return True, "no anchor set; treating as satisfied"
+    try:
+        anchor = dt.datetime.fromisoformat(anchor_iso.replace("Z", "+00:00"))
+    except ValueError:
+        return True, "anchor not parseable; treating as satisfied"
+    now = now or dt.datetime.now(dt.timezone.utc)
+    if is_first_version:
+        days = int(lock_payload.get("first_lock_cooldown_days", 7))
+    else:
+        days = int(lock_payload.get("shadow_window_days", 3))
+    earliest = anchor + dt.timedelta(days=days)
+    if now >= earliest:
+        return True, f"{days}d cooldown satisfied (anchor={anchor.isoformat()})"
+    remaining_h = (earliest - now).total_seconds() / 3600.0
+    return False, (
+        f"fast-track {days}d cooldown not satisfied: "
+        f"{remaining_h:.1f}h remaining (anchor={anchor.isoformat()})"
+    )
 
 
 @dataclass(frozen=True)
@@ -79,6 +137,43 @@ def gate(
                    f"promotable status",
             target_status=target_status,
         )
+
+    # Fast-track honor: when paper_fast_track_v1.lock is active AND
+    # live_capital is disabled, paper promotions (shadow / tiny_paper)
+    # may proceed on a Tier-1 artifact (skipping the Tier-2 paper-shadow
+    # observation window). Scaled_paper / live still require the full
+    # tiered gate. The 7-day first-version cooldown is enforced via the
+    # lock's cooldown_anchor_iso + first_lock_cooldown_days fields.
+    ft_active, ft_payload = _fast_track_active()
+    fast_track_paths = {"shadow", "tiny_paper"}
+    fast_track_was_used = False
+    if (
+        ft_active
+        and target_status in fast_track_paths
+        and target_status not in (ft_payload.get("blocked_target_statuses") or [])
+    ):
+        # Did we already register an earlier version of this family?
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM strategy_version "
+            "WHERE strategy_id != ? AND strategy_id LIKE ?",
+            (strategy_id, strategy_id.split("_v")[0] + "%"),
+        )
+        family_size = int(cur.fetchone()[0])
+        is_first_version = family_size == 0
+        ok, reason = fast_track_cooldown_satisfied(
+            lock_payload=ft_payload, is_first_version=is_first_version, now=now,
+        )
+        if not ok:
+            return PromotionDecision(
+                allowed=False,
+                reason=reason,
+                target_status=target_status,
+                tier_required=TIER_RESEARCH,
+            )
+        # Cooldown satisfied — accept a TIER_RESEARCH artifact for
+        # tiny_paper too (normally would require TIER_PAPER).
+        tier_required = TIER_RESEARCH
+        fast_track_was_used = True
 
     artifact = find_latest_pass(
         conn, strategy_id=strategy_id, tier=tier_required,

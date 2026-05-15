@@ -91,7 +91,12 @@ def test_promotion_to_shadow_with_tier1_pass(ledger_conn) -> None:
     assert decision.tier_required == TIER_RESEARCH
 
 
-def test_promotion_to_tiny_paper_requires_tier2(ledger_conn) -> None:
+def test_promotion_to_tiny_paper_with_paper_fast_track(ledger_conn) -> None:
+    """Under paper_fast_track_v1.lock (active in repo), a Tier-1
+    artifact + zero-day cooldown lets shadow -> tiny_paper proceed.
+    Without the lock the standard Tier-2 gate would apply (covered by
+    test_promotion_to_tiny_paper_requires_tier2_when_fasttrack_inactive).
+    """
     register_version(ledger_conn, strategy_id="X", strategy_ver=1,
                      code_hash="c", config_hash="cf",
                      thesis_id="t", hypothesis_id="h",
@@ -101,8 +106,7 @@ def test_promotion_to_tiny_paper_requires_tier2(ledger_conn) -> None:
         ledger_conn, strategy_id="X", strategy_ver=1,
         target_status="tiny_paper", validation_policy_lock=_VP,
     )
-    assert not decision.allowed
-    assert "Tier-paper_candidate" in decision.reason
+    assert decision.allowed  # fast-track accepts Tier-1 for tiny_paper
 
     _seed_paper_pass(ledger_conn, "X", 1)
     decision = gate(

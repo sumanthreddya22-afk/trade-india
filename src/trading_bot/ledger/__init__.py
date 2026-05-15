@@ -5,6 +5,17 @@ DDL; see the per-table writer modules for the append helpers.
 """
 from __future__ import annotations
 
+from trading_bot.ledger import (
+    drift_postmortem_event,
+    intel_feature_snapshot,
+    llm_call_event,
+    mutation_review_event,
+    paper_validation_event,
+    regime_event,
+    research_bot,
+    search_space_proposal_event,
+    universe_audit_event,
+)
 from trading_bot.ledger.connection import (
     DEFAULT_LEDGER_PATH,
     DEFAULT_MIRROR_PATH,
