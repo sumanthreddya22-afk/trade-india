@@ -37,6 +37,17 @@
     <dict>
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <!-- v4 Phase A bring-up (2026-05-15): trade the 4 v3 strategies daily. -->
+        <key>TRADING_BOT_ENABLE_STRATEGY_RUNNER</key>
+        <string>1</string>
+        <!-- v4 Phase C: nightly mutation engine across v3 families. -->
+        <key>TRADING_BOT_ENABLE_MUTATION_CYCLE</key>
+        <string>1</string>
+        <!-- v4 Phase D: research-bot source scouts + intake pipeline. -->
+        <key>TRADING_BOT_ENABLE_RESEARCH_BOT</key>
+        <string>1</string>
+        <!-- Phase 0 / LLM hot-path is intentionally NOT enabled — risk
+             kernel never consults Claude on a trade decision. -->
     </dict>
 
     <key>RunAtLoad</key>
