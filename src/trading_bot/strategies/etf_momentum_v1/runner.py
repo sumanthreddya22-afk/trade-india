@@ -2,14 +2,16 @@
 
 Called daily by the daemon's ``job_strategy_runner``. The runner:
 
-  1. Reads current positions + cash from the broker (via the daemon
+  1. Resolves today's universe through ``ingest.universe`` (no
+     hardcoded candidates — see DISCOVERY_RULE below).
+  2. Reads current positions + cash from the broker (via the daemon
      context's ``positions_fetcher`` / ``account_fetcher``).
-  2. Loads the most-recent ``lookback_days + skip_recent_days + buffer``
+  3. Loads the most-recent ``lookback_days + skip_recent_days + buffer``
      bars from ``historical_bars.db`` (the same store the backtest
      used).
-  3. Calls ``signal_fn`` for ``decision_date = today``.
-  4. Diff target weights vs current positions → enqueue OrderIntents.
-  5. Submits each intent via ``execution.order_router.submit_order``.
+  4. Calls ``signal_fn`` for ``decision_date = today``.
+  5. Diff target weights vs current positions → enqueue OrderIntents.
+  6. Submits each intent via ``execution.order_router.submit_order``.
 
 Decisions only run on a configurable cadence (default monthly first
 trading day), so the daemon's daily tick is a no-op on most days.
@@ -23,6 +25,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
+from trading_bot.ingest.universe import (
+    AssetFetcher, DiscoveryUnavailable, TopByVolume,
+    UniverseResolution, enrich_with_volume, resolve_universe,
+)
 from trading_bot.research.historical_bars import (
     DEFAULT_HISTORICAL_PATH, DailyBar, load_bars, open_store,
 )
@@ -33,6 +39,20 @@ from trading_bot.strategies.etf_momentum_v1.signal import (
 log = logging.getLogger(__name__)
 
 
+# ETF Momentum picks the top-N ETFs by trailing-return; the candidate
+# pool is the 10-ETF thesis allowlist (Plan v4 §13). A change to this
+# list = new strategy_version + new validation packet.
+_THESIS_ETF_ALLOWLIST = UNIVERSE
+
+DISCOVERY_RULE = TopByVolume(
+    asset_class="us_equity",
+    top_n=len(_THESIS_ETF_ALLOWLIST),
+    required_attributes=("ETF",),
+    symbol_allowlist=_THESIS_ETF_ALLOWLIST,
+    name="etf_momentum_v1.thesis_etfs",
+)
+
+
 @dataclass(frozen=True)
 class StrategyDecision:
     decision_date: dt.date
@@ -40,6 +60,8 @@ class StrategyDecision:
     current_qty: dict[str, float]
     equity: float
     intents: list[dict]               # OrderIntent-shaped dicts
+    universe: tuple[str, ...] = ()
+    universe_payload: dict = None
 
 
 def _last_trading_day_of_month_change(d: dt.date, prev: dt.date | None) -> bool:
@@ -72,27 +94,105 @@ def _read_last_decision_date(
     return None
 
 
+_STATIC_FALLBACK_UNIVERSE = _THESIS_ETF_ALLOWLIST
+
+
+def _resolve_universe_with_fallback(
+    *,
+    asset_fetcher: Optional[AssetFetcher],
+    decision_date: dt.date,
+    volume_provider: Optional[Callable[[str], float | None]] = None,
+) -> tuple[tuple[str, ...], dict]:
+    """Same fallback shape as dual_momentum_v1 — discovery is preferred,
+    but a missing fetcher (unit tests / backtest replay) degrades to
+    the static thesis universe with a breadcrumb in the payload."""
+    if asset_fetcher is None:
+        return _STATIC_FALLBACK_UNIVERSE, {
+            "rule_name": DISCOVERY_RULE.name,
+            "rule_hash": "fallback:static",
+            "decision_date": decision_date.isoformat(),
+            "symbols": list(_STATIC_FALLBACK_UNIVERSE),
+            "_fallback_reason": "no asset_fetcher injected",
+        }
+    fetcher: AssetFetcher = asset_fetcher
+    if volume_provider is not None:
+        base_fetcher = asset_fetcher
+
+        def _enriched(asset_class: str):
+            return enrich_with_volume(base_fetcher(asset_class), volume_provider)
+
+        fetcher = _enriched
+    try:
+        res: UniverseResolution = resolve_universe(
+            DISCOVERY_RULE, asset_fetcher=fetcher,
+            decision_date=decision_date, asset_classes=("us_equity",),
+        )
+    except DiscoveryUnavailable as e:
+        log.warning(
+            "etf_momentum_v1: discovery unavailable (%s); falling back "
+            "to static thesis universe", e,
+        )
+        return _STATIC_FALLBACK_UNIVERSE, {
+            "rule_name": DISCOVERY_RULE.name,
+            "rule_hash": "fallback:discovery_unavailable",
+            "decision_date": decision_date.isoformat(),
+            "symbols": list(_STATIC_FALLBACK_UNIVERSE),
+            "_fallback_reason": str(e),
+        }
+    return res.symbols, res.payload
+
+
 def evaluate_strategy(
     *,
     historical_db: Path = DEFAULT_HISTORICAL_PATH,
     decision_date: Optional[dt.date] = None,
     params: dict = DEFAULT_PARAMS,
-    universe: Sequence[str] = UNIVERSE,
+    universe: Optional[Sequence[str]] = None,
     positions_fetcher: Optional[Callable[[], list[dict]]] = None,
     account_fetcher: Optional[Callable[[], dict]] = None,
+    asset_fetcher: Optional[AssetFetcher] = None,
+    volume_provider: Optional[Callable[[str], float | None]] = None,
 ) -> StrategyDecision:
     """Compute the decision for ``decision_date``.
 
     This is a *pure-ish* function w.r.t. the broker fetchers: it reads
     state but doesn't submit. Call ``submit_intents`` separately to
     actually emit orders. This makes it dry-runnable for the dashboard.
+
+    ``asset_fetcher`` + ``volume_provider`` are injected by the daemon
+    so the candidate set is data-driven. When the explicit ``universe``
+    kwarg is supplied (used by the backtest harness and a handful of
+    unit tests), it bypasses discovery and pins the candidate set —
+    the universe_payload is still recorded for the snapshot.
     """
     decision_date = decision_date or dt.date.today()
     if not historical_db.exists():
         return StrategyDecision(
             decision_date=decision_date,
             target_weights={}, current_qty={}, equity=0.0, intents=[],
+            universe=(), universe_payload={},
         )
+
+    if universe is not None:
+        resolved_universe = tuple(universe)
+        universe_payload = {
+            "rule_name": DISCOVERY_RULE.name,
+            "rule_hash": "explicit:caller",
+            "decision_date": decision_date.isoformat(),
+            "symbols": list(resolved_universe),
+        }
+    else:
+        resolved_universe, universe_payload = _resolve_universe_with_fallback(
+            asset_fetcher=asset_fetcher, decision_date=decision_date,
+            volume_provider=volume_provider,
+        )
+    if not resolved_universe:
+        return StrategyDecision(
+            decision_date=decision_date,
+            target_weights={}, current_qty={}, equity=0.0, intents=[],
+            universe=(), universe_payload=universe_payload or {},
+        )
+
     conn = open_store(historical_db)
     try:
         # Pull just enough history: lookback + skip + 30-day buffer.
@@ -101,13 +201,13 @@ def evaluate_strategy(
         history_days = lookback + skip + 30
         start = decision_date - dt.timedelta(days=history_days)
         bars = load_bars(
-            conn, symbols=tuple(universe), start=start, end=decision_date,
+            conn, symbols=resolved_universe, start=start, end=decision_date,
         )
     finally:
         conn.close()
 
     target_weights = signal_fn(bars, decision_date, params=params,
-                                universe=universe)
+                                universe=resolved_universe)
 
     # Read current positions + equity.
     current_qty: dict[str, float] = {}
@@ -176,6 +276,8 @@ def evaluate_strategy(
         decision_date=decision_date,
         target_weights=dict(target_weights),
         current_qty=current_qty, equity=equity, intents=intents,
+        universe=tuple(resolved_universe),
+        universe_payload=universe_payload or {},
     )
 
 
@@ -190,5 +292,6 @@ def should_rebalance_today(
 
 
 __all__ = [
-    "StrategyDecision", "evaluate_strategy", "should_rebalance_today",
+    "DISCOVERY_RULE", "StrategyDecision",
+    "evaluate_strategy", "should_rebalance_today",
 ]

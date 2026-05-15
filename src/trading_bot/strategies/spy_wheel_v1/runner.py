@@ -24,6 +24,10 @@ from typing import Callable, Optional
 from trading_bot.ingest.data_router import (
     fetch_option_chain, list_option_expirations,
 )
+from trading_bot.ingest.universe import (
+    AssetFetcher, DiscoveryUnavailable, TopByVolume,
+    UniverseResolution, enrich_with_volume, resolve_universe,
+)
 from trading_bot.ingest.yfinance_adapter import find_contract_by_delta
 from trading_bot.strategies.spy_wheel_v1.signal import (
     DEFAULT_PARAMS, STRATEGY_ID, UNDERLYING,
@@ -36,6 +40,24 @@ from trading_bot.strategies.spy_wheel_v1.state_machine import (
 log = logging.getLogger(__name__)
 
 
+# Wheel is structurally single-underlying — the state machine tracks
+# share lots, short puts/calls against ONE underlying. The discovery
+# rule still resolves the underlying through the standard pipeline so
+# the feature_snapshot captures it as the reproducibility anchor.
+# Expanding this allowlist requires refactoring the state machine
+# (it currently keys on ``spy_shares``) and is gated by a new
+# strategy_version + validation packet.
+_WHEEL_UNDERLYING_ALLOWLIST: tuple[str, ...] = (UNDERLYING,)
+
+DISCOVERY_RULE = TopByVolume(
+    asset_class="us_equity",
+    top_n=1,
+    required_attributes=("ETF",),
+    symbol_allowlist=_WHEEL_UNDERLYING_ALLOWLIST,
+    name="spy_wheel_v1.underlying",
+)
+
+
 @dataclass(frozen=True)
 class WheelDecision:
     decision_date: dt.date
@@ -43,6 +65,8 @@ class WheelDecision:
     signal: WheelSignal
     equity: float
     intents: list[dict]    # OrderIntent-shaped
+    universe: tuple[str, ...] = ()
+    universe_payload: dict = None
 
 
 def should_rebalance_today(
@@ -69,12 +93,65 @@ def _options_buying_power(account_fetcher: Callable[[], dict]) -> float:
     return float(acct.get("options_buying_power", 0.0) or 0.0)
 
 
+def _resolve_underlying_with_fallback(
+    *,
+    asset_fetcher: Optional[AssetFetcher],
+    decision_date: dt.date,
+    volume_provider: Optional[Callable[[str], float | None]] = None,
+) -> tuple[str, dict]:
+    """Return ``(underlying_symbol, universe_payload)``.
+
+    The wheel's allowlist is a single symbol today; discovery is still
+    invoked so the snapshot anchor stays consistent across strategies.
+    Falls back to the static UNDERLYING when no fetcher is wired
+    (unit tests / backtest replay).
+    """
+    static_payload = {
+        "rule_name": DISCOVERY_RULE.name,
+        "rule_hash": "fallback:static",
+        "decision_date": decision_date.isoformat(),
+        "symbols": list(_WHEEL_UNDERLYING_ALLOWLIST),
+    }
+    if asset_fetcher is None:
+        return UNDERLYING, {
+            **static_payload,
+            "_fallback_reason": "no asset_fetcher injected",
+        }
+    fetcher: AssetFetcher = asset_fetcher
+    if volume_provider is not None:
+        base_fetcher = asset_fetcher
+
+        def _enriched(asset_class: str):
+            return enrich_with_volume(base_fetcher(asset_class), volume_provider)
+
+        fetcher = _enriched
+    try:
+        res: UniverseResolution = resolve_universe(
+            DISCOVERY_RULE, asset_fetcher=fetcher,
+            decision_date=decision_date, asset_classes=("us_equity",),
+        )
+    except DiscoveryUnavailable as e:
+        log.warning(
+            "spy_wheel_v1: discovery unavailable (%s); falling back "
+            "to static underlying %s", e, UNDERLYING,
+        )
+        return UNDERLYING, {
+            **static_payload,
+            "rule_hash": "fallback:discovery_unavailable",
+            "_fallback_reason": str(e),
+        }
+    chosen = res.symbols[0] if res.symbols else UNDERLYING
+    return chosen, res.payload
+
+
 def evaluate_strategy(
     *,
     decision_date: Optional[dt.date] = None,
     params: dict = DEFAULT_PARAMS,
     positions_fetcher: Optional[Callable[[], list[dict]]] = None,
     account_fetcher: Optional[Callable[[], dict]] = None,
+    asset_fetcher: Optional[AssetFetcher] = None,
+    volume_provider: Optional[Callable[[str], float | None]] = None,
 ) -> WheelDecision:
     """Produce the wheel's decision for ``decision_date``.
 
@@ -82,6 +159,10 @@ def evaluate_strategy(
     submits the resulting intents.
     """
     decision_date = decision_date or dt.date.today()
+    underlying, universe_payload = _resolve_underlying_with_fallback(
+        asset_fetcher=asset_fetcher, decision_date=decision_date,
+        volume_provider=volume_provider,
+    )
     positions = (positions_fetcher() or []) if positions_fetcher else []
     state = current_state(positions)
     snap = snapshot_positions(positions)
@@ -99,7 +180,7 @@ def evaluate_strategy(
     # Default: no action.
     null_signal = WheelSignal(
         decision_date=decision_date, state=state.value,
-        underlying=UNDERLYING, underlying_price=0.0,
+        underlying=underlying, underlying_price=0.0,
         side="none", action="wait", contract_symbol=None,
         strike=None, expiry=None, delta_estimate=None,
         mid_price=None, contracts=0,
@@ -115,10 +196,12 @@ def evaluate_strategy(
         return WheelDecision(
             decision_date=decision_date, state=state, signal=null_signal,
             equity=equity, intents=[],
+            universe=(underlying,),
+            universe_payload=universe_payload or {},
         )
 
     # Pick the expiry chain
-    expiries = list_option_expirations(UNDERLYING)
+    expiries = list_option_expirations(underlying)
     expiry = pick_expiry(
         expiries, today=decision_date,
         target_days=int(params["dte_target_days"]),
@@ -131,13 +214,17 @@ def evaluate_strategy(
             signal=null_signal._replace(rationale="no expiry in DTE window")
             if hasattr(null_signal, "_replace") else null_signal,
             equity=equity, intents=[],
+            universe=(underlying,),
+            universe_payload=universe_payload or {},
         )
 
-    chain = fetch_option_chain(UNDERLYING, expiry)
+    chain = fetch_option_chain(underlying, expiry)
     if chain is None or chain.underlying_price <= 0:
         return WheelDecision(
             decision_date=decision_date, state=state, signal=null_signal,
             equity=equity, intents=[],
+            universe=(underlying,),
+            universe_payload=universe_payload or {},
         )
 
     target_delta = float(params["target_delta"])
@@ -149,6 +236,8 @@ def evaluate_strategy(
         return WheelDecision(
             decision_date=decision_date, state=state, signal=null_signal,
             equity=equity, intents=[],
+            universe=(underlying,),
+            universe_payload=universe_payload or {},
         )
 
     # Contract qty
@@ -166,9 +255,9 @@ def evaluate_strategy(
             decision_date=decision_date, state=state,
             signal=WheelSignal(
                 decision_date=decision_date, state=state.value,
-                underlying=UNDERLYING, underlying_price=chain.underlying_price,
+                underlying=underlying, underlying_price=chain.underlying_price,
                 side=side, action="wait",
-                contract_symbol=occ_ticker(UNDERLYING, expiry, side, contract.strike),
+                contract_symbol=occ_ticker(underlying, expiry, side, contract.strike),
                 strike=contract.strike, expiry=expiry,
                 delta_estimate=target_delta, mid_price=contract.mid,
                 contracts=0,
@@ -176,12 +265,14 @@ def evaluate_strategy(
                           f"strike={contract.strike}); skip this week",
             ),
             equity=equity, intents=[],
+            universe=(underlying,),
+            universe_payload=universe_payload or {},
         )
 
-    occ = occ_ticker(UNDERLYING, expiry, side, contract.strike)
+    occ = occ_ticker(underlying, expiry, side, contract.strike)
     sig = WheelSignal(
         decision_date=decision_date, state=state.value,
-        underlying=UNDERLYING, underlying_price=chain.underlying_price,
+        underlying=underlying, underlying_price=chain.underlying_price,
         side=side, action="sell_to_open",
         contract_symbol=occ, strike=contract.strike, expiry=expiry,
         delta_estimate=target_delta, mid_price=contract.mid,
@@ -213,9 +304,12 @@ def evaluate_strategy(
     return WheelDecision(
         decision_date=decision_date, state=state, signal=sig,
         equity=equity, intents=[intent],
+        universe=(underlying,),
+        universe_payload=universe_payload or {},
     )
 
 
 __all__ = [
-    "WheelDecision", "evaluate_strategy", "should_rebalance_today",
+    "DISCOVERY_RULE", "WheelDecision",
+    "evaluate_strategy", "should_rebalance_today",
 ]

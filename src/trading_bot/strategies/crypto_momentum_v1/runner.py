@@ -20,6 +20,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
+from trading_bot.ingest.universe import (
+    AssetFetcher, DiscoveryUnavailable, TopByVolume,
+    UniverseResolution, enrich_with_volume, resolve_universe,
+)
 from trading_bot.research.historical_bars import (
     DEFAULT_HISTORICAL_PATH, load_bars, open_store,
 )
@@ -31,6 +35,20 @@ from trading_bot.strategies.crypto_momentum_v1.signal import (
 log = logging.getLogger(__name__)
 
 
+# Crypto Momentum picks the highest-trailing-return asset from a small
+# thesis allowlist (Plan v4 §13 — only the two most liquid majors).
+# A change to this list = new strategy_version + new validation packet.
+_THESIS_CRYPTO_ALLOWLIST = UNIVERSE
+
+DISCOVERY_RULE = TopByVolume(
+    asset_class="crypto",
+    top_n=len(_THESIS_CRYPTO_ALLOWLIST),
+    required_attributes=(),
+    symbol_allowlist=_THESIS_CRYPTO_ALLOWLIST,
+    name="crypto_momentum_v1.thesis_majors",
+)
+
+
 @dataclass(frozen=True)
 class StrategyDecision:
     decision_date: dt.date
@@ -38,6 +56,8 @@ class StrategyDecision:
     current_qty: dict[str, float]
     equity: float
     intents: list[dict]
+    universe: tuple[str, ...] = ()
+    universe_payload: dict = None
 
 
 def _crypto_cap_pct() -> float:
@@ -65,6 +85,51 @@ def should_rebalance_today(today: dt.date, last_date: dt.date | None) -> bool:
     return (today.year, today.month) != (last_date.year, last_date.month)
 
 
+_STATIC_FALLBACK_UNIVERSE = _THESIS_CRYPTO_ALLOWLIST
+
+
+def _resolve_universe_with_fallback(
+    *,
+    asset_fetcher: Optional[AssetFetcher],
+    decision_date: dt.date,
+    volume_provider: Optional[Callable[[str], float | None]] = None,
+) -> tuple[tuple[str, ...], dict]:
+    if asset_fetcher is None:
+        return _STATIC_FALLBACK_UNIVERSE, {
+            "rule_name": DISCOVERY_RULE.name,
+            "rule_hash": "fallback:static",
+            "decision_date": decision_date.isoformat(),
+            "symbols": list(_STATIC_FALLBACK_UNIVERSE),
+            "_fallback_reason": "no asset_fetcher injected",
+        }
+    fetcher: AssetFetcher = asset_fetcher
+    if volume_provider is not None:
+        base_fetcher = asset_fetcher
+
+        def _enriched(asset_class: str):
+            return enrich_with_volume(base_fetcher(asset_class), volume_provider)
+
+        fetcher = _enriched
+    try:
+        res: UniverseResolution = resolve_universe(
+            DISCOVERY_RULE, asset_fetcher=fetcher,
+            decision_date=decision_date, asset_classes=("crypto",),
+        )
+    except DiscoveryUnavailable as e:
+        log.warning(
+            "crypto_momentum_v1: discovery unavailable (%s); falling back "
+            "to static thesis universe", e,
+        )
+        return _STATIC_FALLBACK_UNIVERSE, {
+            "rule_name": DISCOVERY_RULE.name,
+            "rule_hash": "fallback:discovery_unavailable",
+            "decision_date": decision_date.isoformat(),
+            "symbols": list(_STATIC_FALLBACK_UNIVERSE),
+            "_fallback_reason": str(e),
+        }
+    return res.symbols, res.payload
+
+
 def evaluate_strategy(
     *,
     historical_db: Path = DEFAULT_HISTORICAL_PATH,
@@ -72,12 +137,26 @@ def evaluate_strategy(
     params: dict = DEFAULT_PARAMS,
     positions_fetcher: Optional[Callable[[], list[dict]]] = None,
     account_fetcher: Optional[Callable[[], dict]] = None,
+    asset_fetcher: Optional[AssetFetcher] = None,
+    volume_provider: Optional[Callable[[str], float | None]] = None,
 ) -> StrategyDecision:
     decision_date = decision_date or dt.date.today()
     if not historical_db.exists():
         return StrategyDecision(
             decision_date=decision_date, target_weights={},
             current_qty={}, equity=0.0, intents=[],
+            universe=(), universe_payload={},
+        )
+
+    resolved_universe, universe_payload = _resolve_universe_with_fallback(
+        asset_fetcher=asset_fetcher, decision_date=decision_date,
+        volume_provider=volume_provider,
+    )
+    if not resolved_universe:
+        return StrategyDecision(
+            decision_date=decision_date, target_weights={},
+            current_qty={}, equity=0.0, intents=[],
+            universe=(), universe_payload=universe_payload or {},
         )
 
     lookback = int(params.get("lookback_days", DEFAULT_PARAMS["lookback_days"]))
@@ -86,7 +165,8 @@ def evaluate_strategy(
     start = decision_date - dt.timedelta(days=max(lookback, min_hist) + 30)
     conn = open_store(historical_db)
     try:
-        bars = load_bars(conn, symbols=UNIVERSE, start=start, end=decision_date)
+        bars = load_bars(conn, symbols=resolved_universe,
+                         start=start, end=decision_date)
     finally:
         conn.close()
 
@@ -112,6 +192,8 @@ def evaluate_strategy(
             decision_date=decision_date,
             target_weights=dict(target_weights),
             current_qty=current_qty, equity=equity, intents=[],
+            universe=tuple(resolved_universe),
+            universe_payload=universe_payload or {},
         )
 
     crypto_cap_pct = _crypto_cap_pct()
@@ -144,7 +226,7 @@ def evaluate_strategy(
 
     # Sell any held crypto in universe not in target.
     for sym, qty in current_qty.items():
-        if sym in target_weights or qty <= 0 or sym not in UNIVERSE:
+        if sym in target_weights or qty <= 0 or sym not in resolved_universe:
             continue
         close = close_by_sym.get(sym, 0.0)
         if close <= 0:
@@ -161,7 +243,12 @@ def evaluate_strategy(
         decision_date=decision_date,
         target_weights=dict(target_weights),
         current_qty=current_qty, equity=equity, intents=intents,
+        universe=tuple(resolved_universe),
+        universe_payload=universe_payload or {},
     )
 
 
-__all__ = ["StrategyDecision", "evaluate_strategy", "should_rebalance_today"]
+__all__ = [
+    "DISCOVERY_RULE", "StrategyDecision",
+    "evaluate_strategy", "should_rebalance_today",
+]

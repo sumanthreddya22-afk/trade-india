@@ -17,6 +17,9 @@ own and can grow without bloating the job function.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import inspect
+import json
 import logging
 import sqlite3
 import uuid
@@ -129,15 +132,20 @@ def _dispatch_one(
 
     decision = runner.evaluate_strategy(
         decision_date=today,
-        positions_fetcher=ctx.positions_fetcher,
-        account_fetcher=ctx.account_fetcher,
+        **_runner_extras(runner.evaluate_strategy, ctx),
     )
+    # Persist a feature_snapshot row when the runner exposed a
+    # universe_payload — anchors backtest replay to the same inputs
+    # the live decision saw. Runners that don't (yet) report a
+    # universe simply skip this write.
+    snapshot_id = _maybe_write_feature_snapshot(ctx, strategy_id, decision)
     if not decision.intents:
         # The strategy evaluated but emitted no orders (e.g. wheel
         # ran out of options BP, or already at target weights).
         # Log a ``risk_decision="skip"`` row so the operator sees the
         # skip in the ledger instead of having to grep the daemon log.
-        _record_skip(ctx, strategy_id, strategy_ver, decision, today)
+        _record_skip(ctx, strategy_id, strategy_ver, decision, today,
+                     feature_snapshot_id=snapshot_id)
         return {"action": "no_intents",
                 "target_count": len(decision.target_weights)}
 
@@ -260,12 +268,91 @@ def _submit_one(ctx: "DaemonContext", intent_dict: dict) -> bool:
     return result.submitted
 
 
+def _runner_extras(evaluate_fn, ctx: "DaemonContext") -> dict:
+    """Map DaemonContext providers onto a runner's keyword-only params.
+
+    Different strategy runners accept different shapes today —
+    dual_momentum_v1 takes ``asset_fetcher`` + ``volume_provider``,
+    the older runners take only ``positions_fetcher`` +
+    ``account_fetcher``. Inspect the runner's signature so we never
+    pass a kwarg it doesn't accept (which would TypeError) and never
+    drop one it does (which would silently fall back to defaults).
+    """
+    params = inspect.signature(evaluate_fn).parameters
+    available = {
+        "positions_fetcher": ctx.positions_fetcher,
+        "account_fetcher": ctx.account_fetcher,
+        "asset_fetcher": getattr(ctx, "asset_fetcher", None),
+        "volume_provider": getattr(ctx, "volume_provider", None),
+    }
+    return {name: val for name, val in available.items() if name in params}
+
+
+def _collect_intel(ctx: "DaemonContext", decision_date) -> dict:
+    """Run every configured intel feed and return a single payload
+    suitable for ``feature_snapshot.intel_json``. Returns ``{}`` when
+    no feeds are configured (current default for fresh worktrees and
+    unit tests). Feed-level failures are isolated — see
+    ``ingest.intel.snapshot_payload`` for fail-closed semantics."""
+    feeds = list(getattr(ctx, "intel_feeds", None) or [])
+    if not feeds:
+        return {}
+    import datetime as _dt
+    when = decision_date or _dt.datetime.now(_dt.timezone.utc).date()
+    try:
+        from trading_bot.ingest.intel import snapshot_payload
+        return snapshot_payload(feeds, when)
+    except Exception as e:  # noqa: BLE001 — intel must never crash the dispatch
+        log.warning("intel snapshot failed: %s", e)
+        return {"_error": f"{type(e).__name__}: {e}"}
+
+
+def _maybe_write_feature_snapshot(
+    ctx: "DaemonContext", strategy_id: str, decision: object,
+) -> str:
+    """Append a feature_snapshot row if the runner exposed a
+    universe_payload. Returns the snapshot_id (empty string when
+    nothing was written) so the strategy_decision row can reference
+    it later.
+
+    snapshot_id is content-addressed over (universe_payload, intel)
+    — replaying the same inputs yields the same id, so the
+    idempotent insert collapses duplicate decisions. ``intel`` is
+    {} today; once FRED / EDGAR feeds are wired in, the daemon will
+    populate it here and the hash changes accordingly.
+    """
+    payload = getattr(decision, "universe_payload", None) or {}
+    if not payload:
+        return ""
+    intel = _collect_intel(ctx, getattr(decision, "decision_date", None))
+    body = json.dumps(
+        {"universe": payload, "intel": intel},
+        sort_keys=True, separators=(",", ":"),
+        default=str,
+    )
+    snapshot_id = f"feat:{hashlib.sha256(body.encode()).hexdigest()[:24]}"
+    from trading_bot.ledger import connect_writer
+    from trading_bot.ledger.feature_snapshot import insert_or_get
+    conn = connect_writer(ctx.ledger_db)
+    try:
+        insert_or_get(
+            conn, snapshot_id=snapshot_id, strategy_id=strategy_id,
+            universe=payload, intel=intel,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return snapshot_id
+
+
 def _record_skip(
     ctx: "DaemonContext",
     strategy_id: str,
     strategy_ver: int,
     decision: object,
     decision_date: dt.date,
+    *,
+    feature_snapshot_id: str = "",
 ) -> None:
     """Append a ``risk_decision="skip"`` row for a strategy that
     evaluated but produced no orders.
@@ -280,6 +367,7 @@ def _record_skip(
     from trading_bot.ledger.strategy_decision import write_decision
     from trading_bot.risk import load_policy
 
+    snapshot_ref = feature_snapshot_id or "daemon-skip"
     target_weights = getattr(decision, "target_weights", {}) or {}
     signal = getattr(decision, "signal", None)
     rationale = getattr(signal, "rationale", "") if signal is not None else ""
@@ -303,7 +391,7 @@ def _record_skip(
             code_hash="daemon-skip",
             config_hash="daemon-skip",
             policy_hash=policy_hash or "daemon-skip",
-            feature_snapshot_id="daemon-skip",
+            feature_snapshot_id=snapshot_ref,
             intent=synthetic_intent,
             risk_decision="skip",
             risk_reason=rationale or "no actionable intents",

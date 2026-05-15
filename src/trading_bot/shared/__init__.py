@@ -1,14 +1,12 @@
-"""Shared foundation utilities used by all three pipelines (stocks, crypto, options).
+"""Shared utility modules that survived the v4 cleanup.
 
 Members:
-- alpaca_client: one broker connection (asset-class branches at API call boundary)
-- risk_manager: portfolio-wide concentration limits (must be global)
-- state_db: connection + base classes only (tables defined per-pipeline)
-- daemon: scheduler + role registry (one process loop)
-- submit_txn: optimistic concurrency transactional submit helper
-- llm_transport: Claude CLI subprocess + model router + batching + cache
-- audit: per-call cost tracking, persona logging, drift reports
-- config: settings loader (shared + per-pipeline sections)
-- personas/: cross-cutting personas (drift detector, PR bot, audit lead)
-- automation/: pre-commit hook, drift detector agent, CI lint, PR-bot
+- black_scholes: closed-form option pricing (used by Wheel + ingest)
+- tz: US/Eastern + UTC helpers used by operator/CLI + daemon
+
+The legacy ``alpaca_client``/``config``/``submit_txn`` modules and the
+``shared.personas``/``llm_transport``/``audit``/``automation`` packages
+were removed in Phase 11 — the v4 kernel routes broker calls through
+``ingest.alpaca_adapter``, settings through ``.env``, and order
+submission through ``execution.order_router``.
 """

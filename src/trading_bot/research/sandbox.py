@@ -24,7 +24,7 @@ BLOCKED_PREFIXES: tuple[str, ...] = (
     "trading_bot.kernel",
     "trading_bot.risk.precheck",
     "trading_bot.risk.order_router",     # safety: not a real module today but if it exists later
-    "trading_bot.shared.alpaca_client",
+    "trading_bot.ingest.alpaca_adapter",  # v4 broker boundary — research must not touch
 )
 
 

@@ -64,6 +64,7 @@ def test_verify_all_chained_passes_on_empty(ledger_conn) -> None:
     assert set(result.keys()) == {
         "order_state_event", "fill_event", "position_snapshot",
         "strategy_decision", "reconciliation_proof", "feature_snapshot",
+        "drift_event",
     }
 
 

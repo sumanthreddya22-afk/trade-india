@@ -36,7 +36,7 @@ import logging
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Callable, Iterable, Optional, Sequence
 
 log = logging.getLogger(__name__)
 
@@ -183,8 +183,49 @@ def fetch_bars_from_alpaca(
     return out
 
 
+def adv_provider(
+    db_path: Path = DEFAULT_HISTORICAL_PATH,
+    *,
+    window_days: int = 30,
+    as_of: Optional[dt.date] = None,
+) -> Callable[[str], Optional[float]]:
+    """Return a ``(symbol) -> avg-dollar-volume`` callable backed by
+    the historical-bars store.
+
+    ADV = mean(close × volume) over the last ``window_days`` rows we
+    have for ``symbol`` ending on or before ``as_of`` (defaults to
+    today). Returns ``None`` when the store is missing, the symbol
+    has no rows, or fewer than 5 rows are available — the discovery
+    rule then excludes the symbol rather than ranking off noise.
+    """
+    def _provider(symbol: str) -> Optional[float]:
+        if not db_path.exists():
+            return None
+        end = as_of or dt.date.today()
+        try:
+            conn = sqlite3.connect(str(db_path))
+            try:
+                cur = conn.execute(
+                    "SELECT close, volume FROM bar_daily "
+                    "WHERE symbol=? AND bar_date <= ? "
+                    "ORDER BY bar_date DESC LIMIT ?",
+                    (symbol, end.isoformat(), int(window_days)),
+                )
+                rows = cur.fetchall()
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return None
+        if len(rows) < 5:
+            return None
+        notional = [float(c or 0) * float(v or 0) for c, v in rows]
+        return sum(notional) / len(notional)
+
+    return _provider
+
+
 __all__ = [
-    "DDL", "DEFAULT_HISTORICAL_PATH", "DailyBar",
+    "DDL", "DEFAULT_HISTORICAL_PATH", "DailyBar", "adv_provider",
     "ensure_schema", "fetch_bars_from_alpaca", "load_bars",
     "open_store", "upsert_bars",
 ]

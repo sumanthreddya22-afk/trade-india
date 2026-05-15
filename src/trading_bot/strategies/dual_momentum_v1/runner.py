@@ -178,6 +178,7 @@ def evaluate_strategy(
     positions_fetcher: Optional[Callable[[], list[dict]]] = None,
     account_fetcher: Optional[Callable[[], dict]] = None,
     asset_fetcher: Optional[AssetFetcher] = None,
+    volume_provider: Optional[Callable[[str], float | None]] = None,
 ) -> StrategyDecision:
     """Evaluate Dual Momentum for ``decision_date``.
 
@@ -187,6 +188,10 @@ def evaluate_strategy(
     replays work — a production daemon MUST supply one, so a missing
     fetcher in live mode raises ``DiscoveryUnavailable`` upstream
     rather than silently using stale symbols.
+
+    ``volume_provider`` (symbol → avg-dollar-volume) is wired from
+    the historical-bars store so the discovery rule can rank Alpaca
+    asset records, which don't carry ADV themselves.
     """
     decision_date = decision_date or dt.date.today()
     if not historical_db.exists():
@@ -199,12 +204,13 @@ def evaluate_strategy(
     # 1. Discover today's universe.
     universe, universe_payload = _resolve_universe_with_fallback(
         asset_fetcher=asset_fetcher, decision_date=decision_date,
+        volume_provider=volume_provider,
     )
     if not universe:
         return StrategyDecision(
             decision_date=decision_date,
             target_weights={}, current_qty={}, equity=0.0, intents=[],
-            universe=(), universe_payload=universe_payload,
+            universe=(), universe_payload=universe_payload or {},
         )
 
     lookback = int(params.get("lookback_days", DEFAULT_PARAMS["lookback_days"]))
@@ -278,6 +284,7 @@ def evaluate_strategy(
         decision_date=decision_date,
         target_weights=dict(target_weights),
         current_qty=current_qty, equity=equity, intents=intents,
+        universe=tuple(universe), universe_payload=universe_payload or {},
     )
 
 

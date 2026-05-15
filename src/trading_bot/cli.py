@@ -62,12 +62,40 @@ def daemon(once: bool, no_broker: bool) -> None:
             ctx.positions_fetcher = adapter.fetch_positions
             ctx.bars_fetcher = adapter.fetch_latest_bars
             ctx.account_fetcher = adapter.fetch_account
+            ctx.asset_fetcher = adapter.list_assets
+            from trading_bot.research.historical_bars import adv_provider
+            ctx.volume_provider = adv_provider()
             # Stash adapter on the context so orphan_loop can use the
             # lookup method (jobs.py reads ``_broker_adapter``).
             object.__setattr__(ctx, "_broker_adapter", adapter)
             click.echo("daemon: Alpaca adapter wired (paper)", err=True)
         except Exception as e:  # noqa: BLE001
             click.echo(f"daemon: Alpaca adapter unavailable ({e}); running headless", err=True)
+
+    # Intel feeds — opt-in via .env. Each feed is independent; a feed
+    # that fails contributes an ``_error`` entry to the snapshot rather
+    # than aborting the snapshot write. Cred-less feeds (FRED no-key,
+    # CryptoPanic public) just need to be enabled; EDGAR additionally
+    # needs SEC_USER_AGENT per SEC's fair-access policy.
+    feed_specs = os.environ.get("TRADING_BOT_INTEL_FEEDS", "").strip()
+    if feed_specs:
+        from trading_bot.ingest.intel import (
+            CryptoPanicFeed, EdgarFeed, FredFeed,
+        )
+        registry = {"fred": FredFeed, "edgar": EdgarFeed,
+                    "cryptopanic": CryptoPanicFeed}
+        wired = []
+        for tag in (s.strip().lower() for s in feed_specs.split(",")):
+            cls = registry.get(tag)
+            if cls is None:
+                click.echo(f"daemon: unknown intel feed '{tag}'", err=True)
+                continue
+            try:
+                wired.append(cls())
+            except Exception as e:  # noqa: BLE001
+                click.echo(f"daemon: intel feed '{tag}' init failed: {e}", err=True)
+        ctx.intel_feeds = wired
+        click.echo(f"daemon: intel feeds wired = {[f.feed_id for f in wired]}", err=True)
 
     # Universe from .env or default to the seed-thesis 10-ETF list.
     universe = os.environ.get("TRADING_BOT_UNIVERSE", "")

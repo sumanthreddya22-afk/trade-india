@@ -149,7 +149,40 @@ def send_manual_halt_alert(*, operator: str, reason: str) -> dict:
     )
 
 
+def send_drift_alert(
+    *,
+    lane: str,
+    n_trades: int,
+    modelled_mean_bps: float,
+    realised_mean_bps: float,
+    ratio: float,
+    recommendation: str,
+) -> dict:
+    """Fired by ``job_drift_monitor`` when realised slippage on a lane
+    exceeds the modelled-pessimistic mean by more than the tolerance
+    multiplier. The dedup_key is ``drift:<lane>:<UTC-date>`` so the
+    operator sees one alert per lane per nightly run, even if the
+    same breach persists for several nights."""
+    return send_alert(
+        subject=f"DRIFT BREACH — lane={lane} ratio={ratio:.2f}x",
+        body=(
+            f"Slippage drift exceeded tolerance on {lane}.\n\n"
+            f"  Trades in window: {n_trades}\n"
+            f"  Modelled mean:    {modelled_mean_bps:.2f} bps\n"
+            f"  Realised mean:    {realised_mean_bps:.2f} bps\n"
+            f"  Ratio:            {ratio:.2f}x\n"
+            f"  Recommendation:   {recommendation or '(none)'}\n"
+            f"  Time:             {dt.datetime.now(dt.timezone.utc).isoformat()}\n\n"
+            f"Per Plan v4 §9 the lane should be demoted to observe-only "
+            f"until slippage normalises. Inspect via the dashboard or "
+            f"the drift_event table.\n"
+        ),
+        severity="ALERT",
+        dedup_key=f"drift:{lane}:{dt.date.today().isoformat()}",
+    )
+
+
 __all__ = [
     "send_alert", "send_daemon_startup_failure", "send_daily_digest",
-    "send_kill_switch_alert", "send_manual_halt_alert",
+    "send_drift_alert", "send_kill_switch_alert", "send_manual_halt_alert",
 ]

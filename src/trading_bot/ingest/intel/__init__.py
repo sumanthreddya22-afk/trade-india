@@ -23,11 +23,44 @@ from trading_bot.ingest.intel.base import (
     IntelRecord,
     IntelUnavailable,
 )
+from trading_bot.ingest.intel.cryptopanic import CryptoPanicFeed
+from trading_bot.ingest.intel.edgar import EdgarFeed
 from trading_bot.ingest.intel.fred import FredFeed
 
+
+def snapshot_payload(
+    feeds: "list[IntelFeed]",
+    decision_date,
+) -> dict:
+    """Run every feed and return a single intel_json payload suitable
+    for ``feature_snapshot.intel_json``.
+
+    Failure semantics: each feed runs independently. A feed that raises
+    ``IntelUnavailable`` contributes an ``{"_error": <reason>}`` entry
+    keyed by feed_id rather than aborting the whole snapshot — the
+    downstream snapshot then advertises explicitly which feeds were
+    unhealthy at decision time. **Never** silently drop a failing feed,
+    since intel decay is the silent failure mode the kernel can't see.
+    """
+    out: dict = {}
+    for feed in feeds:
+        try:
+            records = feed.fetch(decision_date)
+        except IntelUnavailable as e:
+            out[feed.feed_id] = {"_error": str(e)}
+            continue
+        out[feed.feed_id] = {
+            sid: rec.to_payload() for sid, rec in records.items()
+        }
+    return out
+
+
 __all__ = [
+    "CryptoPanicFeed",
+    "EdgarFeed",
     "FredFeed",
     "IntelFeed",
     "IntelRecord",
     "IntelUnavailable",
+    "snapshot_payload",
 ]

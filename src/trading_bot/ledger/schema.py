@@ -157,6 +157,23 @@ CREATE TABLE IF NOT EXISTS feature_snapshot (
 );
 """
 
+DDL_DRIFT_EVENT = """
+CREATE TABLE IF NOT EXISTS drift_event (
+    ledger_seq           INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts             TEXT NOT NULL,
+    lane                 TEXT NOT NULL,                -- equity|crypto|<future lanes>
+    n_trades             INTEGER NOT NULL,
+    modelled_mean_bps    REAL NOT NULL,
+    realised_mean_bps    REAL NOT NULL,
+    ratio                REAL NOT NULL,                -- realised / modelled
+    tolerance_multiplier REAL NOT NULL,                -- breach threshold at write-time
+    breach               INTEGER NOT NULL,             -- 0|1
+    recommendation       TEXT NOT NULL,                -- ""|"demote:<lane>"
+    prev_hash            TEXT NOT NULL,
+    this_hash            TEXT NOT NULL
+);
+"""
+
 # ---------------------------------------------------------------------------
 # View — derived current state per order
 # ---------------------------------------------------------------------------
@@ -202,6 +219,7 @@ DDL_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_rp_window_ts ON reconciliation_proof(recon_window, recon_ts);",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_om_client_order_id ON order_master(client_order_id);",
     "CREATE INDEX IF NOT EXISTS idx_fs_strategy_ts ON feature_snapshot(strategy_id, captured_ts);",
+    "CREATE INDEX IF NOT EXISTS idx_de_lane_ts ON drift_event(lane, event_ts);",
 ]
 
 # ---------------------------------------------------------------------------
@@ -220,6 +238,7 @@ _APPEND_ONLY_TABLES = (
     "strategy_decision",
     "reconciliation_proof",
     "feature_snapshot",
+    "drift_event",
 )
 
 
@@ -260,6 +279,7 @@ ALL_DDL: list[str] = [
     DDL_STRATEGY_DECISION,
     DDL_RECONCILIATION_PROOF,
     DDL_FEATURE_SNAPSHOT,
+    DDL_DRIFT_EVENT,
     DDL_ORDER_CURRENT_VIEW,
     *DDL_INDICES,
     *DDL_TRIGGERS,
@@ -283,6 +303,7 @@ TABLES: tuple[TableSpec, ...] = (
     TableSpec("strategy_decision", hash_chained=True),
     TableSpec("reconciliation_proof", hash_chained=True),
     TableSpec("feature_snapshot", hash_chained=True),
+    TableSpec("drift_event", hash_chained=True),
 )
 
 HASH_CHAINED_TABLES: tuple[str, ...] = tuple(

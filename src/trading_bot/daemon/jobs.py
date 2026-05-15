@@ -130,6 +130,18 @@ class DaemonContext:
     bars_fetcher: Optional[BarsFetcherT] = None
     account_fetcher: Optional[AccountFetcherT] = None
     universe: tuple[str, ...] = ()
+    # Data-driven discovery (Plan v4 §3 — no hardcoded UNIVERSE constants).
+    # asset_fetcher(asset_class) -> Sequence[AssetRecord]; usually wired
+    # from AlpacaAdapter.list_assets. volume_provider(symbol) -> ADV in USD
+    # or None; usually wired from the historical-bars store.
+    asset_fetcher: Optional[Callable[[str], object]] = None
+    volume_provider: Optional[Callable[[str], Optional[float]]] = None
+    # Intel feeds (FRED, EDGAR, CryptoPanic, …) consulted at decision
+    # time and snapshotted into ``feature_snapshot.intel_json``. The
+    # daemon never reads from feeds on the hot path; only the snapshot
+    # writer does. Failure semantics: each feed runs independently
+    # (see ``ingest.intel.snapshot_payload``).
+    intel_feeds: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +409,39 @@ def job_drift_monitor(ctx: DaemonContext) -> str:
                 log.warning("drift_monitor lane=%s failed: %s", lane, e)
         if not reports:
             return "ok: no lanes evaluated"
+        # Persist + alert per lane that produced any signal. n_trades=0
+        # lanes (no fills in window) still emit a row so the operator
+        # can prove the monitor ran — without that, an empty ledger
+        # could equally mean "no fills" or "drift_monitor crashed".
+        from trading_bot.ledger.drift_event import write_event
+        from trading_bot.execution.drift_monitor import (
+            TOLERANCE_MULTIPLIER_DEFAULT,
+        )
+        for lane, rep in reports:
+            write_event(
+                conn, lane=lane, n_trades=rep.n_trades,
+                modelled_mean_bps=rep.modelled_mean_bps,
+                realised_mean_bps=rep.realised_mean_bps,
+                ratio=rep.ratio,
+                tolerance_multiplier=TOLERANCE_MULTIPLIER_DEFAULT,
+                breach=rep.breach, recommendation=rep.recommendation,
+            )
+        conn.commit()
+        # Fire one alert per breaching lane. The notifier deduplicates
+        # by (lane, UTC-date) so persistent breaches don't spam.
+        try:
+            from trading_bot.obs.notifier import send_drift_alert
+            for lane, rep in reports:
+                if rep.breach:
+                    send_drift_alert(
+                        lane=lane, n_trades=rep.n_trades,
+                        modelled_mean_bps=rep.modelled_mean_bps,
+                        realised_mean_bps=rep.realised_mean_bps,
+                        ratio=rep.ratio,
+                        recommendation=rep.recommendation,
+                    )
+        except Exception as e:  # noqa: BLE001 — alert path must not crash drift job
+            log.warning("drift_monitor alert failed: %s", e)
         parts = [
             f"{lane}:n={r.n_trades},ratio={r.ratio:.2f}"
             + (f",DEMOTE" if r.breach else "")
