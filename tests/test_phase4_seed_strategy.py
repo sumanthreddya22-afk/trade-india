@@ -27,5 +27,7 @@ def test_etf_momentum_v1_is_registered() -> None:
         conn.close()
     assert v.thesis_id == "edge_thesis_v1"
     assert v.lane == "etf_momentum"
-    assert v.status == "research_only"
-    assert v.validation_artifact_id is None
+    # After Phase 9 validation: the seed strategy failed Tier-1 (DSR=0,
+    # PBO=0.94) and was demoted to "shadow" by promote_passing_lanes.py.
+    # Either state is a legitimate post-bootstrap outcome.
+    assert v.status in ("research_only", "shadow")

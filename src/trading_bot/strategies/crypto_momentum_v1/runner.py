@@ -37,15 +37,22 @@ class StrategyDecision:
 
 
 def _crypto_cap_pct() -> float:
-    """Read the crypto cap from risk_policy.lock, fall back to constant."""
+    """Most-binding cap for crypto: min of crypto_gross_max_pct,
+    per_lane_allocation_max_pct, per_symbol_gross_max_pct. 10% buffer.
+    """
     try:
         lock = json.loads(
             (DEFAULT_POLICY_DIR / "risk_policy.lock").read_text()
         )
-        return float(lock.get("asset_class", {})
-                          .get("crypto_gross_max_pct", CRYPTO_GROSS_MAX_PCT))
+        crypto = float(lock.get("asset_class", {})
+                            .get("crypto_gross_max_pct", CRYPTO_GROSS_MAX_PCT))
+        per_lane = float(lock.get("lane", {})
+                              .get("per_lane_allocation_max_pct", 40.0))
+        per_sym = float(lock.get("symbol", {})
+                             .get("per_symbol_gross_max_pct", 5.0))
+        return max(0.0, min(crypto, per_lane, per_sym) * 0.90)
     except Exception:
-        return CRYPTO_GROSS_MAX_PCT
+        return CRYPTO_GROSS_MAX_PCT * 0.90
 
 
 def should_rebalance_today(today: dt.date, last_date: dt.date | None) -> bool:
@@ -70,7 +77,9 @@ def evaluate_strategy(
         )
 
     lookback = int(params.get("lookback_days", DEFAULT_PARAMS["lookback_days"]))
-    start = decision_date - dt.timedelta(days=lookback + 30)
+    min_hist = int(params.get("min_history_days", DEFAULT_PARAMS["min_history_days"]))
+    # Crypto bars are 7d/wk (no weekend gap) so the buffer is smaller.
+    start = decision_date - dt.timedelta(days=max(lookback, min_hist) + 30)
     conn = open_store(historical_db)
     try:
         bars = load_bars(conn, symbols=UNIVERSE, start=start, end=decision_date)

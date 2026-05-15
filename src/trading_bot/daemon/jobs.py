@@ -221,15 +221,42 @@ def job_position_snapshot(ctx: DaemonContext) -> str:
 
 @_wrap("reconciliation")
 def job_reconciliation(ctx: DaemonContext) -> str:
-    """Nightly + at-close reconciliation."""
+    """Nightly + at-close reconciliation.
+
+    Reads the latest position_snapshot batch as the bot's view and
+    compares against the live broker fetcher. compute_recon returns
+    (bot_hash, broker_hash, match, diff_json).
+    """
     if ctx.positions_fetcher is None:
         return "skipped: positions_fetcher not wired"
     broker_positions = ctx.positions_fetcher()
     conn = connect_writer(ctx.ledger_db)
     try:
-        proof = compute_recon(conn, broker_positions=broker_positions, window="eod")
-        write_recon_proof(conn, proof)
-        return f"match={proof.match} bot_hash={proof.bot_hash[:8]} broker_hash={proof.broker_hash[:8]}"
+        # Latest snapshot batch = bot's view.
+        cur = conn.execute(
+            "SELECT MAX(snapshot_ts) FROM position_snapshot WHERE source='broker'"
+        )
+        row = cur.fetchone()
+        bot_positions = []
+        if row and row[0]:
+            cur2 = conn.execute(
+                "SELECT symbol, qty, asset_class FROM position_snapshot "
+                "WHERE source='broker' AND snapshot_ts=?",
+                (row[0],),
+            )
+            bot_positions = [
+                {"symbol": r[0], "qty": r[1], "asset_class": r[2]}
+                for r in cur2.fetchall()
+            ]
+        bot_hash, broker_hash, match, diff = compute_recon(
+            bot_positions=bot_positions, broker_positions=broker_positions,
+        )
+        write_recon_proof(
+            conn, recon_window="eod", bot_hash=bot_hash,
+            broker_hash=broker_hash, match=match, diff_json=diff,
+        )
+        conn.commit()
+        return f"match={match} bot={bot_hash[:8]} broker={broker_hash[:8]}"
     finally:
         conn.close()
 

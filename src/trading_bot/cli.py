@@ -28,8 +28,16 @@ import click
 @click.group(help="Trading-bot v4 operator CLI.")
 @click.version_option(version="0.4.0", prog_name="bot")
 def main() -> None:
-    """Entry-point invoked by the `bot` console script."""
-    pass
+    """Entry-point invoked by the `bot` console script.
+
+    Loads .env from cwd at startup so subcommands see Alpaca / Gmail
+    credentials without each having to import dotenv themselves.
+    """
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
 
 
 # ---------------------------------------------------------------------------

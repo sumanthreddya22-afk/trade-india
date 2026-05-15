@@ -14,8 +14,29 @@ from trading_bot.research.historical_bars import (
 from trading_bot.strategies.dual_momentum_v1.signal import (
     DEFAULT_PARAMS, STRATEGY_ID, UNIVERSE, signal_fn,
 )
+from trading_bot.risk import DEFAULT_POLICY_DIR
 
 log = logging.getLogger(__name__)
+
+
+def _max_sleeve_pct() -> float:
+    """The most-binding cap among:
+      * per_symbol_gross_max_pct  (most-binding for single-symbol strategies)
+      * per_lane_allocation_max_pct  (40% default)
+      * equity_gross_max_pct  (80% default)
+    Apply a small safety buffer so we don't trip the kernel.
+    """
+    import json
+    try:
+        lock = json.loads((DEFAULT_POLICY_DIR / "risk_policy.lock").read_text())
+    except Exception:
+        return 0.04   # 4% safe default
+    per_sym = float(lock.get("symbol", {}).get("per_symbol_gross_max_pct", 5.0))
+    per_lane = float(lock.get("lane", {}).get("per_lane_allocation_max_pct", 40.0))
+    asset = float(lock.get("asset_class", {}).get("equity_gross_max_pct", 80.0))
+    most_binding = min(per_sym, per_lane, asset)
+    # 10% buffer below the binding cap.
+    return max(0.0, most_binding * 0.90) / 100.0
 
 
 @dataclass(frozen=True)
@@ -50,7 +71,10 @@ def evaluate_strategy(
         )
 
     lookback = int(params.get("lookback_days", DEFAULT_PARAMS["lookback_days"]))
-    start = decision_date - dt.timedelta(days=lookback + 30)
+    min_hist = int(params.get("min_history_days", DEFAULT_PARAMS["min_history_days"]))
+    # Need at least min_hist TRADING days. Calendar buffer = ×1.5 + 30
+    # to cover weekends + market holidays.
+    start = decision_date - dt.timedelta(days=int(max(lookback, min_hist) * 1.5) + 30)
 
     conn = open_store(historical_db)
     try:
@@ -69,6 +93,10 @@ def evaluate_strategy(
         equity = float((account_fetcher() or {}).get("equity", 0.0))
 
     intents: list[dict] = []
+    # Sleeve cap: most-binding cap from risk_policy.lock with a 10%
+    # buffer. For single-symbol strategies on the v4 default lock this
+    # is 4.5% (= 5% per_symbol × 0.9). Operator-tunable via the lock.
+    sleeve_cap = _max_sleeve_pct()
     if target_weights and equity > 0:
         close_by_sym: dict[str, float] = {}
         for sym, series in bars.items():
@@ -81,7 +109,7 @@ def evaluate_strategy(
             close = close_by_sym.get(sym)
             if not close or close <= 0:
                 continue
-            target_qty = (equity * w) / close
+            target_qty = (equity * sleeve_cap * w) / close
             diff = target_qty - current_qty.get(sym, 0.0)
             if abs(diff) < 1e-3:
                 continue

@@ -165,30 +165,57 @@ def _submit_one(ctx: "DaemonContext", intent_dict: dict) -> bool:
     )
 
     policy = load_policy()
+    acct = ctx.account_fetcher() or {}
+    equity = float(acct.get("equity", 0.0))
     account = AccountState(
-        equity=float((ctx.account_fetcher() or {}).get("equity", 0.0)),
-        cash=float((ctx.account_fetcher() or {}).get("cash", 0.0)),
-        buying_power=float((ctx.account_fetcher() or {}).get("buying_power", 0.0)),
-        daily_session_pnl_pct=0.0,
-        rolling_60d_drawdown_pct=0.0,
+        equity=equity,
+        cash=float(acct.get("cash", 0.0)),
+        equity_at_session_start=equity,    # daemon doesn't yet track session-open
+        day_trade_count=int(acct.get("daytrade_count", 0) or 0),
+        buying_power=float(acct.get("buying_power", 0.0)),
     )
     positions = [
         Position(
             symbol=p["symbol"], qty=float(p["qty"]),
             asset_class=p.get("asset_class", "us_equity"),
-            avg_cost=float(p.get("avg_entry_price", 0.0)),
             market_value=float(p.get("market_value", 0.0)),
+            classification=p.get("classification", "unknown"),
         )
         for p in (ctx.positions_fetcher() or [])
     ]
+
+    # Per-order risk cap (2% equity default) requires a stop_loss_price
+    # to translate notional → at-risk dollars. Without one the kernel
+    # treats the full notional as at-risk and most rebalance orders
+    # would halt. We provide a conservative default per asset class —
+    # operator can override via intent_dict['stop_loss_price'].
+    intent_price = float(intent_dict["intent_price"])
+    asset_class = intent_dict.get("asset_class", "us_equity").lower()
+    side_lower = intent_dict["side"].lower()
+    explicit_stop = intent_dict.get("stop_loss_price")
+    if explicit_stop is not None:
+        stop_loss_price = float(explicit_stop)
+    elif side_lower == "buy":
+        # Long entry: stop below entry. Crypto more volatile → wider stop.
+        stop_pct = 0.20 if asset_class == "crypto" else 0.10
+        stop_loss_price = intent_price * (1.0 - stop_pct)
+    else:
+        # Short entry / sell-to-close: stop above (matters less for sells
+        # which the kernel mostly passes through).
+        stop_loss_price = intent_price * 1.10
+    # Map asset_class → quote_lane for the freshness check.
+    quote_lane = "crypto" if asset_class == "crypto" else (
+        "option" if asset_class in ("us_option", "option") else "equity"
+    )
 
     conn = connect_writer(ctx.ledger_db)
     try:
         result = submit_order(
             conn=conn, intent=intent, account=account, positions=positions,
             policy=policy, lane=intent_dict.get("lane", "etf_momentum"),
-            quote_lane="equity",
-            intent_price=float(intent_dict["intent_price"]),
+            quote_lane=quote_lane,
+            intent_price=intent_price,
+            stop_loss_price=stop_loss_price,
             broker_submit=ctx.broker_submit,
         )
         conn.commit()

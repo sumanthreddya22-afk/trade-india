@@ -109,6 +109,12 @@ class AlpacaAdapter:
             "equity": float(getattr(acct, "equity", 0) or 0),
             "cash": float(getattr(acct, "cash", 0) or 0),
             "buying_power": float(getattr(acct, "buying_power", 0) or 0),
+            "options_buying_power": float(
+                getattr(acct, "options_buying_power", 0) or 0
+            ),
+            "options_trading_level": int(
+                getattr(acct, "options_trading_level", 0) or 0
+            ),
             "daytrade_count": int(getattr(acct, "daytrade_count", 0) or 0),
             "pattern_day_trader": bool(getattr(acct, "pattern_day_trader", False)),
             "status": str(getattr(acct, "status", "")),
