@@ -10,7 +10,7 @@
         <string>/Users/__USER__/Trading/.venv/bin/bot</string>
         <string>dashboard</string>
         <string>--host</string>
-        <string>127.0.0.1</string>
+        <string>0.0.0.0</string>
         <string>--port</string>
         <string>8765</string>
     </array>

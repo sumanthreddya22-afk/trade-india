@@ -17,11 +17,13 @@ Routes:
 """
 from __future__ import annotations
 
-import os
 import logging
+import os
+from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from trading_bot.operator import controls
 from trading_bot.operator_ui import templates as tmpl
@@ -34,6 +36,18 @@ app = FastAPI(
 )
 
 
+# v4 Phase A — Cockpit (design_handoff_cockpit/) is served at
+# /?view=operator. The legacy templates.py status page stays at /
+# (no query param) for backwards compat with bookmarks + CLI links.
+COCKPIT_DIR = Path(__file__).resolve().parents[3] / "design_handoff_cockpit"
+if COCKPIT_DIR.exists():
+    app.mount(
+        "/cockpit-assets",
+        StaticFiles(directory=str(COCKPIT_DIR)),
+        name="cockpit-assets",
+    )
+
+
 @app.get("/healthz")
 def healthz():
     return {"ok": True}
@@ -44,10 +58,49 @@ def api_status():
     return JSONResponse(controls.status_snapshot())
 
 
+def _cockpit_html() -> str:
+    """Read and rewrite the cockpit prototype HTML to use the
+    /cockpit-assets/ mount instead of relative paths. Cached on disk
+    read; no per-request mutation."""
+    html_path = COCKPIT_DIR / "Trading Bot Cockpit (v4).html"
+    if not html_path.exists():
+        return (
+            "<h1>Cockpit not found</h1>"
+            f"<p>Expected at {html_path}</p>"
+        )
+    html = html_path.read_text()
+    # Rewrite relative asset references → /cockpit-assets/<path>
+    for asset in (
+        "styles-v4.css", "tweaks-panel.jsx", "data.jsx", "components.jsx",
+        "topbar.jsx", "surface_right_now.jsx", "surface_activity.jsx",
+        "surface_lab.jsx", "surface_system.jsx", "topology.jsx", "app-v4.jsx",
+    ):
+        # Match both href="asset" and src="asset" forms.
+        html = html.replace(
+            f'href="{asset}"', f'href="/cockpit-assets/{asset}"',
+        )
+        html = html.replace(
+            f'src="{asset}"', f'src="/cockpit-assets/{asset}"',
+        )
+    return html
+
+
 @app.get("/", response_class=HTMLResponse)
-def home():
+def home(view: str = ""):
+    """Root route. ``?view=operator`` → v4 Cockpit (Phase A bring-up).
+    Default → legacy status page (auto-refresh; still works on every
+    bookmark)."""
+    if view == "operator":
+        return _cockpit_html()
     snap = controls.status_snapshot()
     return tmpl.status_page(snap)
+
+
+@app.get("/cockpit", response_class=HTMLResponse)
+def cockpit_alias():
+    """Permalink for the v4 cockpit. Identical content to
+    /?view=operator."""
+    return _cockpit_html()
 
 
 @app.get("/digest", response_class=HTMLResponse)
