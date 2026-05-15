@@ -36,6 +36,7 @@ LOCK_FILES = {
     "source_reliability": "source_reliability.lock",
     "data_freshness": "data_freshness.lock",
     "short_policy": "short_policy.lock",
+    "live_capital": "live_capital.lock",
 }
 
 # Lock-version pattern: YYYY-MM-DD[.<tag>]
@@ -54,7 +55,7 @@ class CooldownNotElapsed(Exception):
 
 @dataclass(frozen=True)
 class PolicyBundle:
-    """All nine .lock files loaded into memory + their combined hash.
+    """Every ``.lock`` file loaded into memory + their combined hash.
 
     Every risk check receives one of these. The bundle is immutable; new
     policy means a new bundle loaded from new lock files.
@@ -69,6 +70,7 @@ class PolicyBundle:
     source_reliability: Mapping[str, Any]
     data_freshness: Mapping[str, Any]
     short_policy: Mapping[str, Any]
+    live_capital: Mapping[str, Any]
     combined_hash: str = ""
     """SHA-256 over the canonical JSON of every lock, written into
     ``strategy_decision.policy_hash`` for every risk decision."""
@@ -155,6 +157,7 @@ def load_policy(
         source_reliability=loaded["source_reliability"],
         data_freshness=loaded["data_freshness"],
         short_policy=loaded["short_policy"],
+        live_capital=loaded["live_capital"],
         combined_hash=combined_hash,
     )
 

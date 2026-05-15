@@ -4,9 +4,13 @@ Differences from the equity runners:
   * Asset class is ``crypto`` — used in OrderIntent + lane routing.
   * Position sleeve is capped at CRYPTO_GROSS_MAX_PCT of equity per
     risk_policy.lock["asset_class"]["crypto_gross_max_pct"].
-  * Crypto trades 24/7 — no RTH gate.
+  * Crypto trades 24/7 — no RTH gate, no US-market-holiday gate.
 """
 from __future__ import annotations
+
+# Signals the dispatch loop that the holiday calendar should NOT
+# block this strategy. Equity strategies leave this unset (False).
+RUNS_ON_NON_TRADING_DAYS = True
 
 import datetime as dt
 import json

@@ -64,7 +64,7 @@ def test_schema_version_recorded(ledger_conn) -> None:
 def test_hash_chained_tables_constant_matches() -> None:
     assert set(HASH_CHAINED_TABLES) == {
         "order_state_event", "fill_event", "position_snapshot",
-        "strategy_decision", "reconciliation_proof",
+        "strategy_decision", "reconciliation_proof", "feature_snapshot",
     }
 
 

@@ -26,7 +26,7 @@ def write_decision(
     policy_hash: str,
     feature_snapshot_id: str,
     intent: Mapping[str, Any],
-    risk_decision: str,                       # accept | reduce | halt
+    risk_decision: str,                       # accept | reduce | halt | skip
     risk_reason: Optional[str] = None,
     emitted_client_order_id: Optional[str] = None,
     now: Optional[dt.datetime] = None,

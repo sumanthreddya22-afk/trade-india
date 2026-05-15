@@ -108,9 +108,22 @@ def _dispatch_one(
     finally:
         conn.close()
 
-    today = dt.date.today()
-    # Strategy may export `should_rebalance_today`; else default monthly.
+    # Anchor "today" in US/Eastern — the market clock the daemon
+    # trades against. Wall-clock midnight in non-ET locales would
+    # otherwise advance the date 4-7 hours early.
+    from trading_bot.daemon.market_clock import NY_TZ
+    today = dt.datetime.now(dt.timezone.utc).astimezone(NY_TZ).date()
+    # Holiday gate — never fire equity strategies on a US market
+    # closure. Crypto-only strategies opt out by setting
+    # ``RUNS_ON_NON_TRADING_DAYS = True`` at module level.
+    from trading_bot.daemon.market_calendar import (
+        is_us_equity_trading_day,
+    )
     runner = importlib.import_module(f"{module_path}.runner")
+    runs_24_7 = bool(getattr(runner, "RUNS_ON_NON_TRADING_DAYS", False))
+    if not runs_24_7 and not is_us_equity_trading_day(today):
+        return {"action": "skipped_market_closed",
+                "today": today.isoformat()}
     if not runner.should_rebalance_today(today, last_date):
         return {"action": "skipped_cadence", "last_date": str(last_date)}
 
@@ -120,6 +133,11 @@ def _dispatch_one(
         account_fetcher=ctx.account_fetcher,
     )
     if not decision.intents:
+        # The strategy evaluated but emitted no orders (e.g. wheel
+        # ran out of options BP, or already at target weights).
+        # Log a ``risk_decision="skip"`` row so the operator sees the
+        # skip in the ledger instead of having to grep the daemon log.
+        _record_skip(ctx, strategy_id, strategy_ver, decision, today)
         return {"action": "no_intents",
                 "target_count": len(decision.target_weights)}
 
@@ -167,10 +185,22 @@ def _submit_one(ctx: "DaemonContext", intent_dict: dict) -> bool:
     policy = load_policy()
     acct = ctx.account_fetcher() or {}
     equity = float(acct.get("equity", 0.0))
+    # Read session-start equity from ``account_snapshot`` so the
+    # account-level kill switches (daily DD, intraday floor) actually
+    # gate intraday losses. Before the first snapshot of the session
+    # this degrades to ``equity`` (same as the prior behaviour).
+    from trading_bot.daemon.session_state import session_start_equity
+    _conn = sqlite3.connect(ctx.ledger_db)
+    try:
+        session_start = session_start_equity(
+            _conn, fallback_equity=equity,
+        )
+    finally:
+        _conn.close()
     account = AccountState(
         equity=equity,
         cash=float(acct.get("cash", 0.0)),
-        equity_at_session_start=equity,    # daemon doesn't yet track session-open
+        equity_at_session_start=session_start,
         day_trade_count=int(acct.get("daytrade_count", 0) or 0),
         buying_power=float(acct.get("buying_power", 0.0)),
     )
@@ -228,6 +258,60 @@ def _submit_one(ctx: "DaemonContext", intent_dict: dict) -> bool:
         result.risk_verdict, result.submitted,
     )
     return result.submitted
+
+
+def _record_skip(
+    ctx: "DaemonContext",
+    strategy_id: str,
+    strategy_ver: int,
+    decision: object,
+    decision_date: dt.date,
+) -> None:
+    """Append a ``risk_decision="skip"`` row for a strategy that
+    evaluated but produced no orders.
+
+    Without this the daemon-log message ``no_intents`` is the only
+    trace; the wheel can skip for weeks with nothing in the ledger to
+    show the operator why. Skip rows carry a synthetic intent_json
+    capturing the (empty) target_weights and any rationale the signal
+    exposed so a postmortem can reconstruct the choice.
+    """
+    from trading_bot.ledger import connect_writer
+    from trading_bot.ledger.strategy_decision import write_decision
+    from trading_bot.risk import load_policy
+
+    target_weights = getattr(decision, "target_weights", {}) or {}
+    signal = getattr(decision, "signal", None)
+    rationale = getattr(signal, "rationale", "") if signal is not None else ""
+    synthetic_intent = {
+        "action": "skip",
+        "decision_date": decision_date.isoformat(),
+        "target_weights": dict(target_weights),
+        "rationale": rationale,
+    }
+    try:
+        policy = load_policy()
+        policy_hash = getattr(policy, "combined_hash", "")
+    except Exception:  # noqa: BLE001
+        policy_hash = ""
+    conn = connect_writer(ctx.ledger_db)
+    try:
+        write_decision(
+            conn,
+            strategy_id=strategy_id,
+            strategy_ver=strategy_ver,
+            code_hash="daemon-skip",
+            config_hash="daemon-skip",
+            policy_hash=policy_hash or "daemon-skip",
+            feature_snapshot_id="daemon-skip",
+            intent=synthetic_intent,
+            risk_decision="skip",
+            risk_reason=rationale or "no actionable intents",
+            emitted_client_order_id=None,
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 __all__ = [

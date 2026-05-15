@@ -108,16 +108,39 @@ def status() -> None:
 
 @main.command(help="Fire the manual halt kill switch.")
 @click.option("--reason", required=True, help="Audit reason (logged).")
-def halt(reason: str) -> None:
+@click.option("--yes", "-y", is_flag=True, default=False,
+              help="Skip the interactive confirmation. Required when "
+                   "called from a non-TTY (cron / launchd).")
+def halt(reason: str, yes: bool) -> None:
+    """Halt new orders across all lanes. Two-step confirmation by
+    default — a typo on a live machine should not silently stop
+    trading. ``--yes`` bypasses the prompt for scripted use; in that
+    case the caller is accountable for the audit reason."""
     from trading_bot.operator import controls
+    if not yes:
+        click.confirm(
+            f"Fire MANUAL HALT — block all new orders. Reason: {reason!r}. "
+            f"Continue?",
+            abort=True,
+        )
     out = controls.halt(reason=reason, operator=os.environ.get("USER", "operator"))
     click.echo(json.dumps(out, indent=2, default=str))
 
 
 @main.command(help="Clear the manual halt kill switch.")
 @click.option("--reason", required=True, help="Audit reason (logged).")
-def resume(reason: str) -> None:
+@click.option("--yes", "-y", is_flag=True, default=False,
+              help="Skip the interactive confirmation.")
+def resume(reason: str, yes: bool) -> None:
+    """Clear the manual halt. Confirmation default-on so a stray
+    ``bot resume`` doesn't undo an operator-fired halt mid-incident."""
     from trading_bot.operator import controls
+    if not yes:
+        click.confirm(
+            f"Clear MANUAL HALT — re-enable order flow. Reason: {reason!r}. "
+            f"Continue?",
+            abort=True,
+        )
     out = controls.resume(reason=reason, operator=os.environ.get("USER", "operator"))
     click.echo(json.dumps(out, indent=2, default=str))
 

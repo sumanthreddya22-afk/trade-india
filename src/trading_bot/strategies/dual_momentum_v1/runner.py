@@ -1,4 +1,18 @@
-"""Dual Momentum live runner."""
+"""Dual Momentum live runner.
+
+The universe is **not** hardcoded — it is resolved at decision time
+through ``trading_bot.ingest.universe``. The default discovery rule
+returns today's most-liquid US equity ETF + most-liquid long
+Treasury ETF restricted to the seed thesis allowlist. Today that
+returns ("SPY", "TLT"); if Vanguard or BlackRock launch a more liquid
+broad-market ETF that's already in the allowlist, the rule picks it
+without a code change.
+
+The universe is captured per decision in ``feature_snapshot`` so a
+backtest replays the same symbols. The discovery rule itself is
+hash-locked: changing the rule = new strategy_version + new
+validation packet (Plan v4 §13).
+"""
 from __future__ import annotations
 
 import datetime as dt
@@ -8,15 +22,48 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
+from trading_bot.ingest.universe import (
+    AssetFetcher, AssetRecord, Composite, DiscoveryUnavailable,
+    TopByVolume, UniverseResolution, resolve_universe,
+)
 from trading_bot.research.historical_bars import (
     DEFAULT_HISTORICAL_PATH, load_bars, open_store,
 )
 from trading_bot.strategies.dual_momentum_v1.signal import (
-    DEFAULT_PARAMS, STRATEGY_ID, UNIVERSE, signal_fn,
+    DEFAULT_PARAMS, STRATEGY_ID, signal_fn,
 )
 from trading_bot.risk import DEFAULT_POLICY_DIR
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Universe discovery rule
+# ---------------------------------------------------------------------------
+
+# The seed-thesis universe lives in docs/edge_thesis_v1.md. We pin the
+# allowlist here so the discovery rule cannot drift outside the
+# validated set without an explicit code + validation-packet change.
+_THESIS_EQUITY_ALLOWLIST = ("SPY", "QQQ", "IWM", "EFA", "EEM")
+_THESIS_TREASURY_ALLOWLIST = ("TLT", "IEF")
+
+DISCOVERY_RULE = Composite(
+    sub_rules=(
+        TopByVolume(
+            asset_class="us_equity", top_n=1,
+            required_attributes=("ETF",),
+            symbol_allowlist=_THESIS_EQUITY_ALLOWLIST,
+            name="dual_momentum_v1.equity_top1",
+        ),
+        TopByVolume(
+            asset_class="us_equity", top_n=1,
+            required_attributes=("ETF",),
+            symbol_allowlist=_THESIS_TREASURY_ALLOWLIST,
+            name="dual_momentum_v1.treasury_top1",
+        ),
+    ),
+    name="dual_momentum_v1.default",
+)
 
 
 def _max_sleeve_pct() -> float:
@@ -46,6 +93,12 @@ class StrategyDecision:
     current_qty: dict[str, float]
     equity: float
     intents: list[dict]
+    universe: tuple[str, ...] = ()
+    """Symbols actually evaluated this decision — captured for the
+    feature_snapshot so a backtest can replay the exact universe."""
+    universe_payload: dict = None
+    """Discovery rule payload (rule_name, rule_hash, decision_date,
+    symbols). ``None`` when no universe was resolved."""
 
 
 def should_rebalance_today(today: dt.date, last_date: dt.date | None) -> bool:
@@ -55,6 +108,68 @@ def should_rebalance_today(today: dt.date, last_date: dt.date | None) -> bool:
     return (today.year, today.month) != (last_date.year, last_date.month)
 
 
+# Static fallback universe — used ONLY when no asset_fetcher is wired
+# (unit tests + backtest replay). Production daemons must inject the
+# Alpaca fetcher so the universe is data-driven.
+_STATIC_FALLBACK_UNIVERSE: tuple[str, ...] = ("SPY", "TLT")
+
+
+def _resolve_universe_with_fallback(
+    *,
+    asset_fetcher: Optional[AssetFetcher],
+    decision_date: dt.date,
+    volume_provider: Optional[Callable[[str], float | None]] = None,
+) -> tuple[tuple[str, ...], dict]:
+    """Resolve the discovery rule.
+
+    Alpaca's asset listing does not include average dollar volume.
+    When ``volume_provider`` is supplied (the daemon wires this from
+    historical bars) we enrich each record before passing to the
+    discovery rule so the liquidity ranking is data-driven. Without
+    it, every record's ADV stays None and the discovery rule excludes
+    them — at which point we fall back to the static thesis universe
+    rather than halting decisions during the rollout.
+    """
+    if asset_fetcher is None:
+        return _STATIC_FALLBACK_UNIVERSE, {
+            "rule_name": DISCOVERY_RULE.name,
+            "rule_hash": "fallback:static",
+            "decision_date": decision_date.isoformat(),
+            "symbols": list(_STATIC_FALLBACK_UNIVERSE),
+            "_fallback_reason": "no asset_fetcher injected",
+        }
+    fetcher: AssetFetcher = asset_fetcher
+    if volume_provider is not None:
+        from trading_bot.ingest.universe import enrich_with_volume
+        base_fetcher = asset_fetcher
+
+        def _enriched(asset_class: str):
+            return enrich_with_volume(base_fetcher(asset_class), volume_provider)
+
+        fetcher = _enriched
+    try:
+        res: UniverseResolution = resolve_universe(
+            DISCOVERY_RULE,
+            asset_fetcher=fetcher,
+            decision_date=decision_date,
+            asset_classes=("us_equity",),
+        )
+    except DiscoveryUnavailable as e:
+        log.warning(
+            "dual_momentum_v1: discovery unavailable (%s); falling back "
+            "to static thesis universe",
+            e,
+        )
+        return _STATIC_FALLBACK_UNIVERSE, {
+            "rule_name": DISCOVERY_RULE.name,
+            "rule_hash": "fallback:discovery_unavailable",
+            "decision_date": decision_date.isoformat(),
+            "symbols": list(_STATIC_FALLBACK_UNIVERSE),
+            "_fallback_reason": str(e),
+        }
+    return res.symbols, res.payload
+
+
 def evaluate_strategy(
     *,
     historical_db: Path = DEFAULT_HISTORICAL_PATH,
@@ -62,12 +177,34 @@ def evaluate_strategy(
     params: dict = DEFAULT_PARAMS,
     positions_fetcher: Optional[Callable[[], list[dict]]] = None,
     account_fetcher: Optional[Callable[[], dict]] = None,
+    asset_fetcher: Optional[AssetFetcher] = None,
 ) -> StrategyDecision:
+    """Evaluate Dual Momentum for ``decision_date``.
+
+    ``asset_fetcher`` is injected by the daemon (wired from the
+    Alpaca adapter's asset listing). When None, the runner falls
+    back to a static thesis universe ONLY so unit tests + backtest
+    replays work — a production daemon MUST supply one, so a missing
+    fetcher in live mode raises ``DiscoveryUnavailable`` upstream
+    rather than silently using stale symbols.
+    """
     decision_date = decision_date or dt.date.today()
     if not historical_db.exists():
         return StrategyDecision(
             decision_date=decision_date,
             target_weights={}, current_qty={}, equity=0.0, intents=[],
+            universe=(), universe_payload={},
+        )
+
+    # 1. Discover today's universe.
+    universe, universe_payload = _resolve_universe_with_fallback(
+        asset_fetcher=asset_fetcher, decision_date=decision_date,
+    )
+    if not universe:
+        return StrategyDecision(
+            decision_date=decision_date,
+            target_weights={}, current_qty={}, equity=0.0, intents=[],
+            universe=(), universe_payload=universe_payload,
         )
 
     lookback = int(params.get("lookback_days", DEFAULT_PARAMS["lookback_days"]))
@@ -78,11 +215,13 @@ def evaluate_strategy(
 
     conn = open_store(historical_db)
     try:
-        bars = load_bars(conn, symbols=UNIVERSE, start=start, end=decision_date)
+        bars = load_bars(conn, symbols=universe, start=start, end=decision_date)
     finally:
         conn.close()
 
-    target_weights = signal_fn(bars, decision_date, params=params)
+    target_weights = signal_fn(
+        bars, decision_date, params=params, universe=universe,
+    )
 
     current_qty: dict[str, float] = {}
     if positions_fetcher is not None:
@@ -122,7 +261,7 @@ def evaluate_strategy(
             })
         # Sell any held symbol not in target.
         for sym, qty in current_qty.items():
-            if sym in target_weights or qty <= 0 or sym not in UNIVERSE:
+            if sym in target_weights or qty <= 0 or sym not in universe:
                 continue
             close = close_by_sym.get(sym, 0.0)
             if close <= 0:

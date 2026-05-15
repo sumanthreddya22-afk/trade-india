@@ -149,10 +149,14 @@ def deflated_sharpe(
     skew = _skew(returns)
     kurt_excess = _excess_kurtosis(returns)
     expected_max = _expected_max_sharpe(n_trials, variance_trials)
-    # Variance of estimated Sharpe (Mertens 2002 / Bailey-LdP):
-    # var(SR) = (1 - skew*SR + (kurt-1)/4 * SR^2) / (n - 1)
+    # Variance of estimated Sharpe (Mertens 2002 / Bailey & Lopez de Prado
+    # 2014 eq. 4): var(SR) = (1 - skew*SR + (kurt_raw - 1)/4 * SR^2) / (n-1),
+    # where kurt_raw is the 4th standardised moment (3 for a normal). Since
+    # ``_excess_kurtosis`` returns kurt_raw - 3, the term becomes
+    # (kurt_excess + 2)/4. Previous versions used kurt_excess alone, which
+    # underestimated variance and made the gate too lenient at high |SR|.
     sr_var = max(
-        (1.0 - skew * sr + (kurt_excess) / 4.0 * sr * sr) / (n - 1),
+        (1.0 - skew * sr + (kurt_excess + 2.0) / 4.0 * sr * sr) / (n - 1),
         1e-12,
     )
     sr_std = math.sqrt(sr_var)

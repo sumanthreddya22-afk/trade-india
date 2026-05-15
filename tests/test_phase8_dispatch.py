@@ -66,3 +66,48 @@ def test_dispatch_skips_when_no_module_mapped(ledger, tmp_path):
     summary = strategy_dispatch.dispatch_all_strategies(_Ctx())
     assert summary["n_enabled"] == 1
     assert summary["details"][0]["status"] == "no_module"
+
+
+def test_no_intents_writes_skip_decision_row(ledger):
+    """Regression: when a strategy evaluates but emits no orders (e.g.
+    wheel out of options BP), the dispatch loop used to return silently.
+    The skip must now appear as ``risk_decision='skip'`` in the ledger.
+    """
+    from types import SimpleNamespace
+
+    decision = SimpleNamespace(
+        intents=[],
+        target_weights={"SPY": 0.5},
+        signal=SimpleNamespace(rationale="qty=0 (insufficient options BP)"),
+    )
+
+    class _Ctx:
+        ledger_db = ledger
+        positions_fetcher = lambda self: []
+        account_fetcher = lambda self: {"equity": 1, "cash": 1, "buying_power": 1}
+        broker_submit = lambda self, **kw: {"ok": False, "broker_order_id": None}
+
+    strategy_dispatch._record_skip(
+        _Ctx(),
+        strategy_id="SPY_WHEEL_v1",
+        strategy_ver=1,
+        decision=decision,
+        decision_date=dt.date(2026, 5, 18),
+    )
+
+    conn = sqlite3.connect(str(ledger))
+    try:
+        cur = conn.execute(
+            "SELECT risk_decision, risk_reason, intent_json "
+            "FROM strategy_decision WHERE strategy_id=?",
+            ("SPY_WHEEL_v1",),
+        )
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    verdict, reason, intent_json = rows[0]
+    assert verdict == "skip"
+    assert "insufficient options BP" in reason
+    assert "skip" in intent_json
+    assert "2026-05-18" in intent_json

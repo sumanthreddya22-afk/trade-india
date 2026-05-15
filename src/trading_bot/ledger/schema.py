@@ -113,7 +113,7 @@ CREATE TABLE IF NOT EXISTS strategy_decision (
     policy_hash         TEXT NOT NULL,                 -- combined hash of all .lock files
     feature_snapshot_id TEXT NOT NULL,                 -- FK to feature store (Phase 2)
     intent_json         TEXT NOT NULL,                 -- canonical intent before risk gate
-    risk_decision       TEXT NOT NULL,                 -- accept|reduce|halt
+    risk_decision       TEXT NOT NULL,                 -- accept|reduce|halt|skip
     risk_reason         TEXT,
     emitted_client_order_id TEXT,                      -- nullable if risk halted
     prev_hash           TEXT NOT NULL,
@@ -141,6 +141,19 @@ CREATE TABLE IF NOT EXISTS schema_meta (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,
     updated_at  TEXT NOT NULL
+);
+"""
+
+DDL_FEATURE_SNAPSHOT = """
+CREATE TABLE IF NOT EXISTS feature_snapshot (
+    ledger_seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_id     TEXT NOT NULL UNIQUE,              -- content-addressed (sha256 prefix)
+    captured_ts     TEXT NOT NULL,
+    strategy_id     TEXT NOT NULL,
+    universe_json   TEXT NOT NULL,                     -- discovery rule output (rule_name, rule_hash, symbols)
+    intel_json      TEXT NOT NULL,                     -- {feed_id: {value, source_ts, source_hash}, ...}
+    prev_hash       TEXT NOT NULL,
+    this_hash       TEXT NOT NULL
 );
 """
 
@@ -188,6 +201,7 @@ DDL_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_sd_strategy_ts ON strategy_decision(strategy_id, decision_ts);",
     "CREATE INDEX IF NOT EXISTS idx_rp_window_ts ON reconciliation_proof(recon_window, recon_ts);",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_om_client_order_id ON order_master(client_order_id);",
+    "CREATE INDEX IF NOT EXISTS idx_fs_strategy_ts ON feature_snapshot(strategy_id, captured_ts);",
 ]
 
 # ---------------------------------------------------------------------------
@@ -205,6 +219,7 @@ _APPEND_ONLY_TABLES = (
     "position_snapshot",
     "strategy_decision",
     "reconciliation_proof",
+    "feature_snapshot",
 )
 
 
@@ -244,6 +259,7 @@ ALL_DDL: list[str] = [
     DDL_POSITION_SNAPSHOT,
     DDL_STRATEGY_DECISION,
     DDL_RECONCILIATION_PROOF,
+    DDL_FEATURE_SNAPSHOT,
     DDL_ORDER_CURRENT_VIEW,
     *DDL_INDICES,
     *DDL_TRIGGERS,
@@ -266,6 +282,7 @@ TABLES: tuple[TableSpec, ...] = (
     TableSpec("position_snapshot", hash_chained=True),
     TableSpec("strategy_decision", hash_chained=True),
     TableSpec("reconciliation_proof", hash_chained=True),
+    TableSpec("feature_snapshot", hash_chained=True),
 )
 
 HASH_CHAINED_TABLES: tuple[str, ...] = tuple(

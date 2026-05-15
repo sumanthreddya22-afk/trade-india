@@ -234,6 +234,67 @@ class AlpacaAdapter:
                 out.append(p)
         return out
 
+    def list_assets(self, asset_class: str = "us_equity"):
+        """Return the active tradable assets in ``asset_class`` as
+        ``AssetRecord``s — the canonical input to the universe
+        discovery service. Maps Alpaca's tag list (``etf``, etc.)
+        into the simple uppercase attribute strings the discovery
+        rules expect.
+
+        Returns ``[]`` on transient failures so the daemon stays up;
+        the discovery service then raises ``DiscoveryUnavailable``
+        and the strategy decision is recorded as a skip.
+        """
+        # Import lazily so the SDK + AssetRecord aren't hard-loaded
+        # for callers that never touch the asset listing (CLI status,
+        # tests).
+        from trading_bot.ingest.universe import AssetRecord
+        try:
+            from alpaca.trading.enums import AssetClass, AssetStatus
+            from alpaca.trading.requests import GetAssetsRequest
+            ac_map = {
+                "us_equity": AssetClass.US_EQUITY,
+                "crypto": AssetClass.CRYPTO,
+                "us_option": getattr(
+                    AssetClass, "US_OPTION", AssetClass.US_EQUITY,
+                ),
+            }
+            req = GetAssetsRequest(
+                asset_class=ac_map.get(asset_class, AssetClass.US_EQUITY),
+                status=AssetStatus.ACTIVE,
+            )
+            raw = self.trading.get_all_assets(req)
+        except Exception as e:  # noqa: BLE001
+            log.warning("alpaca: list_assets[%s] failed: %s", asset_class, e)
+            return []
+        records: list[AssetRecord] = []
+        for a in raw or []:
+            try:
+                tags = []
+                for attr_name in ("attributes", "tags"):
+                    val = getattr(a, attr_name, None) or []
+                    tags.extend([str(x).upper() for x in val])
+                # Normalise: alpaca uses "etf" tag for ETFs.
+                tag_set = tuple({t.replace("_", "").replace(" ", "")
+                                 for t in tags})
+                if any(t == "ETF" for t in tag_set) or getattr(
+                    a, "exchange", ""
+                ) == "ARCA":
+                    if "ETF" not in tag_set:
+                        tag_set = tag_set + ("ETF",)
+                records.append(AssetRecord(
+                    symbol=str(getattr(a, "symbol", "")),
+                    asset_class=asset_class,
+                    tradable=bool(getattr(a, "tradable", False)),
+                    fractionable=bool(getattr(a, "fractionable", False)),
+                    avg_daily_volume_usd=None,  # not exposed by Alpaca v2
+                    name=str(getattr(a, "name", "") or "") or None,
+                    attributes=tag_set,
+                ))
+            except Exception:  # noqa: BLE001
+                continue
+        return records
+
     def lookup_by_client_order_id(self, client_order_id: str) -> Optional[dict]:
         try:
             order = self.trading.get_order_by_client_id(client_order_id)

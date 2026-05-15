@@ -24,7 +24,7 @@ from typing import Optional, Sequence
 from trading_bot.ledger.order_master import OrderIntent
 from trading_bot.risk import (
     account_caps, asset_class_caps, halt_router, kill_switches,
-    lane_caps, pdt, strategy_caps, symbol_order_caps,
+    lane_caps, live_capital, pdt, strategy_caps, symbol_order_caps,
 )
 from trading_bot.risk.limits import RiskLimits, parse_risk_policy
 from trading_bot.risk.policy_loader import PolicyBundle
@@ -144,6 +144,25 @@ def evaluate(
     )
     if d.verdict == "halt":
         return d
+
+    # 9. Live-capital cap (paper bypassed via lock flag = false).
+    #    Kept last so the residual-risk bound is the final word: even
+    #    if every other check accepts, the live-cap halts an order
+    #    whose strategy isn't authorised for live capital.
+    d = live_capital.check_live_capital(
+        live_capital_lock=policy.live_capital,
+        strategy_id=intent.strategy_id,
+        intent_side=intent.side,
+        intent_notional=effective_qty * intent_price,
+        account=account,
+        positions=positions,
+    )
+    if d.verdict == "halt":
+        # Paper mode is the default state of the lock; treat the
+        # `disabled` reason as "skip the live check" rather than
+        # blocking every paper order on the live cap.
+        if "live_cap:disabled" not in (d.reason or ""):
+            return d
 
     if reduce_reason is not None:
         return RiskDecision.reduce(reduce_reason, adjusted_qty=effective_qty)

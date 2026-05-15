@@ -34,8 +34,19 @@ def check_per_symbol_cap(
     already at cap) the order is halted.
     """
     side = (intent_side or "").lower()
-    if side in ("sell_to_close", "buy_to_close", "sell"):
+    if side in ("sell_to_close", "buy_to_close"):
         return RiskDecision.accept("symbol_cap:exit_skip")
+    # A plain ``"sell"`` is only an exit when we hold a long position
+    # in this symbol. Without a prior long, ``"sell"`` is a sell-to-open
+    # (short equity entry, or — for options — the wheel's short-put /
+    # short-call entry). Those must go through the per-symbol cap.
+    if side == "sell":
+        held_long_qty = sum(
+            p.qty for p in positions
+            if p.symbol == intent_symbol and p.qty > 0
+        )
+        if held_long_qty > 0:
+            return RiskDecision.accept("symbol_cap:exit_skip")
 
     if intent_price <= 0:
         return RiskDecision.accept("symbol_cap:no_price_skip")

@@ -1,0 +1,24 @@
+{
+  "lock_version": "2026-05-15.v4-phase10-skeleton",
+  "_status": "DISABLED — live trading is NOT authorised under this skeleton.",
+  "_note": "Plan v4 §16 pins autonomy at L2 (no autonomous live trading). To enable live capital the operator MUST: (a) publish a new dated lock_version, (b) sign it with the operator's git identity, (c) wait 7 days, (d) flip `live_capital_enabled` to true, (e) re-run `tools/recompute_hashes.py --update` and re-sign. The risk kernel reads this lock at boot and HALTS all new orders if `live_capital_enabled=true` with an unsigned or stale signature.",
+
+  "live_capital_enabled": false,
+
+  "total_equity_ceiling_usd": 1000.0,
+  "_total_equity_ceiling_note": "Hard ceiling — if equity > ceiling, halt new entries and surface 'live_cap:equity_overflow'. This is the residual-risk bound while validation gates (MVP-OP 60d, ALPHA 365d) are incomplete.",
+
+  "per_strategy_max_capital_usd": {
+    "DUAL_MOMENTUM_v1": 1000.0,
+    "ETF_MOMENTUM_v1": 0.0,
+    "CRYPTO_MOMENTUM_v1": 0.0,
+    "SPY_WHEEL_v1": 0.0
+  },
+  "_per_strategy_note": "Only strategies with explicit non-zero caps participate in live capital. New strategies default to 0 (disabled) until added here with operator signature.",
+
+  "max_drawdown_halt_pct": 10.0,
+  "_max_drawdown_halt_note": "If session equity drops more than this pct from live_capital_total_baseline (recorded at first live-mode boot), fire 'live_cap:drawdown_halt' kill switch.",
+
+  "live_mode_expiry_iso": "2026-06-14",
+  "_expiry_note": "Lock auto-expires 30 days after signing. Beyond expiry the kernel reverts to paper. Re-sign to extend."
+}

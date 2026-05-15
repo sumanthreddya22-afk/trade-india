@@ -62,6 +62,36 @@ def test_symbol_exit_skipped() -> None:
     assert "exit" in d.reason
 
 
+def test_plain_sell_with_long_position_is_exit() -> None:
+    """A plain ``sell`` against an existing long position is a reduce —
+    skip the per-symbol cap so the strategy can rebalance down."""
+    d = check_per_symbol_cap(
+        intent_symbol="SPY", intent_qty=1, intent_price=100,
+        intent_side="sell", account=ACCT,
+        positions=[Position(symbol="SPY", asset_class="equity", qty=10,
+                            market_value=1000, classification="bot")],
+        limits=SYM_L,
+    )
+    assert d.verdict == "accept"
+    assert "exit" in d.reason
+
+
+def test_plain_sell_without_position_is_short_entry_capped() -> None:
+    """A plain ``sell`` with no prior long is a sell-to-open (short equity
+    or short-option entry). The per-symbol cap must apply — regression for
+    the wheel's short-put entry bypassing the 5% cap."""
+    # 5% of 10k = $500 cap. Order = 6 contracts × $100 strike-equiv = $600 notional.
+    d = check_per_symbol_cap(
+        intent_symbol="SPY_PUT_600", intent_qty=6, intent_price=100,
+        intent_side="sell", account=ACCT, positions=[],
+        limits=SYM_L,
+    )
+    # Must NOT be a free accept; cap kicks in. The order is reduced to
+    # fit, not silently skipped.
+    assert d.verdict == "reduce"
+    assert abs(d.adjusted_qty - 5.0) < 1e-6
+
+
 def test_order_at_risk_with_stop() -> None:
     # 2% of 10k = $200. qty=10 @ 100 stop=97 → at_risk = 10*3 = 30. Pass.
     d = check_per_order_cap(
