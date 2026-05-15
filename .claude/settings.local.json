@@ -564,7 +564,8 @@
       "Bash(.venv/bin/python tools/register_v3_strategies.py)",
       "Bash(.venv/bin/python tools/refresh_intel_caches.py)",
       "Bash(.venv/bin/python -c \"import feedparser; print\\('feedparser', feedparser.__version__\\)\")",
-      "Bash(.venv/bin/python -m pytest tests/test_caveat_fixes.py -v --no-header)"
+      "Bash(.venv/bin/python -m pytest tests/test_caveat_fixes.py -v --no-header)",
+      "Bash(ps -p 51549 -o pid,etime,command)"
     ]
   }
 }
