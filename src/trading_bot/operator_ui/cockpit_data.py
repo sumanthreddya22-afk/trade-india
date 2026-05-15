@@ -163,10 +163,28 @@ _LANE_MAP = {
     "crypto": ("crypto", "Crypto"),
     "us_option": ("options", "Wheel"),
 }
-# Normalise legacy / alias asset_class strings to the canonical keys.
+# Normalise legacy / alias / enum-prefixed asset_class strings to the
+# canonical keys. The broker snapshot writes ``assetclass.crypto`` etc.
+# (Python enum __str__ format).
 _LANE_ALIASES = {
     "option": "us_option", "equity": "us_equity", "stock": "us_equity",
 }
+
+
+def _normalize_asset_class(raw: str | None) -> str:
+    if not raw:
+        return "us_equity"
+    s = str(raw).lower()
+    if "." in s:
+        s = s.split(".", 1)[1]
+    return _LANE_ALIASES.get(s, s)
+
+
+# Position source we read from. ``broker`` rows are written by the
+# Alpaca adapter on each position_snapshot job tick (the bot's view of
+# the live account); ``bot`` rows would be the strategy-attributed
+# snapshot but isn't populated until v3 strategies actually fill.
+_POSITION_SOURCE = "broker"
 
 
 def build_lanes(conn: sqlite3.Connection) -> list[dict]:
@@ -177,23 +195,23 @@ def build_lanes(conn: sqlite3.Connection) -> list[dict]:
     equity = float(acct[0]["equity"]) if acct else 0.0
 
     # Sum market value per asset class from latest position snapshot.
-    # Pick the most recent snapshot_ts row per symbol then sum by class.
     rows = _safe_query(
         conn,
-        """
+        f"""
         SELECT p.asset_class, p.symbol, p.market_value
         FROM position_snapshot p
         INNER JOIN (
             SELECT symbol, MAX(snapshot_ts) AS mx
-            FROM position_snapshot WHERE source='bot'
+            FROM position_snapshot WHERE source=?
             GROUP BY symbol
         ) latest ON p.symbol = latest.symbol AND p.snapshot_ts = latest.mx
-        WHERE p.source='bot'
+        WHERE p.source=?
         """,
+        (_POSITION_SOURCE, _POSITION_SOURCE),
     )
     sums: dict[str, float] = {}
     for r in rows:
-        ac = r.get("asset_class", "us_equity") or "us_equity"
+        ac = _normalize_asset_class(r.get("asset_class"))
         sums[ac] = sums.get(ac, 0.0) + abs(float(r.get("market_value") or 0.0))
 
     # Static caps from risk_policy.lock.
@@ -238,24 +256,31 @@ def build_exposure_breakdown(conn: sqlite3.Connection) -> list[dict]:
     cash = float(acct[0]["cash"])
     rows = _safe_query(
         conn,
-        """
+        f"""
         SELECT p.asset_class, SUM(ABS(p.market_value)) AS mv
         FROM position_snapshot p
         INNER JOIN (
             SELECT symbol, MAX(snapshot_ts) AS mx FROM position_snapshot
-            WHERE source='bot' GROUP BY symbol
+            WHERE source=? GROUP BY symbol
         ) latest ON p.symbol = latest.symbol AND p.snapshot_ts = latest.mx
-        WHERE p.source='bot'
+        WHERE p.source=?
         GROUP BY p.asset_class
         """,
+        (_POSITION_SOURCE, _POSITION_SOURCE),
     )
-    out = []
+    # Roll up by normalised asset class (in case the broker snapshot
+    # writes ``assetclass.crypto`` for some rows and ``crypto`` for
+    # others — both should land in the same bucket).
+    by_class: dict[str, float] = {}
     for r in rows:
-        ac = r.get("asset_class") or "us_equity"
+        ac = _normalize_asset_class(r.get("asset_class"))
+        by_class[ac] = by_class.get(ac, 0.0) + (r.get("mv") or 0.0)
+    out = []
+    for ac, mv in by_class.items():
         name = _LANE_MAP.get(ac, (ac, ac))[1]
         out.append({
             "name": name,
-            "value": _fmt_pct((r.get("mv") or 0.0) / equity if equity else 0.0),
+            "value": _fmt_pct(mv / equity if equity else 0.0),
             "color": "var(--info)" if ac == "us_equity" else
                      "var(--warn)" if ac == "crypto" else
                      "var(--text-faint)",
@@ -379,15 +404,19 @@ def build_risk_caps(conn: sqlite3.Connection) -> list[dict]:
         FROM position_snapshot p
         INNER JOIN (
             SELECT symbol, MAX(snapshot_ts) AS mx FROM position_snapshot
-            WHERE source='bot' GROUP BY symbol
+            WHERE source=? GROUP BY symbol
         ) latest ON p.symbol = latest.symbol AND p.snapshot_ts = latest.mx
-        WHERE p.source='bot'
+        WHERE p.source=?
         GROUP BY p.asset_class
         """,
+        (_POSITION_SOURCE, _POSITION_SOURCE),
     )
     sums: dict[str, float] = {}
     for r in rows:
-        sums[r["asset_class"]] = (r.get("mv") or 0.0)
+        sums[_normalize_asset_class(r["asset_class"])] = (
+            sums.get(_normalize_asset_class(r["asset_class"]), 0.0)
+            + (r.get("mv") or 0.0)
+        )
     total = sum(sums.values())
 
     caps = [
@@ -500,6 +529,28 @@ def build_strategies(conn: sqlite3.Connection) -> list[dict]:
     tier_map = {
         "research_candidate": 1, "paper_candidate": 2, "live_candidate": 3,
     }
+    # Pre-fetch metrics per (strategy, ver) from the latest passing
+    # artifact and parse the JSON payload once.
+    metrics_rows = _safe_query(
+        conn,
+        """
+        SELECT va.strategy_id, va.strategy_ver, va.tier, va.metrics_json,
+               va.produced_ts
+        FROM validation_artifact va
+        WHERE va."pass"=1
+        ORDER BY va.produced_ts DESC
+        """,
+    )
+    metrics_by_key: dict[tuple, dict] = {}
+    for m in metrics_rows:
+        key = (m["strategy_id"], m["strategy_ver"])
+        if key in metrics_by_key:
+            continue
+        try:
+            metrics_by_key[key] = json.loads(m.get("metrics_json") or "{}")
+        except json.JSONDecodeError:
+            metrics_by_key[key] = {}
+
     out = []
     for r in rows:
         tier_raw = r.get("max_tier_passed") or ""
@@ -507,15 +558,19 @@ def build_strategies(conn: sqlite3.Connection) -> list[dict]:
         state = r["status"]
         if state == "tiny_paper":
             state = "paper"
+        m = metrics_by_key.get((r["strategy_id"], r["strategy_ver"]), {})
+        p_sharpe = m.get("observed_sharpe_annualised")
+        d_sharpe = m.get("oos_dsr")
+        pbo = m.get("pbo") or m.get("probability_of_overfit")
         out.append({
             "name": f"{r['strategy_id']} v{r['strategy_ver']}",
             "hash": _short_hash(r.get("code_hash") or ""),
             "lane": _lane_for_strategy(r["strategy_id"]),
             "state": state,
             "tier": tier_int,
-            "p_sharpe": None,   # Not yet wired from validation_artifact
-            "d_sharpe": None,
-            "pbo": None,
+            "p_sharpe": float(p_sharpe) if p_sharpe is not None else None,
+            "d_sharpe": float(d_sharpe) if d_sharpe is not None else None,
+            "pbo": float(pbo) if pbo is not None else None,
             "last_run": (r.get("last_decision") or "")[:16],
             "live_eligible": state == "paper" and tier_int >= 3,
         })
@@ -536,10 +591,12 @@ def build_positions(conn: sqlite3.Connection) -> list[dict]:
         FROM position_snapshot p
         INNER JOIN (
             SELECT symbol, MAX(snapshot_ts) AS mx FROM position_snapshot
-            WHERE source='bot' GROUP BY symbol
+            WHERE source=? GROUP BY symbol
         ) latest ON p.symbol = latest.symbol AND p.snapshot_ts = latest.mx
-        WHERE p.source='bot' AND p.qty != 0
+        WHERE p.source=? AND p.qty != 0
+        ORDER BY ABS(p.market_value) DESC
         """,
+        (_POSITION_SOURCE, _POSITION_SOURCE),
     )
     out = []
     for r in rows:
@@ -549,7 +606,7 @@ def build_positions(conn: sqlite3.Connection) -> list[dict]:
         mv = float(r["market_value"] or 0.0)
         pl_abs = (mark - entry) * qty if entry > 0 and mark > 0 else 0.0
         pl_pct = (mark / entry - 1.0) if entry > 0 and mark > 0 else 0.0
-        ac = r.get("asset_class") or "us_equity"
+        ac = _normalize_asset_class(r.get("asset_class"))
         lane = _LANE_MAP.get(ac, ("stocks", ""))[0]
         out.append({
             "symbol": r["symbol"],
@@ -588,7 +645,7 @@ def build_open_orders(conn: sqlite3.Connection) -> list[dict]:
             age_s = int((now - ts).total_seconds())
         except Exception:  # noqa: BLE001
             age_s = 0
-        ac = r.get("asset_class") or "us_equity"
+        ac = _normalize_asset_class(r.get("asset_class"))
         lane = _LANE_MAP.get(ac, ("stocks", ""))[0]
         out.append({
             "symbol": r["symbol"],
@@ -1298,6 +1355,291 @@ def build_daily_digest(conn: sqlite3.Connection) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# TOPOLOGY (system-map nodes with live statuses)
+# ---------------------------------------------------------------------------
+
+
+def _node(node_id: str, title: str, sub: str, x: int, y: int, w: int, h: int,
+          *, status: str = "ok", metric: str = "—",
+          group: str = "kernel", primary: bool = False,
+          lane: Optional[str] = None) -> dict:
+    n = {
+        "id": node_id, "title": title, "sub": sub,
+        "x": x, "y": y, "w": w, "h": h,
+        "status": status, "metric": metric, "group": group,
+    }
+    if primary:
+        n["primary"] = True
+    if lane:
+        n["lane"] = lane
+    return n
+
+
+def build_topology_nodes(
+    conn: sqlite3.Connection, snap: Mapping[str, Any],
+) -> list[dict]:
+    """Live node statuses derived from ledger + daemon state.
+
+    Status rules:
+      ok     everything green
+      warn   degraded job heartbeat OR lane near cap OR caution regime
+      fail   halted, broker hard-fail, crisis regime
+      off    deliberately disabled
+    """
+    hbs = snap.get("heartbeats") or []
+    n_jobs = len(hbs)
+    fail_jobs = [h for h in hbs if h.get("last_status") not in ("ok", None)]
+    sched_status = "ok" if not fail_jobs else "warn"
+    sched_metric = (
+        f"{n_jobs} jobs · {len(fail_jobs)} failing"
+        if fail_jobs else f"{n_jobs} jobs ok"
+    )
+
+    severity = {
+        "normal": 0, "caution": 1, "stress": 2, "crisis": 3, "recovery": 1,
+    }
+    worst_regime = "normal"
+    for ac in ("stocks", "crypto", "options"):
+        rows = _safe_query(
+            conn,
+            "SELECT new_regime FROM regime_event "
+            "WHERE asset_class=? ORDER BY ledger_seq DESC LIMIT 1",
+            (ac,),
+        )
+        cur = rows[0]["new_regime"] if rows else "normal"
+        if severity.get(cur, 0) > severity.get(worst_regime, 0):
+            worst_regime = cur
+    regime_status = (
+        "fail" if worst_regime == "crisis"
+        else "warn" if worst_regime in ("stress", "caution") else "ok"
+    )
+
+    active_kills = list(snap.get("active_kills") or [])
+    risk_status = "fail" if active_kills else "ok"
+    risk_metric = (
+        f"{len(active_kills)} kills active"
+        if active_kills else "no kills"
+    )
+
+    last_seq_row = _safe_query(
+        conn, "SELECT MAX(ledger_seq) AS s FROM strategy_decision",
+    )
+    last_seq = (last_seq_row[0].get("s") if last_seq_row else None) or 0
+    ledger_metric = f"seq {last_seq}"
+
+    cand = _safe_query(
+        conn, "SELECT COUNT(*) AS n FROM strategy_candidate",
+    )
+    n_cand = int(cand[0]["n"]) if cand else 0
+    research_metric = (
+        f"{n_cand} candidate{'s' if n_cand != 1 else ''}"
+        if n_cand else "scaffold"
+    )
+
+    mut = _safe_query(
+        conn, "SELECT COUNT(*) AS n FROM mutation_outcome",
+    )
+    n_mut = int(mut[0]["n"]) if mut else 0
+    mutation_metric = (
+        f"{n_mut} outcomes" if n_mut else "nightly (no runs yet)"
+    )
+
+    # Broker — recency of the snapshot heartbeats.
+    broker_hb = next(
+        (h for h in hbs if h.get("job_name") in (
+            "account_snapshot", "position_snapshot",
+        )),
+        None,
+    )
+    broker_status = "ok"
+    broker_metric = "paper"
+    if broker_hb:
+        try:
+            ts = dt.datetime.fromisoformat(
+                broker_hb["last_run_ts"].replace("Z", "+00:00"),
+            )
+            age = (
+                dt.datetime.now(dt.timezone.utc) - ts
+            ).total_seconds()
+            if age > 900:
+                broker_status = "warn"
+                broker_metric = f"snapshot stale {int(age/60)}m"
+            elif broker_hb.get("last_status") not in ("ok", None):
+                broker_status = "fail"
+                broker_metric = "snapshot fail"
+        except Exception:  # noqa: BLE001
+            pass
+
+    # Execution — stuck working orders.
+    stuck = _safe_query(
+        conn,
+        "SELECT COUNT(*) AS n FROM order_current "
+        "WHERE state IN ('intent','submitted','acked') "
+        "AND state_ts < datetime('now','-60 seconds')",
+    )
+    n_stuck = int(stuck[0]["n"]) if stuck else 0
+    exec_status = "warn" if n_stuck else "ok"
+    exec_metric = (
+        f"{n_stuck} stuck" if n_stuck else "router idle"
+    )
+
+    # Lanes — exposure vs cap.
+    lanes_data = build_lanes(conn)
+    lane_status_for: dict[str, tuple[str, str]] = {}
+    for l in lanes_data:
+        exp = l["exposure_pct"]
+        cap = l["cap_pct"]
+        ratio = exp / cap if cap > 0 else 0
+        if exp <= 0:
+            status, metric = "ok", "no positions"
+        elif ratio >= 0.95:
+            status, metric = "warn", f"AT CAP · {exp*100:.1f}%"
+        else:
+            status, metric = "ok", f"{exp*100:.1f}% / {cap*100:.0f}%"
+        lane_status_for[l["key"]] = (status, metric)
+    s_stocks = lane_status_for.get("stocks", ("ok", "—"))
+    s_crypto = lane_status_for.get("crypto", ("ok", "—"))
+    s_options = lane_status_for.get("options", ("ok", "no positions"))
+
+    return [
+        _node("research", "Research Factory", "scout · intake · codegen",
+              60, 60, 260, 100, status="ok",
+              metric=research_metric, group="research"),
+        _node("scheduler", "Scheduler", "daemon jobs",
+              520, 60, 260, 100, status=sched_status,
+              metric=sched_metric, group="kernel"),
+        _node("ledger", "Ledger", "append-only · hash chain",
+              980, 60, 260, 100, status="ok",
+              metric=ledger_metric, group="kernel"),
+        _node("risk", "Risk Kernel",
+              "caps · regime overlay · kill switches",
+              220, 220, 820, 130, status=risk_status,
+              metric=risk_metric, group="kernel", primary=True),
+        _node("regime", "Regime",
+              f"5-regime · {worst_regime}",
+              60, 405, 220, 70, status=regime_status,
+              metric=worst_regime, group="research"),
+        _node("mutation", "Mutation",
+              "nightly · BH-FDR",
+              1020, 405, 220, 70, status="ok",
+              metric=mutation_metric, group="research"),
+        _node("execution", "Execution", "idempotent order router",
+              470, 400, 320, 80, status=exec_status,
+              metric=exec_metric, group="kernel"),
+        _node("broker", "Broker · Alpaca", "paper",
+              470, 510, 320, 70, status=broker_status,
+              metric=broker_metric, group="broker"),
+        _node("lane-stocks", "Stocks", "ETF / Dual Momentum v3",
+              60, 620, 280, 100, status=s_stocks[0],
+              metric=s_stocks[1], group="lane-stocks", lane="stocks"),
+        _node("lane-crypto", "Crypto", "Crypto Momentum v3",
+              510, 620, 280, 100, status=s_crypto[0],
+              metric=s_crypto[1], group="lane-crypto", lane="crypto"),
+        _node("lane-options", "Options", "SPY Wheel v3",
+              960, 620, 280, 100, status=s_options[0],
+              metric=s_options[1], group="lane-options", lane="options"),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# EQUITY_CURVE (from account_snapshot history — replaces mock 90d curve)
+# ---------------------------------------------------------------------------
+
+
+def build_equity_curve(conn: sqlite3.Connection) -> dict:
+    rows = _safe_query(
+        conn,
+        """
+        SELECT snapshot_ts, equity FROM account_snapshot
+        WHERE snapshot_ts >= datetime('now', '-90 days')
+        ORDER BY snapshot_ts ASC
+        """,
+    )
+    by_day: dict[str, tuple[str, float]] = {}
+    for r in rows:
+        day = (r["snapshot_ts"] or "")[:10]
+        by_day[day] = (r["snapshot_ts"], float(r["equity"] or 0.0))
+    points = [
+        {"ts": ts, "equity": round(eq, 2)}
+        for _day, (ts, eq) in sorted(by_day.items())
+    ]
+    return {"range": "90d", "points": points, "markers": []}
+
+
+# ---------------------------------------------------------------------------
+# ACTION_REQUIRED (computed from live data — replaces mock alert cards)
+# ---------------------------------------------------------------------------
+
+
+def build_action_required(
+    conn: sqlite3.Connection, snap: Mapping[str, Any],
+) -> list[dict]:
+    actions: list[dict] = []
+    rows = _safe_query(
+        conn,
+        """
+        SELECT p.symbol, p.qty, p.classification
+        FROM position_snapshot p
+        INNER JOIN (
+            SELECT symbol, MAX(snapshot_ts) AS mx FROM position_snapshot
+            WHERE source=? GROUP BY symbol
+        ) latest ON p.symbol = latest.symbol AND p.snapshot_ts = latest.mx
+        WHERE p.source=? AND p.qty != 0
+              AND p.classification IN ('unknown', 'external')
+        """,
+        (_POSITION_SOURCE, _POSITION_SOURCE),
+    )
+    if rows:
+        n = len(rows)
+        sym_preview = ", ".join(r["symbol"] for r in rows[:3])
+        actions.append({
+            "id": "ar_external_positions",
+            "severity": "med",
+            "title": (
+                f"{n} unattributed broker position"
+                + ("s" if n != 1 else "")
+            ),
+            "cause": (
+                f"{sym_preview}{', …' if n > 3 else ''} not attributed "
+                "to a bot strategy. These are counted against asset-class "
+                "exposure caps but skipped by v3 rebalances."
+            ),
+            "cta": [{"label": "Review", "primary": True}],
+        })
+    mismatches = _safe_query(
+        conn,
+        "SELECT recon_ts, recon_window, action_taken "
+        "FROM reconciliation_proof WHERE match=0 "
+        "AND action_taken != 'resolved' ORDER BY ledger_seq DESC LIMIT 1",
+    )
+    if mismatches:
+        actions.append({
+            "id": "ar_recon",
+            "severity": "high",
+            "title": "Reconciliation mismatch unresolved",
+            "cause": (
+                f"Latest mismatch on {mismatches[0]['recon_ts'][:19]} "
+                f"({mismatches[0]['recon_window']}); "
+                f"action={mismatches[0]['action_taken']}."
+            ),
+            "cta": [{"label": "Open reconciliation", "primary": True}],
+        })
+    kills = list(snap.get("active_kills") or [])
+    if kills:
+        actions.append({
+            "id": "ar_kills",
+            "severity": "high",
+            "title": (
+                f"{len(kills)} active kill switch"
+                + ("es" if len(kills) != 1 else "")
+            ),
+            "cause": ", ".join(kills),
+            "cta": [{"label": "Halt panel", "primary": True}],
+        })
+    return actions
+
+
+# ---------------------------------------------------------------------------
 # Top-level orchestrator
 # ---------------------------------------------------------------------------
 
@@ -1345,6 +1687,18 @@ def build_state(
         _step("FRESHNESS", lambda: build_freshness(conn))
         _step("POLICY_LOCKS", lambda: build_policy_locks())
         _step("PERSONAS", lambda: build_personas())
+        # v4 Phase A live overlays for the system map + alert cards +
+        # equity history (replace mock baselines).
+        _step("TOPOLOGY_NODES", lambda: build_topology_nodes(conn, snap))
+        _step("EQUITY_CURVE", lambda: build_equity_curve(conn))
+        _step("ACTION_REQUIRED", lambda: build_action_required(conn, snap))
+        # Surfaces still expect WF_FOLDS / HEATMAP globals. We don't
+        # compute either today (walk-forward + parameter plateau are
+        # research-only artifacts not yet plumbed through). Emit
+        # empties so the cockpit renders "no data" rather than fake
+        # 5-fold Sharpes from the mock baseline.
+        _step("WF_FOLDS", lambda: [])
+        _step("HEATMAP", lambda: [[0]])
         _step("HALTS", lambda: build_halts(conn))
         _step("LEDGER_HEALTH", lambda: build_ledger_health(conn))
         _step("DAEMON", lambda: build_daemon())

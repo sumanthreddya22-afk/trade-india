@@ -3,22 +3,35 @@
 // Renders the kernel as a live SVG topology.
 // ============================================================
 
-// Nodes: a static layout in viewBox coords (1300 × 740)
-const TOPO_NODES = [
-  { id: "research",  title: "Research Factory", sub: "mutator · judge · reviewer", x:  60, y:  60, w: 260, h: 100, status: "ok",   metric: "3 runs queued",  group: "research" },
-  { id: "scheduler", title: "Scheduler",        sub: "10 jobs",                    x: 520, y:  60, w: 260, h: 100, status: "warn", metric: "1 failing",       group: "kernel"   },
-  { id: "ledger",    title: "Ledger",           sub: "append-only · hash chain",   x: 980, y:  60, w: 260, h: 100, status: "ok",   metric: "seq 28 411",      group: "kernel"   },
+// Nodes: layout in viewBox coords (1300 × 740). The server's
+// /api/cockpit/data-overlay.js sets window.TOPOLOGY_NODES with live
+// status + metric per node; we fall back to a documented baseline if
+// the overlay didn't run. Layout retains the original positions so
+// existing edge anchors line up; regime + mutation are tucked into
+// the previously-free horizontal corridor at y=370.
+const _TOPO_NODES_BASELINE = [
+  { id: "research",  title: "Research Factory", sub: "scout · intake · codegen", x:  60, y:  60, w: 260, h: 100, status: "ok",   metric: "—",                 group: "research" },
+  { id: "scheduler", title: "Scheduler",        sub: "jobs",                     x: 520, y:  60, w: 260, h: 100, status: "ok",   metric: "—",                 group: "kernel"   },
+  { id: "ledger",    title: "Ledger",           sub: "append-only · hash chain", x: 980, y:  60, w: 260, h: 100, status: "ok",   metric: "—",                 group: "kernel"   },
 
-  { id: "risk",      title: "Risk Kernel",      sub: "gates · caps · classification · idempotency",
-                                                                                   x: 220, y: 220, w: 820, h: 130, status: "ok",   metric: "412/h evaluated", group: "kernel", primary: true },
+  { id: "risk",      title: "Risk Kernel",      sub: "caps · regime overlay · kill switches",
+                                                                                 x: 220, y: 220, w: 820, h: 130, status: "ok",   metric: "—",                 group: "kernel", primary: true },
 
-  { id: "execution", title: "Execution",        sub: "idempotent order router",    x: 470, y: 400, w: 320, h:  80, status: "warn", metric: "1 stuck",         group: "kernel"   },
-  { id: "broker",    title: "Broker · Alpaca",  sub: "paper",                      x: 470, y: 510, w: 320, h:  70, status: "fail", metric: "heartbeat fail",  group: "broker"   },
+  // Phase A — Regime classifier (tucked left of execution).
+  { id: "regime",    title: "Regime",           sub: "5-regime · 3 classes",     x:  60, y: 405, w: 220, h:  70, status: "ok",   metric: "normal",            group: "research" },
+  // Phase C — Mutation engine (tucked right of execution).
+  { id: "mutation",  title: "Mutation",         sub: "nightly · BH-FDR",         x: 1020, y: 405, w: 220, h:  70, status: "ok",   metric: "—",                 group: "research" },
 
-  { id: "lane-stocks",  title: "Stocks",        sub: "ETF Momentum",      x:  60, y: 620, w: 280, h: 100, status: "warn", metric: "exposure 41.2 %",      group: "lane-stocks",  lane: "stocks"  },
-  { id: "lane-crypto",  title: "Crypto",        sub: "BTC trend",         x: 510, y: 620, w: 280, h: 100, status: "warn", metric: "AT CAP · 15.0 %",      group: "lane-crypto",  lane: "crypto"  },
-  { id: "lane-options", title: "Options",       sub: "Wheel · scaffold",  x: 960, y: 620, w: 280, h: 100, status: "off",  metric: "off",                  group: "lane-options", lane: "options" },
+  { id: "execution", title: "Execution",        sub: "idempotent order router",  x: 470, y: 400, w: 320, h:  80, status: "ok",   metric: "—",                 group: "kernel"   },
+  { id: "broker",    title: "Broker · Alpaca",  sub: "paper",                    x: 470, y: 510, w: 320, h:  70, status: "ok",   metric: "—",                 group: "broker"   },
+
+  { id: "lane-stocks",  title: "Stocks",        sub: "ETF / Dual Momentum v3",   x:  60, y: 620, w: 280, h: 100, status: "ok", metric: "—",     group: "lane-stocks",  lane: "stocks"  },
+  { id: "lane-crypto",  title: "Crypto",        sub: "Crypto Momentum v3",       x: 510, y: 620, w: 280, h: 100, status: "ok", metric: "—",     group: "lane-crypto",  lane: "crypto"  },
+  { id: "lane-options", title: "Options",       sub: "SPY Wheel v3",             x: 960, y: 620, w: 280, h: 100, status: "ok", metric: "—",     group: "lane-options", lane: "options" },
 ];
+const TOPO_NODES = (typeof window !== "undefined" && window.TOPOLOGY_NODES)
+  ? window.TOPOLOGY_NODES
+  : _TOPO_NODES_BASELINE;
 
 // Edges: each has explicit anchor points + a kind that styles it.
 //   kind: "flow" | "research" | "primary" | "warn" | "fail" | "dim" | "halt"

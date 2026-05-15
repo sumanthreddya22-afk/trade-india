@@ -6,14 +6,17 @@ const { useState, useEffect, useRef, useMemo } = React;
 
 // ---- formatting helpers ----
 function fmtMoney(n, opts = {}) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
   const sign = n > 0 && opts.sign ? "+" : "";
   return sign + n.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 function fmtPct(n, digits = 2, sign = false) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
   const s = (n * 100).toFixed(digits);
   return (sign && n > 0 ? "+" : "") + s + "%";
 }
 function fmtNum(n, digits = 2) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "—";
   return n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 }
 function fmtAge(s) {
