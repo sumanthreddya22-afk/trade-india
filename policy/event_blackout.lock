@@ -1,0 +1,108 @@
+{
+  "lock_version": "2026-05-25.v1-live-shakedown",
+  "_source": "Plan WS4 4f + safety stack Layer 3. Pre-emptive event blackouts pulled nightly from multiple corroborating sources. Cross-source disagreement triggers a disputed-window blackout; full source outage triggers default 9:30-10:00 ET blackout. Fail-safe: more conservative when blind.",
+  "_status": "ENFORCEMENT lands with src/trading_bot/ingest/event_calendar.py (WS5). Until then this lock declares schema + intent so cooldown clock starts.",
+
+  "sources": {
+    "fred": {
+      "_purpose": "FOMC + minutes",
+      "endpoint": "https://api.stlouisfed.org/fred/releases",
+      "auth": "FRED_API_KEY"
+    },
+    "bls": {
+      "_purpose": "CPI, PPI, NFP",
+      "endpoint": "https://api.bls.gov/publicAPI/v2/timeseries/data/",
+      "auth": "BLS_API_KEY (optional, public access rate-limited)"
+    },
+    "treasury": {
+      "_purpose": "Auction calendar",
+      "endpoint": "https://www.treasurydirect.gov/TA_WS/securities/upcoming",
+      "auth": "none"
+    },
+    "sec_edgar": {
+      "_purpose": "Earnings on held names",
+      "endpoint": "https://data.sec.gov/submissions/CIK{cik}.json",
+      "auth": "User-Agent header required"
+    },
+    "opra": {
+      "_purpose": "Options expiration calendar",
+      "endpoint": "https://www.theocc.com/Market-Data/Market-Data-Reports/Volume-and-Open-Interest/Expiration-Calendar",
+      "auth": "none"
+    },
+    "cme": {
+      "_purpose": "Half-day / holiday calendar",
+      "endpoint": "https://www.cmegroup.com/tools-information/holiday-calendar.html",
+      "auth": "none"
+    }
+  },
+
+  "corroboration": {
+    "min_sources_for_event": 2,
+    "_note": "If only 1 source reports an event, log to disputed_calendar but do NOT blackout. If 2+ sources disagree on time/window, blackout the union window.",
+    "all_sources_down_default": {
+      "blackout_window_et": "09:30-10:00",
+      "_note": "If every source is unreachable on nightly pull, default to no-entries during the first 30 minutes of the trading day."
+    },
+    "stale_pull_max_hours": 36
+  },
+
+  "event_actions": {
+    "fomc_decision": {
+      "pre_minutes": 60,
+      "post_minutes": 120,
+      "action": "no_new_entries_tighten_stops"
+    },
+    "fomc_minutes": {
+      "pre_minutes": 30,
+      "post_minutes": 60,
+      "action": "no_new_entries"
+    },
+    "powell_speech": {
+      "pre_minutes": 15,
+      "post_minutes": 30,
+      "action": "no_new_entries"
+    },
+    "cpi": {
+      "pre_minutes": 30,
+      "post_minutes": 60,
+      "action": "no_new_entries_tighten_stops"
+    },
+    "ppi": {
+      "pre_minutes": 30,
+      "post_minutes": 60,
+      "action": "no_new_entries_tighten_stops"
+    },
+    "nfp": {
+      "pre_minutes": 30,
+      "post_minutes": 60,
+      "action": "no_new_entries_tighten_stops"
+    },
+    "treasury_auction": {
+      "pre_minutes": 15,
+      "post_minutes": 15,
+      "action": "no_new_entries"
+    },
+    "earnings_held_symbol": {
+      "pre_days": 1,
+      "post_days": 1,
+      "action": "per_symbol_no_new_entries"
+    },
+    "opex_third_friday": {
+      "window_et": "09:30-10:00",
+      "action": "no_new_options_entries"
+    },
+    "half_day": {
+      "action": "flatten_by_12:30_et"
+    }
+  },
+
+  "cache_policy": {
+    "forward_window_days": 7,
+    "_note": "Calendar pulled nightly with 7d forward horizon. If pull fails, last good cache used until stale_pull_max_hours; then fall back to all_sources_down_default.",
+    "cache_path": "data/state/event_calendar_cache.json"
+  },
+
+  "loosen_cooldown_days": 7,
+  "tighten_cooldown_days": 0,
+  "_cooldown_note": "Adding a new blackout type or extending an existing window = tighten (0-day). Shortening / removing a window = loosen (7-day)."
+}

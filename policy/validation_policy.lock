@@ -1,6 +1,6 @@
 {
-  "lock_version": "2026-05-13.v4-phase2",
-  "_source": "Plan v4 §4 — Validation Policy Lock; tiered gates",
+  "lock_version": "2026-05-25.v5-live-shakedown",
+  "_source": "Plan v4 §4 — Validation Policy Lock; tiered gates. Compressed paper-obs window 2026-05-25 for $1k Webull live shakedown per WS4 4c. Operator explicitly accepts reduced statistical confidence on a tiny test account in exchange for getting live faster.",
 
   "tiers": {
     "research_candidate": {
@@ -18,7 +18,8 @@
       "min_walk_forward_folds": 6,
       "min_oos_period_days": 504,
       "min_trades_per_regime": 50,
-      "min_paper_obs_days": 60,
+      "min_paper_obs_days": 14,
+      "_min_paper_obs_days_history": "60 -> 14 on 2026-05-25 (shakedown). Will revert to 60 on next lock version once $1k window closes.",
       "min_paper_trade_count_or_rebalances": 25,
       "max_drawdown_paper_pct": 0.08
     },
@@ -27,15 +28,17 @@
       "min_oos_dsr": 0.85,
       "max_pbo": 0.25,
       "min_paper_obs_days_per_rebalance_period": {
-        "daily": 60,
+        "daily": 14,
         "weekly": 180,
         "monthly": 365
       },
+      "_daily_paper_obs_history": "60 -> 14 on 2026-05-25 (shakedown). Weekly/monthly unchanged.",
       "min_paper_rebalance_events": 12,
       "min_sharpe_tstat_net": 2.0,
       "max_drawdown_paper_pct": 0.06,
       "min_excess_over_benchmark_annual_pct": 1.5,
-      "requires_human_signoff": true
+      "requires_human_signoff": true,
+      "_human_signoff_note": "Operator signs every live promotion via `bot strategy sign-packet` (WS5). Not waivable by code."
     }
   },
 

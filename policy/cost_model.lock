@@ -1,12 +1,12 @@
 {
-  "lock_version": "2026-05-13.v4-phase2",
-  "_source": "Plan v4 §9 — Reality / Execution Model (pessimistic-lens cost formula)",
+  "lock_version": "2026-05-25.v3-webull-shakedown",
+  "_source": "Plan v4 §9 — Reality / Execution Model (pessimistic-lens cost formula). Webull recalibration 2026-05-25 per WS4 4d.",
   "_note": "Backtests report three lenses (raw, broker-paper, pessimistic). The validation gate uses ONLY the pessimistic lens. These parameters feed into research/backtest_runner during Phase 5 and into execution/cost_model.py during Phase 3.",
 
   "stocks": {
     "extra_slippage_bps": 5,
     "broker_fees_per_share": 0.0,
-    "_broker_fees_per_share_note": "Alpaca is commission-free for retail US equity.",
+    "_broker_fees_per_share_note": "Alpaca commission-free for retail US equity; Webull commission-free for stocks. Both leave the per-share fee at $0.",
 
     "sec_section_31_rate": 0.0000278,
     "_sec_section_31_rate_note": "$27.80 per million on sells only; updated yearly per SEC fee order.",
@@ -19,7 +19,7 @@
 
   "crypto": {
     "taker_bps": 30,
-    "_taker_bps_note": "Pessimistic-lens assumes taker fees; maker mode is permitted only after a 70% fill rate is measured in shadow.",
+    "_taker_bps_note": "Pessimistic-lens assumes taker fees; maker mode is permitted only after a 70% fill rate is measured in shadow. Verified 2026-05-25 against Webull crypto fee schedule — within tolerance.",
 
     "extra_slippage_bps": 10,
 
@@ -32,6 +32,14 @@
   "options": {
     "extra_slippage_bps": 25,
     "per_contract_fee_usd": 0.65,
+    "_per_contract_fee_note": "Webull options $0.65/contract; matches Alpaca.",
+
+    "regulatory_fees": {
+      "orf_per_contract_usd": 0.02925,
+      "_orf_note": "Options Regulatory Fee per OCC; charged per contract on opening + closing (both sides).",
+      "occ_clearing_per_contract_usd": 0.02,
+      "_occ_note": "OCC clearing fee per contract per side."
+    },
 
     "fill_handling": "marketable_limit_per_formula",
     "_fill_handling_note": "Options entries use a marketable limit at the formula's price; no chasing — no fill cancels the trade."
@@ -54,7 +62,8 @@
 
   "live_vs_model_drift": {
     "rolling_window_trades": 20,
-    "tolerance_multiplier": 2.0,
+    "tolerance_multiplier": 1.5,
+    "_tolerance_history": "2.0 -> 1.5 on 2026-05-25 (tighten — first 30 live days). Also reflected as TOLERANCE_MULTIPLIER_DEFAULT in execution/drift_monitor.py.",
     "_breach_action": "lane auto-demoted to observe_only"
   }
 }

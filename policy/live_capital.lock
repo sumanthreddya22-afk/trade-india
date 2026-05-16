@@ -1,24 +1,29 @@
 {
-  "lock_version": "2026-05-15.v4-phase10-skeleton",
-  "_status": "DISABLED — live trading is NOT authorised under this skeleton.",
-  "_note": "Plan v4 §16 pins autonomy at L2 (no autonomous live trading). To enable live capital the operator MUST: (a) publish a new dated lock_version, (b) sign it with the operator's git identity, (c) wait 7 days, (d) flip `live_capital_enabled` to true, (e) re-run `tools/recompute_hashes.py --update` and re-sign. The risk kernel reads this lock at boot and HALTS all new orders if `live_capital_enabled=true` with an unsigned or stale signature.",
+  "lock_version": "2026-05-25.v1-live-shakedown",
+  "_status": "DISABLED — flip live_capital_enabled to true on 2026-06-12 16:30 ET cutover after pre-flight checklist passes.",
+  "_note": "Plan v4 §16 + WS4 4b. To enable live capital the operator MUST: (a) verify pre-flight checklist in the shakedown plan, (b) flip `live_capital_enabled` to true, (c) re-run `tools/recompute_hashes.py --update` and re-sign with operator git identity. The risk kernel reads this lock at boot and HALTS all new orders if `live_capital_enabled=true` with an unsigned or stale signature.",
 
   "live_capital_enabled": false,
 
-  "total_equity_ceiling_usd": 1000.0,
-  "_total_equity_ceiling_note": "Hard ceiling — if equity > ceiling, halt new entries and surface 'live_cap:equity_overflow'. This is the residual-risk bound while validation gates (MVP-OP 60d, ALPHA 365d) are incomplete.",
+  "total_equity_ceiling_usd": 1500.0,
+  "_total_equity_ceiling_note": "Hard ceiling — if equity > ceiling, halt new entries and surface 'live_cap:equity_overflow'. $1500 = $1000 starting equity + 50% headroom for unrealised PnL excursions before paper or top-up.",
 
   "per_strategy_max_capital_usd": {
-    "DUAL_MOMENTUM_v1": 1000.0,
+    "ETF_MOMENTUM_v3": 400.0,
+    "DUAL_MOMENTUM_v3": 400.0,
+    "CRYPTO_MOMENTUM_v3": 200.0,
+    "SPY_WHEEL_v3": 0.0,
     "ETF_MOMENTUM_v1": 0.0,
+    "DUAL_MOMENTUM_v1": 0.0,
     "CRYPTO_MOMENTUM_v1": 0.0,
     "SPY_WHEEL_v1": 0.0
   },
-  "_per_strategy_note": "Only strategies with explicit non-zero caps participate in live capital. New strategies default to 0 (disabled) until added here with operator signature.",
+  "_per_strategy_note": "v3 strategies only. SPY_WHEEL_v3 disabled until equity >= $50k (ATM SPY put needs ~$45k buying power). v1 lineage disabled — superseded by v3.",
+  "_crypto_caveat": "If Webull crypto unavailable in test mode by 2026-05-25, zero CRYPTO_MOMENTUM_v3 and reallocate $200 to ETF + DUAL ($500 each). Re-sign lock with that change before cutover.",
 
-  "max_drawdown_halt_pct": 10.0,
-  "_max_drawdown_halt_note": "If session equity drops more than this pct from live_capital_total_baseline (recorded at first live-mode boot), fire 'live_cap:drawdown_halt' kill switch.",
+  "max_drawdown_halt_pct": 15.0,
+  "_max_drawdown_halt_note": "If session equity drops more than this pct from live_capital_total_baseline (recorded at first live-mode boot), fire 'live_cap:drawdown_halt' kill switch. 15% of $1000 = $150 absolute worst case (Layer 0 floor of safety stack).",
 
-  "live_mode_expiry_iso": "2026-06-14",
-  "_expiry_note": "Lock auto-expires 30 days after signing. Beyond expiry the kernel reverts to paper. Re-sign to extend."
+  "live_mode_expiry_iso": "2026-07-15",
+  "_expiry_note": "Lock auto-expires; beyond expiry the kernel reverts to paper. Re-sign to extend. Originally 2026-06-14 (collided with 6/15 cutover); pushed to 2026-07-15 to give 33-day live window after 6/12 cutover."
 }

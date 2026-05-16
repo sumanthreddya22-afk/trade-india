@@ -19,6 +19,9 @@ import os
 from dataclasses import dataclass
 from typing import Optional
 
+from trading_bot.ingest.broker_adapter import BrokerAdapter
+from trading_bot.risk import broker_call_tracker
+
 log = logging.getLogger(__name__)
 
 
@@ -41,7 +44,7 @@ class AlpacaCreds:
         return cls(api_key=key, api_secret=secret, paper=True)
 
 
-class AlpacaAdapter:
+class AlpacaAdapter(BrokerAdapter):
     """Thin wrapper around alpaca-py.
 
     Methods that require network calls catch and log exceptions, returning
@@ -80,7 +83,9 @@ class AlpacaAdapter:
     def fetch_positions(self) -> list[dict]:
         try:
             raw = self.trading.get_all_positions()
+            broker_call_tracker.record_success()
         except Exception as e:  # noqa: BLE001
+            broker_call_tracker.record_error()
             log.warning("alpaca: get_all_positions failed: %s", e)
             return []
         out = []
@@ -102,7 +107,9 @@ class AlpacaAdapter:
     def fetch_account(self) -> dict:
         try:
             acct = self.trading.get_account()
+            broker_call_tracker.record_success()
         except Exception as e:  # noqa: BLE001
+            broker_call_tracker.record_error()
             log.warning("alpaca: get_account failed: %s", e)
             return {}
         return {
@@ -213,6 +220,7 @@ class AlpacaAdapter:
             else:
                 req = MarketOrderRequest(**kwargs)
             resp = self.trading.submit_order(req)
+            broker_call_tracker.record_success()
             return {
                 "ok": True,
                 "broker_order_id": str(getattr(resp, "id", "")),
@@ -220,6 +228,7 @@ class AlpacaAdapter:
                 "asset_class": ac,
             }
         except Exception as e:  # noqa: BLE001
+            broker_call_tracker.record_error()
             log.warning("alpaca: submit_order failed: %s", e)
             return {"ok": False, "broker_order_id": None, "error": str(e)}
 

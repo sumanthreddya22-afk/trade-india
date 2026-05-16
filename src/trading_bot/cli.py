@@ -55,9 +55,20 @@ def daemon(once: bool, no_broker: bool) -> None:
     ctx = DaemonContext()
 
     if not no_broker:
+        broker = os.environ.get("BROKER", "alpaca").strip().lower()
         try:
-            from trading_bot.ingest.alpaca_adapter import AlpacaAdapter
-            adapter = AlpacaAdapter()
+            if broker == "webull":
+                from trading_bot.ingest.webull_adapter import WebullAdapter
+                adapter = WebullAdapter()
+                broker_label = "Webull"
+            elif broker == "alpaca":
+                from trading_bot.ingest.alpaca_adapter import AlpacaAdapter
+                adapter = AlpacaAdapter()
+                broker_label = "Alpaca"
+            else:
+                raise ValueError(
+                    f"Unknown BROKER={broker!r} (expected alpaca | webull)"
+                )
             ctx.broker_submit = adapter.submit_order
             ctx.positions_fetcher = adapter.fetch_positions
             ctx.bars_fetcher = adapter.fetch_latest_bars
@@ -68,9 +79,19 @@ def daemon(once: bool, no_broker: bool) -> None:
             # Stash adapter on the context so orphan_loop can use the
             # lookup method (jobs.py reads ``_broker_adapter``).
             object.__setattr__(ctx, "_broker_adapter", adapter)
-            click.echo("daemon: Alpaca adapter wired (paper)", err=True)
+            mode_note = (
+                "live" if os.environ.get("BOT_MODE", "paper") == "live"
+                else "paper"
+            )
+            click.echo(
+                f"daemon: {broker_label} adapter wired ({mode_note})",
+                err=True,
+            )
         except Exception as e:  # noqa: BLE001
-            click.echo(f"daemon: Alpaca adapter unavailable ({e}); running headless", err=True)
+            click.echo(
+                f"daemon: broker adapter unavailable ({e}); running headless",
+                err=True,
+            )
 
     # Intel feeds — opt-in via .env. Each feed is independent; a feed
     # that fails contributes an ``_error`` entry to the snapshot rather
@@ -217,6 +238,26 @@ def strategy_promote(strategy_id: str, target_status: str,
     click.echo(json.dumps(out, indent=2, default=str))
 
 
+@strategy.command("sign-packet",
+                  help="Operator-sign a promotion_packet (WS5c). "
+                       "Returns a new signed packet_id usable for "
+                       "`bot strategy promote --to live --packet <id>`.")
+@click.option("--packet-id", "packet_id", required=True,
+              help="Unsigned promotion_packet_id from the registry.")
+@click.option("--signer", "signer_name", default=None,
+              help="Operator identity (default: $USER).")
+@click.option("--notes", default=None,
+              help="Optional free-form notes recorded with the signing.")
+def strategy_sign_packet(packet_id: str, signer_name: str | None,
+                         notes: str | None) -> None:
+    from trading_bot.operator import controls
+    op = signer_name or os.environ.get("USER", "operator")
+    out = controls.strategy_sign_packet(
+        packet_id=packet_id, operator=op, notes=notes,
+    )
+    click.echo(json.dumps(out, indent=2, default=str))
+
+
 @strategy.command("submit", help="Submit a natural-language strategy hypothesis.")
 @click.option("--name", required=True, help="Short strategy name (e.g. MEAN_REV_v1).")
 @click.option("--description", required=True,
@@ -231,6 +272,51 @@ def strategy_submit(name: str, description: str, mode: str) -> None:
         operator=os.environ.get("USER", "operator"),
     )
     click.echo(json.dumps(out, indent=2, default=str))
+
+
+# ---------------------------------------------------------------------------
+# WS5f — operator safety controls
+# ---------------------------------------------------------------------------
+@main.command("pause", help="Reversibly halt new entries (cockpit_safety).")
+@click.option("--reason", required=True, help="Audit reason.")
+@click.option("--operator", default=None, help="Defaults to $USER.")
+def cmd_pause(reason: str, operator: str | None) -> None:
+    from trading_bot.operator import cockpit_safety
+    op = operator or os.environ.get("USER", "operator")
+    out = cockpit_safety.pause(operator=op, reason=reason, source="cli")
+    click.echo(json.dumps(out, indent=2, default=str))
+
+
+@main.command("unpause", help="Clear a prior pause (cockpit_safety).")
+@click.option("--reason", default="operator_resume",
+              help="Audit reason for resuming.")
+@click.option("--operator", default=None, help="Defaults to $USER.")
+def cmd_unpause(reason: str, operator: str | None) -> None:
+    from trading_bot.operator import cockpit_safety
+    op = operator or os.environ.get("USER", "operator")
+    out = cockpit_safety.resume(operator=op, reason=reason, source="cli")
+    click.echo(json.dumps(out, indent=2, default=str))
+
+
+@main.command("flatten",
+              help="ONE-WAY operator flatten (TWAP exit; strategies -> observe_only).")
+@click.option("--reason", required=True, help="Audit reason.")
+@click.option("--confirm", required=True,
+              help="Must be the literal 'FLATTEN' (anti-fat-finger).")
+@click.option("--operator", default=None, help="Defaults to $USER.")
+def cmd_flatten(reason: str, confirm: str, operator: str | None) -> None:
+    from trading_bot.operator import cockpit_safety
+    op = operator or os.environ.get("USER", "operator")
+    out = cockpit_safety.flatten(
+        operator=op, reason=reason, confirm_token=confirm, source="cli",
+    )
+    click.echo(json.dumps(out, indent=2, default=str))
+
+
+@main.command("safety-state", help="Show current pause/flatten state.")
+def cmd_safety_state() -> None:
+    from trading_bot.operator import cockpit_safety
+    click.echo(json.dumps(cockpit_safety.state(), indent=2, default=str))
 
 
 # ---------------------------------------------------------------------------

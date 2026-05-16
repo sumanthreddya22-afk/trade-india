@@ -1,11 +1,13 @@
 {
-  "lock_version": "2026-05-13.v4-phase2",
-  "_source": "Plan v4 §6 — Risk Kernel Concrete Numerical Limits",
+  "lock_version": "2026-05-25.v3-live-shakedown",
+  "_source": "Plan v4 §6 — Risk Kernel Concrete Numerical Limits; recalibrated 2026-05-25 for $1k Webull live shakedown per /Users/bharathkandala/.claude/plans/review-the-users-bharathkandala-claude-p-proud-barto.md WS4",
   "_note": "Loosening any threshold (raising any cap, raising any max-loss tolerance) requires a new dated lock version, a commit signed with the operator's git identity, AND a 7-day cooldown before the system honors it. Tightening is immediate.",
+  "_shakedown_rationale": "Initial $1000 Webull live account. v4 defaults were calibrated for $25k+ accounts (1% daily drawdown = $10 — too tight to allow any normal volatility). Cap %s lifted; absolute dollar bound enforced by live_capital.lock. unknown_position window tightened from 15 to 5 minutes (tighten = immediate).",
 
   "account": {
-    "daily_drawdown_pct_of_equity": 1.0,
+    "daily_drawdown_pct_of_equity": 5.0,
     "_daily_drawdown_breach": "halt new entries for the session; existing positions managed by exits only",
+    "_daily_drawdown_history": "1.0 -> 5.0 on 2026-05-25 for live shakedown ($50/day on $1k account)",
 
     "trailing_drawdown_pct_of_equity": 5.0,
     "trailing_drawdown_window_days": 60,
@@ -30,8 +32,9 @@
     "per_lane_allocation_max_pct": 40.0,
     "_lane_alloc_breach": "lane status -> reduce-only",
 
-    "per_lane_daily_loss_max_pct": 0.5,
-    "_lane_loss_breach": "lane halted for the session"
+    "per_lane_daily_loss_max_pct": 2.5,
+    "_lane_loss_breach": "lane halted for the session",
+    "_lane_loss_history": "0.5 -> 2.5 on 2026-05-25 for live shakedown"
   },
 
   "strategy": {
@@ -45,8 +48,9 @@
   },
 
   "order": {
-    "per_order_at_risk_max_pct": 2.0,
+    "per_order_at_risk_max_pct": 10.0,
     "_per_order_breach": "order rejected; reason logged",
+    "_per_order_history": "2.0 -> 10.0 on 2026-05-25 for live shakedown ($100/order on $1k account)",
 
     "stop_coverage_required_within_seconds": 60,
     "_stop_coverage_breach": "auto-flatten the position (auto-flatten enforcement lands Phase 3 alongside execution sequencer)"
@@ -56,7 +60,8 @@
     "broker_api_error_rate_max_pct": 5.0,
     "broker_api_error_rate_window_minutes": 5,
 
-    "unknown_position_max_age_minutes": 15,
+    "unknown_position_max_age_minutes": 5,
+    "_unknown_position_history": "15 -> 5 on 2026-05-25 (tighten — pre-cutover defence against broker-side surprise positions)",
 
     "wall_clock_skew_max_seconds": 2,
 

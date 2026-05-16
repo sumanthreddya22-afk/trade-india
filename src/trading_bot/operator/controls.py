@@ -469,6 +469,43 @@ def strategy_promote(
         conn.close()
 
 
+def strategy_sign_packet(
+    *, packet_id: str, operator: str = "operator", notes: Optional[str] = None,
+    ledger_db: Optional[Path] = None,
+) -> dict:
+    """WS5c — sign a promotion_packet for Tier-3 (live) promotion.
+
+    Because promotion_packet is append-only, "signing" actually creates
+    a NEW packet row carrying the same fields with ``operator_signed=1``.
+    Subsequent calls to ``strategy_promote --to live`` reference the
+    returned ``signed_packet_id``.
+    """
+    from trading_bot.registry.promotion import sign_packet
+    ledger_db = ledger_db or (Path.cwd() / DEFAULT_LEDGER_PATH)
+    if not ledger_db.exists():
+        return {"ok": False, "reason": "ledger missing"}
+    if not operator:
+        return {"ok": False, "reason": "operator is required"}
+    conn = connect_writer(ledger_db)
+    try:
+        try:
+            signed_id = sign_packet(
+                conn, packet_id=packet_id, operator=operator,
+            )
+        except ValueError as e:
+            return {"ok": False, "reason": str(e)}
+        conn.commit()
+        return {
+            "ok": True,
+            "original_packet_id": packet_id,
+            "signed_packet_id": signed_id,
+            "operator": operator,
+            "notes": notes,
+        }
+    finally:
+        conn.close()
+
+
 def strategy_submit(
     *, name: str, description: str, mode: str = "draft",
     operator: str = "operator", ledger_db: Optional[Path] = None,

@@ -196,10 +196,22 @@ class Kill:
 
 
 def detect_recon_mismatch(
-    *, latest_match: int, latest_window: str,
+    *,
+    latest_match: int,
+    latest_window: str,
+    recent_broker_switch: Optional[Mapping] = None,
 ) -> Optional[Kill]:
-    """``match=0`` in the most recent reconciliation_proof row."""
+    """``match=0`` in the most recent reconciliation_proof row.
+
+    WS6a: if ``recent_broker_switch`` is non-None (set by the caller when
+    a broker_switch_event row exists within the last 24h), the kill is
+    suppressed for the first window after a cutover — the ledger holds
+    bot-owned positions from the OLD broker that won't appear on the
+    NEW broker's account until they're sold or re-mapped.
+    """
     if latest_match == 0:
+        if recent_broker_switch is not None:
+            return None
         return Kill(
             detector="recon_mismatch",
             reason=f"reconciliation_proof.match=0 in window={latest_window}",
