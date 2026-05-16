@@ -354,9 +354,79 @@ def record_promotion_packet(
     return packet_id
 
 
+def sign_packet(
+    conn: sqlite3.Connection,
+    *,
+    packet_id: str,
+    operator: str,
+    now: Optional[dt.datetime] = None,
+) -> str:
+    """WS5c — produce a signed sibling of an existing unsigned packet.
+
+    ``promotion_packet`` is append-only, so signing happens by copying
+    the source packet's fields into a NEW packet with
+    ``operator_signed=1``. The new packet's ``packet_id`` is what gets
+    passed to ``gate()`` for live promotion. The audit trail is
+    preserved: the original unsigned row stays, and the new signed row
+    is linked by identical strategy_id + strategy_ver +
+    validation_artifact_id.
+
+    Caller is responsible for confirming the operator's identity (the
+    CLI passes ``$USER`` / git identity).
+    """
+    if not operator:
+        raise ValueError("operator is required (git identity)")
+    cur = conn.execute(
+        """
+        SELECT strategy_id, strategy_ver, target_tier, code_hash,
+               config_hash, validation_artifact_id, paper_scorecard_id,
+               risk_review_id, known_failure_modes_json, expiry_date,
+               operator_signed
+        FROM promotion_packet WHERE packet_id = ?
+        """,
+        (packet_id,),
+    )
+    row = cur.fetchone()
+    if row is None:
+        raise ValueError(f"promotion_packet {packet_id!r} not found")
+    (
+        strategy_id, strategy_ver, target_tier, code_hash, config_hash,
+        validation_artifact_id, paper_scorecard_id, risk_review_id,
+        kfm_json, expiry_date_str, op_signed,
+    ) = row
+    if op_signed:
+        # Already signed — return existing packet_id; idempotent.
+        return packet_id
+    try:
+        kfm = json.loads(kfm_json) if kfm_json else []
+    except Exception:
+        kfm = []
+    expiry = (
+        dt.date.fromisoformat(expiry_date_str)
+        if expiry_date_str else None
+    )
+    new_packet_id = record_promotion_packet(
+        conn,
+        strategy_id=strategy_id,
+        strategy_ver=int(strategy_ver),
+        target_tier=str(target_tier),
+        code_hash=str(code_hash),
+        config_hash=str(config_hash),
+        validation_artifact_id=str(validation_artifact_id),
+        paper_scorecard_id=paper_scorecard_id,
+        risk_review_id=risk_review_id,
+        known_failure_modes=kfm,
+        expiry_date=expiry,
+        operator_signed=True,
+        now=now,
+    )
+    return new_packet_id
+
+
 __all__ = [
     "PromotionDecision",
     "compute_packet_id",
     "gate",
     "record_promotion_packet",
+    "sign_packet",
 ]

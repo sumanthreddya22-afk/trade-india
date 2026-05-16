@@ -100,7 +100,17 @@ def test_exit_passes_even_when_lane_is_reduce_only() -> None:
 
 
 def test_per_order_at_risk_halts() -> None:
+    # Validates the per_order_at_risk gate independently of the live
+    # calibration. Under the 2026-05-25 shakedown lock, per_order_at_risk
+    # is 10% and per_symbol_gross is 5% — for long stock at_risk <=
+    # notional <= symbol_cap so per_symbol_cap binds first. To still
+    # exercise the per_order_at_risk machinery, this test builds a
+    # bundle with the legacy 2% at-risk threshold.
+    import dataclasses
     bundle = load_policy()
+    risk_override = {**bundle.risk_policy}
+    risk_override["order"] = {**risk_override["order"], "per_order_at_risk_max_pct": 2.0}
+    bundle = dataclasses.replace(bundle, risk_policy=risk_override)
     # equity=15k → symbol cap (5%) = $750, order at-risk cap (2%) = $300.
     # qty=5 @ price=100 stop=20 → notional=$500 fits symbol cap,
     # at_risk = 5 * 80 = $400 > $300 → halts at per-order check.

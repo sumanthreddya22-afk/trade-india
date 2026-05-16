@@ -206,6 +206,43 @@ def make_backtest_fn(
             return 1.0, {"error": f"backtest_exception:{e}"}
 
         n_obs = len(result.returns_daily)
+
+        # WS2 defensive guard — reject implausible results so the broken
+        # in-house engine can't feed garbage candidates into auto-register.
+        # The engine has known issues with daily-rebalance + fee model
+        # (max_drawdown >50% and fee explosions in unit smoke); plan calls
+        # for vectorbt replacement (deferred). Until then, treat any
+        # candidate with these tell-tales as a non-survivor.
+        total_return_pct = (
+            (result.final_equity / result.starting_equity - 1.0) * 100.0
+            if result.starting_equity else 0.0
+        )
+        implausible_reasons = []
+        if result.max_drawdown_pct > 50.0:
+            implausible_reasons.append(
+                f"max_drawdown_pct={result.max_drawdown_pct:.1f}>50"
+            )
+        if result.total_fees > 0.5 * starting_equity:
+            implausible_reasons.append(
+                f"total_fees={result.total_fees:.0f}>"
+                f"{0.5*starting_equity:.0f}"
+            )
+        if total_return_pct < -50.0:
+            implausible_reasons.append(
+                f"total_return_pct={total_return_pct:.1f}<-50"
+            )
+        if implausible_reasons:
+            return 1.0, {
+                "error": "implausible_backtest",
+                "reasons": implausible_reasons,
+                "sharpe_annualised": result.sharpe_annualised,
+                "max_drawdown_pct": result.max_drawdown_pct,
+                "total_return_pct": total_return_pct,
+                "total_fees": result.total_fees,
+                "n_trades": result.n_trades,
+                "engine_quarantined": True,
+            }
+
         p = _sharpe_to_p_value(result.sharpe_annualised, n_obs)
 
         sanity: dict[str, Any] = {

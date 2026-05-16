@@ -95,6 +95,25 @@ def evaluate(
     if d.verdict == "halt":
         return d
 
+    # 1b. WS5f Layer 4 — operator PAUSE / FLATTEN override.
+    # New entries (intent.side == "buy") are halted when the most
+    # recent manual_halt_event row is 'pause' or 'flatten'. Exits
+    # (sell_to_close / buy_to_close) pass through so paused positions
+    # can still be unwound.
+    if conn is not None and (intent.side or "").lower() == "buy":
+        try:
+            from trading_bot.ledger.manual_halt_event import (
+                current_pause_state,
+            )
+            halt_state = current_pause_state(conn)
+        except Exception:  # noqa: BLE001
+            halt_state = "normal"
+        if halt_state in ("paused", "flattened"):
+            return RiskDecision.halt(
+                f"manual_halt:{halt_state} (clear via `bot unpause` "
+                f"or re-run paper validation)"
+            )
+
     # 2. Account-level checks
     d = account_caps.check_daily_drawdown(account, limits.account)
     if d.verdict == "halt":

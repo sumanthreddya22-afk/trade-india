@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 ROLLING_WINDOW_DEFAULT = 20
-TOLERANCE_MULTIPLIER_DEFAULT = 2.0
+TOLERANCE_MULTIPLIER_DEFAULT = 1.5
 
 
 @dataclass(frozen=True)

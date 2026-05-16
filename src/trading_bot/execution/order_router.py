@@ -11,9 +11,96 @@ hardened Alpaca client.
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import sqlite3
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional, Sequence
+
+log = logging.getLogger(__name__)
+
+# WS5a — retry policy for transient broker failures.
+RETRY_BACKOFFS_S: tuple[float, ...] = (0.5, 1.0, 2.0)
+
+# Classify broker errors: transient (retry) vs permanent (cancel).
+_PERMANENT_KEYWORDS = (
+    "rejected",
+    "insufficient_buying_power",
+    "insufficient buying power",
+    "market_closed",
+    "market closed",
+    "invalid_symbol",
+    "invalid symbol",
+    "wash_trade",
+    "wash trade",
+    "shadow_mode",
+    "pdt",
+    "day_trading_buying_power_exceeded",
+)
+_TRANSIENT_KEYWORDS = (
+    "timeout",
+    "timed out",
+    "connection reset",
+    "connectionreseterror",
+    "rate limit",
+    "rate_limit",
+    "throttle",
+    "503",
+    "502",
+    "504",
+    "500",
+    "5xx",
+    "service unavailable",
+    "gateway",
+)
+
+
+def _is_transient(err: str) -> bool:
+    """Classify a broker error string. Default: treat as permanent (no
+    retry) to avoid hammering the broker with bad orders."""
+    if not err:
+        return False
+    e = err.lower()
+    if any(k in e for k in _PERMANENT_KEYWORDS):
+        return False
+    return any(k in e for k in _TRANSIENT_KEYWORDS)
+
+
+def _submit_with_retry(
+    broker_submit: "BrokerSubmitT",
+    submit_payload: dict,
+    *,
+    backoffs: tuple[float, ...] = RETRY_BACKOFFS_S,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict:
+    """Wrap broker_submit with exponential backoff for transient errors.
+
+    Returns the final broker result dict (whether eventual success or
+    permanent failure). Attempts are bounded by ``len(backoffs)+1``.
+    """
+    attempt = 0
+    last: dict = {"ok": False, "broker_order_id": None, "error": "no_attempt"}
+    while True:
+        attempt += 1
+        try:
+            result = broker_submit(**submit_payload)
+        except Exception as e:  # noqa: BLE001
+            result = {"ok": False, "broker_order_id": None, "error": str(e)}
+        last = result
+        if result.get("ok"):
+            if attempt > 1:
+                log.info("order_router: succeeded on attempt %d", attempt)
+            return result
+        err = str(result.get("error", ""))
+        if not _is_transient(err) or attempt > len(backoffs):
+            return result
+        sleep_for = backoffs[attempt - 1]
+        log.warning(
+            "order_router: transient broker error (attempt %d/%d): %s; "
+            "retrying in %.1fs",
+            attempt, len(backoffs) + 1, err, sleep_for,
+        )
+        sleep(sleep_for)
 
 from trading_bot.ingest.watermarks import check_lane_freshness
 from trading_bot.ledger import (
@@ -132,10 +219,7 @@ def submit_order(
         side=intent.side, qty=effective_qty,
         limit_price=intent.limit_price, tif=intent.tif,
     )
-    try:
-        result = broker_submit(**submit_payload)
-    except Exception as e:           # noqa: BLE001
-        result = {"ok": False, "broker_order_id": None, "error": str(e)}
+    result = _submit_with_retry(broker_submit, submit_payload)
 
     if not result.get("ok"):
         # Cancel chain: intent -> cancelled

@@ -374,6 +374,59 @@ CREATE TABLE IF NOT EXISTS strategy_codegen_event (
 );
 """
 
+# WS6a — broker swap audit. One row per cutover (alpaca -> webull, etc.).
+# The reconciliation kill switch suppresses for 24h after a row here to
+# absorb the first night where ledger positions (source='bot' on Alpaca)
+# don't match the new broker's positions.
+DDL_BROKER_SWITCH_EVENT = """
+CREATE TABLE IF NOT EXISTS broker_switch_event (
+    ledger_seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts        TEXT NOT NULL,
+    from_broker     TEXT NOT NULL,
+    to_broker       TEXT NOT NULL,
+    operator        TEXT NOT NULL,
+    reason          TEXT,
+    prev_hash       TEXT NOT NULL,
+    this_hash       TEXT NOT NULL
+);
+"""
+
+# WS5d — P&L tripwires (realized-loss / drift / execution / behavioural).
+# Two-tier severity per tripwire — ``alert`` is observable in cockpit,
+# ``halt`` writes a kill_switch_event via the caller.
+DDL_ALERT_EVENT = """
+CREATE TABLE IF NOT EXISTS alert_event (
+    ledger_seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts        TEXT NOT NULL,
+    tripwire        TEXT NOT NULL,       -- realized_loss | drift | exec_quality | behavioural
+    severity        TEXT NOT NULL,       -- alert | halt
+    observed        REAL NOT NULL,
+    threshold       REAL NOT NULL,
+    window          TEXT NOT NULL,
+    reason          TEXT NOT NULL,
+    payload_json    TEXT,
+    prev_hash       TEXT NOT NULL,
+    this_hash       TEXT NOT NULL
+);
+"""
+
+# WS5f Layer 4 — manual operator halts (PAUSE / FLATTEN) audited
+# separately from kill_switch_event so they're attributable to the
+# operator's git identity.
+DDL_MANUAL_HALT_EVENT = """
+CREATE TABLE IF NOT EXISTS manual_halt_event (
+    ledger_seq      INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_ts        TEXT NOT NULL,
+    action          TEXT NOT NULL,       -- pause | resume | flatten
+    operator        TEXT NOT NULL,
+    reason          TEXT,
+    source          TEXT NOT NULL,       -- cockpit | cli | hotkey
+    payload_json    TEXT,
+    prev_hash       TEXT NOT NULL,
+    this_hash       TEXT NOT NULL
+);
+"""
+
 # ---------------------------------------------------------------------------
 # View — derived current state per order
 # ---------------------------------------------------------------------------
@@ -435,6 +488,10 @@ DDL_INDICES = [
     "CREATE INDEX IF NOT EXISTS idx_sc_content ON strategy_candidate(raw_content_hash);",
     "CREATE INDEX IF NOT EXISTS idx_sb_candidate ON strategy_blueprint(candidate_id);",
     "CREATE INDEX IF NOT EXISTS idx_sce_family ON strategy_codegen_event(new_family_id);",
+    "CREATE INDEX IF NOT EXISTS idx_bse_event_ts ON broker_switch_event(event_ts);",
+    "CREATE INDEX IF NOT EXISTS idx_ae_tripwire_ts ON alert_event(tripwire, event_ts);",
+    "CREATE INDEX IF NOT EXISTS idx_ae_severity_ts ON alert_event(severity, event_ts);",
+    "CREATE INDEX IF NOT EXISTS idx_mhe_action_ts ON manual_halt_event(action, event_ts);",
 ]
 
 # ---------------------------------------------------------------------------
@@ -466,6 +523,9 @@ _APPEND_ONLY_TABLES = (
     "strategy_candidate",
     "strategy_blueprint",
     "strategy_codegen_event",
+    "broker_switch_event",
+    "alert_event",
+    "manual_halt_event",
 )
 
 
@@ -519,6 +579,9 @@ ALL_DDL: list[str] = [
     DDL_STRATEGY_CANDIDATE,
     DDL_STRATEGY_BLUEPRINT,
     DDL_STRATEGY_CODEGEN_EVENT,
+    DDL_BROKER_SWITCH_EVENT,
+    DDL_ALERT_EVENT,
+    DDL_MANUAL_HALT_EVENT,
     DDL_ORDER_CURRENT_VIEW,
     *DDL_INDICES,
     *DDL_TRIGGERS,
@@ -555,6 +618,9 @@ TABLES: tuple[TableSpec, ...] = (
     TableSpec("strategy_candidate", hash_chained=True),
     TableSpec("strategy_blueprint", hash_chained=True),
     TableSpec("strategy_codegen_event", hash_chained=True),
+    TableSpec("broker_switch_event", hash_chained=True),
+    TableSpec("alert_event", hash_chained=True),
+    TableSpec("manual_halt_event", hash_chained=True),
 )
 
 HASH_CHAINED_TABLES: tuple[str, ...] = tuple(

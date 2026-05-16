@@ -1,6 +1,6 @@
 {
-  "lock_version": "2026-05-15.v1",
-  "_source": "session-summary-2026-05-15-pure-mochi.md §10",
+  "lock_version": "2026-05-25.v2-live-shakedown",
+  "_source": "session-summary-2026-05-15-pure-mochi.md §10; re-anchored 2026-05-25 for the live shakedown per WS4 4e. Five-regime classifier already concrete; this version bump only rotates the hash anchor and acknowledges operator re-sign before the 6/12 cutover (no threshold changes).",
   "_note": "Five-regime classifier with asset-class-tuned thresholds. Manual override always wins. Recovery requires classifier + Claude synthesis + 14d failsafe.",
   "regimes": ["normal", "caution", "stress", "crisis", "recovery"],
   "asset_classes": {
