@@ -50,7 +50,13 @@ class DaemonConfig:
     orphan_loop_interval_seconds: int = 30
     reconciliation_cron: str = "0 23 * * *"           # 23:00 daily, local TZ
     drift_monitor_cron: str = "30 23 * * *"
-    strategy_runner_cron: str = "30 15 * * 1-5"       # 15:30 ET weekdays
+    strategy_runner_cron: str = "30 15 * * *"         # 15:30 ET daily (7d)
+    # ^ Fires 7 days a week so crypto strategies (RUNS_ON_NON_TRADING_DAYS=True)
+    #   tick on weekends. US-equity strategies self-skip on non-trading days
+    #   via is_us_equity_trading_day() in strategy_dispatch._dispatch_one.
+    #   Daily cadence kept at once/day because crypto_momentum_v3.should_rebalance_today
+    #   returns True unconditionally — intraday firing would mean N rebalances/day.
+    #   Intraday crypto fire is future work behind a strategy-level date gate.
     # Phase C: mutation cycle is now nightly across all v3 families.
     mutation_cycle_cron: str = "0 3 * * *"            # 03:00 daily
     # Phase A: universe audit weekly (Sundays 22:00).
