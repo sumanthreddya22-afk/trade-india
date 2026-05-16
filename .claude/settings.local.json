@@ -565,7 +565,27 @@
       "Bash(.venv/bin/python tools/refresh_intel_caches.py)",
       "Bash(.venv/bin/python -c \"import feedparser; print\\('feedparser', feedparser.__version__\\)\")",
       "Bash(.venv/bin/python -m pytest tests/test_caveat_fixes.py -v --no-header)",
-      "Bash(ps -p 51549 -o pid,etime,command)"
+      "Bash(ps -p 51549 -o pid,etime,command)",
+      "Bash(curl -sS http://127.0.0.1:8765/healthz)",
+      "Bash(curl -sSI http://100.65.246.102:8765/)",
+      "Bash(curl -sSI \"http://100.65.246.102:8765/?view=operator\")",
+      "Bash(curl -sS \"http://100.65.246.102:8765/?view=operator\")",
+      "Bash(curl -sS \"http://100.65.246.102:8765/cockpit-assets/styles-v4.css\")",
+      "Bash(curl -sS \"http://100.65.246.102:8765/api/status\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('keys:', list\\(d.keys\\(\\)\\)[:10]\\)\")",
+      "Bash(curl -sS -o /dev/null -w \"  HTTP %{http_code} from http://100.65.246.102:8765/?view=operator\\\\n\" \"http://100.65.246.102:8765/?view=operator\")",
+      "Bash(curl -sS -o /dev/null -w \"  HTTP %{http_code} from http://100.65.246.102:8765/cockpit-assets/styles-v4.css\\\\n\" \"http://100.65.246.102:8765/cockpit-assets/styles-v4.css\")",
+      "Bash(curl -sS -o /dev/null -w \"  HTTP %{http_code} from http://100.65.246.102:8765/api/status\\\\n\" \"http://100.65.246.102:8765/api/status\")",
+      "Bash(curl -sS -o /dev/null -w \"HTTP %{http_code} size %{size_download}\\\\n\" \"http://100.65.246.102:8765/api/cockpit/state\")",
+      "Bash(curl -sS \"http://100.65.246.102:8765/api/cockpit/data-overlay.js\")",
+      "Bash(.venv/bin/python -m pytest tests/test_cockpit_data.py -v --no-header)",
+      "Bash(curl -sS -o /dev/null -w \"  HTTP %{http_code}  size=%{size_download}  GET /api/cockpit/state\\\\n\" \"http://100.65.246.102:8765/api/cockpit/state\")",
+      "Bash(curl -sS -o /dev/null -w \"  HTTP %{http_code}  size=%{size_download}  GET /api/cockpit/data-overlay.js\\\\n\" \"http://100.65.246.102:8765/api/cockpit/data-overlay.js\")",
+      "Bash(curl -sS -o /dev/null -w \"  HTTP %{http_code}  size=%{size_download}  GET /?view=operator\\\\n\" \"http://100.65.246.102:8765/?view=operator\")",
+      "Bash(curl -sS -o /dev/null -w \"  HTTP %{http_code}  size=%{size_download}  GET /cockpit-assets/data.jsx\\\\n\" \"http://100.65.246.102:8765/cockpit-assets/data.jsx\")",
+      "Bash(.venv/bin/python -m pytest tests/test_cockpit_data.py tests/ --ignore=tests/integration -q --no-header)",
+      "Bash(curl -sS \"http://100.65.246.102:8765/api/cockpit/state\")",
+      "Bash(curl -sS \"http://100.65.246.102:8765/cockpit-assets/topology.jsx\")"
     ]
   }
 }
