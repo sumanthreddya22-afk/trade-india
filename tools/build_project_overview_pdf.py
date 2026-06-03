@@ -1062,7 +1062,7 @@ def build_story():
     s.append(H2("9.5 Email &amp; storage"))
     s.append(CODE(
         "email:\n"
-        "  to: bharath8887@gmail.com\n"
+        "  to: sumanth.avula95@gmail.com\n"
         "  daily_summary_time_et: \"16:30\"\n"
         "  weekly_summary_day: \"Sunday\"\n"
         "\n"

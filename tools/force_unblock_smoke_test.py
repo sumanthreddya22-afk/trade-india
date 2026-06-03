@@ -81,7 +81,7 @@ def _config():
             unblock_daily_debate_cap=50,
         ),
         storage=StorageConfig(trade_journal_path="data/trade_journal.db"),
-        email=EmailConfig(to="bharath8887@gmail.com"),
+        email=EmailConfig(to="sumanth.avula95@gmail.com"),
     )
 
 
