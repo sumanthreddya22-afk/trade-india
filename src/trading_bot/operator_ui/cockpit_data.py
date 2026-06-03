@@ -1716,10 +1716,57 @@ def build_state(
 # ---------------------------------------------------------------------------
 
 
+PAPER_PORTFOLIO_CONFIG = REPO_ROOT / "data" / "paper_portfolio.json"
+
+
+def _load_portfolio_config() -> dict:
+    """Load paper portfolio config from data/paper_portfolio.json.
+
+    If missing, returns defaults (2-year lookback, 10L per strategy).
+    """
+    if PAPER_PORTFOLIO_CONFIG.exists():
+        try:
+            return json.loads(PAPER_PORTFOLIO_CONFIG.read_text())
+        except Exception:  # noqa: BLE001
+            pass
+    return {
+        "inception_date": (
+            dt.date.today() - dt.timedelta(days=365 * 2)
+        ).isoformat(),
+        "starting_equity_per_strategy": 10_00_000,
+        "currency": "INR",
+        "strategies": [
+            {
+                "id": "etf_momentum", "name": "ETF Momentum",
+                "universe": ["NIFTYBEES", "JUNIORBEES", "BANKBEES",
+                             "GOLDBEES", "LIQUIDBEES", "SETFNIF50"],
+                "lane": "stocks",
+                "signal_module": "trading_bot.strategies.etf_momentum_v1.signal",
+            },
+            {
+                "id": "dual_momentum", "name": "Dual Momentum",
+                "universe": ["NIFTYBEES", "LIQUIDBEES"],
+                "lane": "stocks",
+                "signal_module": "trading_bot.strategies.dual_momentum_v1.signal",
+            },
+            {
+                "id": "crypto_momentum", "name": "Crypto Momentum",
+                "universe": ["BTC/INR", "ETH/INR"],
+                "lane": "crypto",
+                "signal_module": "trading_bot.strategies.crypto_momentum_v1.signal",
+            },
+        ],
+    }
+
+
 def build_paper_portfolio() -> dict:
     """Run live backtests against historical_bars.db and return a
     portfolio snapshot with per-strategy P&L, trade logs, and current
     holdings — all in INR.
+
+    Reads inception date + equity from ``data/paper_portfolio.json``.
+    To reset, edit inception_date in that file (or run
+    ``bot portfolio-reset``).
 
     This is the paper-trading view: no broker connection needed, no
     ledger writes. Pure read-only computation against the bars DB.
@@ -1732,6 +1779,12 @@ def build_paper_portfolio() -> dict:
     if not DEFAULT_HISTORICAL_PATH.exists():
         return {"error": "No historical bars DB — run tools/load_historical_bars.py first"}
 
+    # Load config
+    cfg = _load_portfolio_config()
+    inception = dt.date.fromisoformat(cfg["inception_date"])
+    EQUITY = int(cfg.get("starting_equity_per_strategy", 10_00_000))
+    currency = cfg.get("currency", "INR")
+
     # Load cost model lock
     cost_lock_path = DEFAULT_POLICY_DIR / "cost_model.lock"
     if cost_lock_path.exists():
@@ -1739,55 +1792,36 @@ def build_paper_portfolio() -> dict:
     else:
         cost_lock = {"stocks": {"extra_slippage_bps": 10}}
 
-    EQUITY = 10_00_000  # INR 10 lakh per strategy
     end = dt.date.today()
-    start = end - dt.timedelta(days=365 * 2)
+    # Backtest needs lookback for momentum signal (252 trading days).
+    # Load bars from 1 year before inception for signal warmup,
+    # but only count P&L from inception onward.
+    data_start = inception - dt.timedelta(days=400)
+    start = inception
 
     conn = open_store()
 
-    strategies_config = [
-        {
-            "name": "ETF Momentum",
-            "id": "etf_momentum",
-            "universe": ("NIFTYBEES", "JUNIORBEES", "BANKBEES", "GOLDBEES",
-                         "LIQUIDBEES", "SETFNIF50"),
-            "signal_module": "trading_bot.strategies.etf_momentum_v1.signal",
-            "lane": "stocks",
-        },
-        {
-            "name": "Dual Momentum",
-            "id": "dual_momentum",
-            "universe": ("NIFTYBEES", "LIQUIDBEES"),
-            "signal_module": "trading_bot.strategies.dual_momentum_v1.signal",
-            "lane": "stocks",
-        },
-        {
-            "name": "Crypto Momentum",
-            "id": "crypto_momentum",
-            "universe": ("BTC/INR", "ETH/INR"),
-            "signal_module": "trading_bot.strategies.crypto_momentum_v1.signal",
-            "lane": "crypto",
-        },
-    ]
+    strategies_config = cfg.get("strategies", [])
 
     results = []
     total_invested = 0
     total_current = 0
 
-    for cfg in strategies_config:
+    for scfg in strategies_config:
         try:
             import importlib
-            mod = importlib.import_module(cfg["signal_module"])
+            mod = importlib.import_module(scfg["signal_module"])
             signal_fn = mod.signal_fn
-            universe = cfg["universe"]
+            universe = tuple(scfg["universe"])
 
-            bars = load_bars(conn, symbols=universe, start=start, end=end)
+            # Load bars from well before inception for signal warmup
+            bars = load_bars(conn, symbols=universe, start=data_start, end=end)
             bars = {s: b for s, b in bars.items() if len(b) >= 20}
 
             if not bars:
                 results.append({
-                    "name": cfg["name"], "id": cfg["id"],
-                    "lane": cfg["lane"],
+                    "name": scfg["name"], "id": scfg["id"],
+                    "lane": scfg.get("lane", "stocks"),
                     "invested": EQUITY, "current": EQUITY, "pnl": 0,
                     "return_pct": 0, "trades": [], "n_trades": 0,
                     "max_dd": 0, "sharpe": 0, "win_rate": 0,
@@ -1829,8 +1863,8 @@ def build_paper_portfolio() -> dict:
             total_current += r.final_equity
 
             results.append({
-                "name": cfg["name"], "id": cfg["id"],
-                "lane": cfg["lane"],
+                "name": scfg["name"], "id": scfg["id"],
+                "lane": scfg.get("lane", "stocks"),
                 "invested": EQUITY,
                 "current": round(r.final_equity, 2),
                 "pnl": round(pnl, 2),
@@ -1843,14 +1877,23 @@ def build_paper_portfolio() -> dict:
                 "trades": trade_log,
             })
         except Exception as e:
-            log.warning("paper portfolio %s failed: %s", cfg["name"], e)
+            err_msg = str(e)
+            # Don't log "no trading dates" as a warning — it's expected
+            # when inception is today/tomorrow.
+            if "no trading dates" not in err_msg:
+                log.warning("paper portfolio %s failed: %s", scfg["name"], e)
             results.append({
-                "name": cfg["name"], "id": cfg["id"],
-                "lane": cfg["lane"],
+                "name": scfg["name"], "id": scfg["id"],
+                "lane": scfg.get("lane", "stocks"),
                 "invested": EQUITY, "current": EQUITY, "pnl": 0,
                 "return_pct": 0, "trades": [], "n_trades": 0,
                 "max_dd": 0, "sharpe": 0, "win_rate": 0,
-                "error": str(e),
+                "status": "waiting" if "no trading dates" in err_msg else "error",
+                "message": (
+                    f"Starts {inception.isoformat()} — no trading days yet"
+                    if "no trading dates" in err_msg
+                    else err_msg
+                ),
             })
 
     conn.close()
@@ -1858,8 +1901,8 @@ def build_paper_portfolio() -> dict:
     # Current market prices
     conn2 = open_store()
     all_syms = set()
-    for cfg in strategies_config:
-        all_syms.update(cfg["universe"])
+    for scfg2 in strategies_config:
+        all_syms.update(scfg2["universe"])
     price_bars = load_bars(
         conn2, symbols=tuple(all_syms),
         start=end - dt.timedelta(days=10), end=end,
@@ -1891,10 +1934,12 @@ def build_paper_portfolio() -> dict:
     total_pnl = total_current - total_invested
 
     return {
+        "inception_date": inception.isoformat(),
         "period_start": start.isoformat(),
         "period_end": end.isoformat(),
-        "currency": "INR",
+        "currency": currency,
         "per_strategy_equity": EQUITY,
+        "config_file": str(PAPER_PORTFOLIO_CONFIG),
         "total_invested": total_invested,
         "total_current": round(total_current, 2),
         "total_pnl": round(total_pnl, 2),

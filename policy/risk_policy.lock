@@ -1,24 +1,24 @@
 {
-  "lock_version": "2026-06-03.v4-india",
+  "lock_version": "2026-06-03.profile-safe",
   "_source": "India migration 2026-06-03 \u2014 Risk Kernel limits for Indian markets (NSE/BSE). Original: Plan v4 \u00a76.",
   "_note": "Loosening any threshold requires a new dated lock version, a signed commit, AND a 7-day cooldown. Tightening is immediate. All monetary values in INR.",
   "_shakedown_rationale": "Initial \u20b983,000 (~$1000) Zerodha live account. Percentages retained from original; absolute INR floor enforced by live_capital.lock.",
   "account": {
-    "daily_drawdown_pct_of_equity": 5.0,
+    "daily_drawdown_pct_of_equity": 0.5,
     "_daily_drawdown_breach": "halt new entries for the session; existing positions managed by exits only",
     "_daily_drawdown_history": "1.0 -> 5.0 on 2026-05-25 for live shakedown ($50/day on $1k account)",
     "trailing_drawdown_pct_of_equity": 5.0,
     "trailing_drawdown_window_days": 60,
     "_trailing_drawdown_breach": "lane mode -> observe-only; require new validation lock to resume",
-    "intraday_pnl_floor_pct_of_equity": -1.5,
+    "intraday_pnl_floor_pct_of_equity": -1.0,
     "_intraday_pnl_breach": "halt new entries; existing exits allowed"
   },
   "asset_class": {
-    "equity_gross_max_pct": 80.0,
+    "equity_gross_max_pct": 60.0,
     "_equity_breach": "reduce-only mode; new buys rejected",
-    "crypto_gross_max_pct": 15.0,
+    "crypto_gross_max_pct": 10.0,
     "_crypto_breach": "reduce-only mode; emergency liquidation rule documented. Crypto gains taxed at flat 30% (Section 115BBH).",
-    "options_buying_power_util_max_pct": 30.0,
+    "options_buying_power_util_max_pct": 15.0,
     "_options_breach": "no new option opens",
     "_equity_note_india": "NSE equity (CNC/MIS). Includes ETFs.",
     "_crypto_note_india": "Crypto via CoinDCX/WazirX (INR pairs). SEBI 1% TDS applies on transfers >\u20b910,000.",
@@ -36,11 +36,11 @@
     "_strategy_loss_breach": "strategy moved to observe-only; mutation request opened"
   },
   "symbol": {
-    "per_symbol_gross_max_pct": 5.0,
+    "per_symbol_gross_max_pct": 3.0,
     "_per_symbol_breach": "order qty reduced to fit; reason logged"
   },
   "order": {
-    "per_order_at_risk_max_pct": 10.0,
+    "per_order_at_risk_max_pct": 1.0,
     "_per_order_breach": "order rejected; reason logged",
     "_per_order_history": "2.0 -> 10.0 on 2026-05-25 for live shakedown ($100/order on $1k account)",
     "stop_coverage_required_within_seconds": 60,
@@ -66,5 +66,19 @@
     "mpc_meeting_halt_policy": "observe_only during RBI MPC decision day (typically 3rd day of 3-day meeting)",
     "budget_day_halt_policy": "observe_only on Union Budget presentation day (typically Feb 1)",
     "_sebi_circuit_breaker": "see policy/pdt_policy.lock \u00a7sebi_circuit_breakers"
-  }
+  },
+  "_audit": [
+    {
+      "ts": "2026-06-03T14:49:23.122578+00:00",
+      "operator": "sumanthavula: to see the output for the each trail",
+      "profile": "aggressive",
+      "diff_count": 7
+    },
+    {
+      "ts": "2026-06-03T15:02:31.558984+00:00",
+      "operator": "sumanthavula: test 1",
+      "profile": "safe",
+      "diff_count": 7
+    }
+  ]
 }
