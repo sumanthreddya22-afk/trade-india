@@ -474,6 +474,7 @@ def portfolio_page(data: dict) -> str:
 """
         return layout("Portfolio", body)
 
+    inception = data.get('inception_date', data.get('period_start', ''))
     period = f"{data.get('period_start', '')} to {data.get('period_end', '')}"
 
     # Summary cards
@@ -487,7 +488,7 @@ def portfolio_page(data: dict) -> str:
     summary_html = f"""
 <div class="card">
   <h2>Paper Trading Portfolio</h2>
-  <p><small class="muted">Period: {period} | Currency: INR | Mode: Paper (no real money)</small></p>
+  <p><small class="muted">Inception: {inception} | Period: {period} | Currency: INR | Mode: Paper (no real money)</small></p>
   <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:1rem; margin-top:1rem;">
     <div style="text-align:center; padding:1rem; background:var(--bg); border-radius:8px;">
       <div style="font-size:0.8rem; color:var(--muted);">Total Invested</div>
@@ -565,8 +566,10 @@ def portfolio_page(data: dict) -> str:
         else:
             strat_card += '<p><em>No trades executed.</em></p>'
 
-        if s.get("error"):
-            strat_card += f'<p class="pill warn">Error: {s["error"]}</p>'
+        if s.get("status") == "waiting":
+            strat_card += f'<p><span class="pill ok">{s.get("message", "Waiting for first trading day")}</span></p>'
+        elif s.get("message"):
+            strat_card += f'<p class="pill warn">Error: {s["message"]}</p>'
 
         strat_card += "</div>"
         strategies_html += strat_card
@@ -595,12 +598,13 @@ def portfolio_page(data: dict) -> str:
         prices_html = ""
 
     body = summary_html + strategies_html + prices_html
-    body += """
+    body += f"""
 <p style="margin-top:1rem;"><small class="muted">
   Paper trading mode — no real money involved. All amounts in INR.
-  Data source: yfinance (NSE adjusted daily bars).
+  Data source: yfinance (NSE adjusted daily bars). Inception: {inception}.<br>
   Refresh: <a href="/portfolio">reload</a> |
-  JSON API: <a href="/api/portfolio">/api/portfolio</a>
+  JSON API: <a href="/api/portfolio">/api/portfolio</a> |
+  Reset: <code>python tools/reset_paper_portfolio.py</code>
 </small></p>
 """
     return layout("Paper Portfolio", body)

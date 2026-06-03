@@ -1,0 +1,32 @@
+{
+  "inception_date": "2026-06-04",
+  "starting_equity_per_strategy": 1000000,
+  "currency": "INR",
+  "note": "Fresh start — reset by operator on 2026-06-03. All P&L tracks from this date forward.",
+  "strategies": [
+    {
+      "id": "etf_momentum",
+      "name": "ETF Momentum",
+      "universe": ["NIFTYBEES", "JUNIORBEES", "BANKBEES", "GOLDBEES", "LIQUIDBEES", "SETFNIF50"],
+      "lane": "stocks",
+      "signal_module": "trading_bot.strategies.etf_momentum_v1.signal",
+      "rebalance_freq": "monthly"
+    },
+    {
+      "id": "dual_momentum",
+      "name": "Dual Momentum",
+      "universe": ["NIFTYBEES", "LIQUIDBEES"],
+      "lane": "stocks",
+      "signal_module": "trading_bot.strategies.dual_momentum_v1.signal",
+      "rebalance_freq": "monthly"
+    },
+    {
+      "id": "crypto_momentum",
+      "name": "Crypto Momentum",
+      "universe": ["BTC/INR", "ETH/INR"],
+      "lane": "crypto",
+      "signal_module": "trading_bot.strategies.crypto_momentum_v1.signal",
+      "rebalance_freq": "monthly"
+    }
+  ]
+}
