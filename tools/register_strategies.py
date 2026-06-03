@@ -53,6 +53,14 @@ def main() -> int:
         ("SPY_WHEEL_v1", "options_income_wheel",
          "edge_thesis_wheel_v1", "spy_wheel_csp.h1",
          "trading_bot.strategies.spy_wheel_v1"),
+        # India-specific overnight-gap fade. research_only until both
+        # (a) Tier-1 validation passes on real NSE bars and (b) the
+        # daemon grows an intraday dispatch loop. See
+        # src/trading_bot/strategies/nifty_gap_v1/__init__.py for the
+        # full thesis + known failure modes.
+        ("NIFTY_GAP_v1", "research_only",
+         "edge_thesis_v1", "nifty_overnight_gap_fade.h1",
+         "trading_bot.strategies.nifty_gap_v1"),
     ]
 
     conn = connect_writer(ledger)
