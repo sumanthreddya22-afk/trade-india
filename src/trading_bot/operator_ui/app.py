@@ -149,6 +149,21 @@ def api_cockpit_data_overlay():
     return Response(content=body, media_type="text/javascript")
 
 
+@app.get("/portfolio", response_class=HTMLResponse)
+def portfolio_page():
+    """Paper trading portfolio — shows all strategies, trades, and P&L in INR."""
+    from trading_bot.operator_ui.cockpit_data import build_paper_portfolio
+    data = build_paper_portfolio()
+    return tmpl.portfolio_page(data)
+
+
+@app.get("/api/portfolio")
+def api_portfolio():
+    """Paper portfolio as JSON — for programmatic access."""
+    from trading_bot.operator_ui.cockpit_data import build_paper_portfolio
+    return JSONResponse(build_paper_portfolio())
+
+
 @app.get("/digest", response_class=HTMLResponse)
 def digest_route(hours: int = 24):
     from trading_bot.operator.digest import build_digest
@@ -236,6 +251,13 @@ def strategy_submit(
         log.exception("strategy_submit failed")
         result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
     return HTMLResponse(tmpl.strategy_result_page(result))
+
+
+# Expose portfolio in the cockpit data overlay too.
+@app.get("/api/cockpit/portfolio")
+def api_cockpit_portfolio():
+    from trading_bot.operator_ui.cockpit_data import build_paper_portfolio
+    return JSONResponse(build_paper_portfolio())
 
 
 __all__ = ["app"]

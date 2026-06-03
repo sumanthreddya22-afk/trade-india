@@ -85,6 +85,7 @@ def layout(title: str, body: str, flash: str = "", auto_refresh_seconds: int = 0
   <h1>trading-bot v4 — operator dashboard</h1>
   <nav>
     <a href="/">Status</a>
+    <a href="/portfolio">Portfolio</a>
     <a href="/risk">Risk profile</a>
     <a href="/strategy">Strategies</a>
     <a href="/digest">Digest</a>
@@ -461,7 +462,151 @@ def _escape(s: str) -> str:
              .replace(">", "&gt;").replace('"', "&quot;"))
 
 
+def portfolio_page(data: dict) -> str:
+    """Paper trading portfolio page — all amounts in INR."""
+    if data.get("error"):
+        body = f"""
+<div class="card">
+  <h2>Paper Trading Portfolio</h2>
+  <p class="pill warn">{data['error']}</p>
+  <p>Run <code>python tools/load_historical_bars.py</code> to populate the bars database.</p>
+</div>
+"""
+        return layout("Portfolio", body)
+
+    period = f"{data.get('period_start', '')} to {data.get('period_end', '')}"
+
+    # Summary cards
+    total_inv = data.get("total_invested", 0)
+    total_cur = data.get("total_current", 0)
+    total_pnl = data.get("total_pnl", 0)
+    total_ret = data.get("total_return_pct", 0)
+    pnl_color = "ok" if total_pnl >= 0 else "bad"
+    pnl_sign = "+" if total_pnl >= 0 else ""
+
+    summary_html = f"""
+<div class="card">
+  <h2>Paper Trading Portfolio</h2>
+  <p><small class="muted">Period: {period} | Currency: INR | Mode: Paper (no real money)</small></p>
+  <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:1rem; margin-top:1rem;">
+    <div style="text-align:center; padding:1rem; background:var(--bg); border-radius:8px;">
+      <div style="font-size:0.8rem; color:var(--muted);">Total Invested</div>
+      <div style="font-size:1.5rem; font-weight:600;">&#8377;{total_inv:,.0f}</div>
+    </div>
+    <div style="text-align:center; padding:1rem; background:var(--bg); border-radius:8px;">
+      <div style="font-size:0.8rem; color:var(--muted);">Current Value</div>
+      <div style="font-size:1.5rem; font-weight:600;">&#8377;{total_cur:,.0f}</div>
+    </div>
+    <div style="text-align:center; padding:1rem; background:var(--bg); border-radius:8px;">
+      <div style="font-size:0.8rem; color:var(--muted);">Total P&amp;L</div>
+      <div style="font-size:1.5rem; font-weight:600; color:var(--{pnl_color});">{pnl_sign}&#8377;{abs(total_pnl):,.0f}</div>
+    </div>
+    <div style="text-align:center; padding:1rem; background:var(--bg); border-radius:8px;">
+      <div style="font-size:0.8rem; color:var(--muted);">Total Return</div>
+      <div style="font-size:1.5rem; font-weight:600; color:var(--{pnl_color});">{pnl_sign}{total_ret:.1f}%</div>
+    </div>
+  </div>
+</div>
+"""
+
+    # Per-strategy cards
+    strategies_html = ""
+    for s in data.get("strategies", []):
+        s_pnl = s.get("pnl", 0)
+        s_ret = s.get("return_pct", 0)
+        s_color = "ok" if s_pnl >= 0 else "bad"
+        s_sign = "+" if s_pnl >= 0 else ""
+        lane_pill = {"stocks": "ok", "crypto": "warn", "options": ""}.get(s.get("lane", ""), "")
+
+        # Strategy header
+        strat_card = f"""
+<div class="card" style="margin-top:1rem;">
+  <h2>{s['name']} <span class="pill {lane_pill}">{s.get('lane', '')}</span></h2>
+  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap:0.5rem; margin-bottom:1rem;">
+    <div><small class="muted">Invested</small><br><strong>&#8377;{s.get('invested', 0):,.0f}</strong></div>
+    <div><small class="muted">Current</small><br><strong>&#8377;{s.get('current', 0):,.0f}</strong></div>
+    <div><small class="muted">P&amp;L</small><br><strong style="color:var(--{s_color})">{s_sign}&#8377;{abs(s_pnl):,.0f}</strong></div>
+    <div><small class="muted">Return</small><br><strong style="color:var(--{s_color})">{s_sign}{s_ret:.1f}%</strong></div>
+    <div><small class="muted">Trades</small><br><strong>{s.get('n_trades', 0)}</strong></div>
+    <div><small class="muted">Max DD</small><br><strong>{s.get('max_dd', 0):.1f}%</strong></div>
+    <div><small class="muted">Sharpe</small><br><strong>{s.get('sharpe', 0):.2f}</strong></div>
+    <div><small class="muted">Win Rate</small><br><strong>{s.get('win_rate', 0):.0f}%</strong></div>
+  </div>
+"""
+        # Trade log
+        trades = s.get("trades", [])
+        if trades:
+            trade_rows = ""
+            for i, t in enumerate(trades, 1):
+                side_color = "ok" if t["side"] == "BUY" else "warn"
+                trade_rows += (
+                    f"<tr>"
+                    f"<td>{i}</td>"
+                    f"<td>{t['date']}</td>"
+                    f"<td>{t['symbol']}</td>"
+                    f'<td><span class="pill {side_color}">{t["side"]}</span></td>'
+                    f"<td style='text-align:right'>{t['qty']:,.4f}</td>"
+                    f"<td style='text-align:right'>&#8377;{t['price']:,.2f}</td>"
+                    f"<td style='text-align:right'>&#8377;{t['value']:,.2f}</td>"
+                    f"<td style='text-align:right'>&#8377;{t['fees']:,.2f}</td>"
+                    f"</tr>"
+                )
+            strat_card += f"""
+  <details>
+    <summary style="cursor:pointer; color:var(--accent);">Show {len(trades)} trades</summary>
+    <table style="margin-top:0.5rem;">
+      <thead><tr><th>#</th><th>Date</th><th>Symbol</th><th>Side</th>
+        <th style="text-align:right">Qty</th><th style="text-align:right">Price (INR)</th>
+        <th style="text-align:right">Value (INR)</th><th style="text-align:right">Fees (INR)</th></tr></thead>
+      <tbody>{trade_rows}</tbody>
+    </table>
+  </details>
+"""
+        else:
+            strat_card += '<p><em>No trades executed.</em></p>'
+
+        if s.get("error"):
+            strat_card += f'<p class="pill warn">Error: {s["error"]}</p>'
+
+        strat_card += "</div>"
+        strategies_html += strat_card
+
+    # Market prices
+    prices = data.get("market_prices", {})
+    if prices:
+        price_rows = "".join(
+            f"<tr><td>{sym}</td><td>{info['name']}</td>"
+            f"<td><span class='pill ok'>{info['type']}</span></td>"
+            f"<td style='text-align:right'>&#8377;{info['price']:,.2f}</td>"
+            f"<td><small class='muted'>{info.get('date', '')}</small></td></tr>"
+            for sym, info in sorted(prices.items())
+        )
+        prices_html = f"""
+<div class="card" style="margin-top:1rem;">
+  <h2>Current Market Prices</h2>
+  <table>
+    <thead><tr><th>Symbol</th><th>Name</th><th>Type</th>
+      <th style="text-align:right">Last Price (INR)</th><th>Date</th></tr></thead>
+    <tbody>{price_rows}</tbody>
+  </table>
+</div>
+"""
+    else:
+        prices_html = ""
+
+    body = summary_html + strategies_html + prices_html
+    body += """
+<p style="margin-top:1rem;"><small class="muted">
+  Paper trading mode — no real money involved. All amounts in INR.
+  Data source: yfinance (NSE adjusted daily bars).
+  Refresh: <a href="/portfolio">reload</a> |
+  JSON API: <a href="/api/portfolio">/api/portfolio</a>
+</small></p>
+"""
+    return layout("Paper Portfolio", body)
+
+
 __all__ = [
-    "BASE_CSS", "digest_page", "halt_page", "layout", "risk_page",
-    "status_page", "strategy_page", "strategy_result_page",
+    "BASE_CSS", "digest_page", "halt_page", "layout", "portfolio_page",
+    "risk_page", "status_page", "strategy_page", "strategy_result_page",
 ]

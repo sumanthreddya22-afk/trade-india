@@ -1711,4 +1711,199 @@ def build_state(
     return state
 
 
-__all__ = ["build_state"]
+# ---------------------------------------------------------------------------
+# PAPER PORTFOLIO (backtest-driven — no broker needed)
+# ---------------------------------------------------------------------------
+
+
+def build_paper_portfolio() -> dict:
+    """Run live backtests against historical_bars.db and return a
+    portfolio snapshot with per-strategy P&L, trade logs, and current
+    holdings — all in INR.
+
+    This is the paper-trading view: no broker connection needed, no
+    ledger writes. Pure read-only computation against the bars DB.
+    """
+    from trading_bot.research.historical_bars import (
+        DEFAULT_HISTORICAL_PATH, open_store, load_bars,
+    )
+    from trading_bot.research.backtest import run_backtest, CostLens
+
+    if not DEFAULT_HISTORICAL_PATH.exists():
+        return {"error": "No historical bars DB — run tools/load_historical_bars.py first"}
+
+    # Load cost model lock
+    cost_lock_path = DEFAULT_POLICY_DIR / "cost_model.lock"
+    if cost_lock_path.exists():
+        cost_lock = json.loads(cost_lock_path.read_text())
+    else:
+        cost_lock = {"stocks": {"extra_slippage_bps": 10}}
+
+    EQUITY = 10_00_000  # INR 10 lakh per strategy
+    end = dt.date.today()
+    start = end - dt.timedelta(days=365 * 2)
+
+    conn = open_store()
+
+    strategies_config = [
+        {
+            "name": "ETF Momentum",
+            "id": "etf_momentum",
+            "universe": ("NIFTYBEES", "JUNIORBEES", "BANKBEES", "GOLDBEES",
+                         "LIQUIDBEES", "SETFNIF50"),
+            "signal_module": "trading_bot.strategies.etf_momentum_v1.signal",
+            "lane": "stocks",
+        },
+        {
+            "name": "Dual Momentum",
+            "id": "dual_momentum",
+            "universe": ("NIFTYBEES", "LIQUIDBEES"),
+            "signal_module": "trading_bot.strategies.dual_momentum_v1.signal",
+            "lane": "stocks",
+        },
+        {
+            "name": "Crypto Momentum",
+            "id": "crypto_momentum",
+            "universe": ("BTC/INR", "ETH/INR"),
+            "signal_module": "trading_bot.strategies.crypto_momentum_v1.signal",
+            "lane": "crypto",
+        },
+    ]
+
+    results = []
+    total_invested = 0
+    total_current = 0
+
+    for cfg in strategies_config:
+        try:
+            import importlib
+            mod = importlib.import_module(cfg["signal_module"])
+            signal_fn = mod.signal_fn
+            universe = cfg["universe"]
+
+            bars = load_bars(conn, symbols=universe, start=start, end=end)
+            bars = {s: b for s, b in bars.items() if len(b) >= 20}
+
+            if not bars:
+                results.append({
+                    "name": cfg["name"], "id": cfg["id"],
+                    "lane": cfg["lane"],
+                    "invested": EQUITY, "current": EQUITY, "pnl": 0,
+                    "return_pct": 0, "trades": [], "n_trades": 0,
+                    "max_dd": 0, "sharpe": 0, "win_rate": 0,
+                    "error": "No data",
+                })
+                continue
+
+            def make_signal(sf, univ):
+                def _sig(history, decision_date):
+                    return sf(history, decision_date, universe=univ)
+                return _sig
+
+            lens = CostLens.pessimistic(cost_lock)
+            r = run_backtest(
+                bars_by_symbol=bars,
+                signal_fn=make_signal(signal_fn, universe),
+                start=start, end=end,
+                starting_equity=EQUITY,
+                cost_lens=lens,
+                rebalance_freq="monthly",
+            )
+
+            pnl = r.final_equity - r.starting_equity
+            ret_pct = (r.final_equity / r.starting_equity - 1) * 100
+
+            trade_log = []
+            for t in r.trades:
+                trade_log.append({
+                    "date": t.fill_date.isoformat(),
+                    "symbol": t.symbol,
+                    "side": t.side.upper(),
+                    "qty": round(t.qty, 4),
+                    "price": round(t.price, 2),
+                    "value": round(t.notional, 2),
+                    "fees": round(t.fees, 2),
+                })
+
+            total_invested += EQUITY
+            total_current += r.final_equity
+
+            results.append({
+                "name": cfg["name"], "id": cfg["id"],
+                "lane": cfg["lane"],
+                "invested": EQUITY,
+                "current": round(r.final_equity, 2),
+                "pnl": round(pnl, 2),
+                "return_pct": round(ret_pct, 2),
+                "n_trades": r.n_trades,
+                "max_dd": round(r.max_drawdown_pct, 1),
+                "sharpe": round(r.sharpe_annualised, 2),
+                "win_rate": round(r.win_rate * 100, 1),
+                "total_fees": round(r.total_fees, 2),
+                "trades": trade_log,
+            })
+        except Exception as e:
+            log.warning("paper portfolio %s failed: %s", cfg["name"], e)
+            results.append({
+                "name": cfg["name"], "id": cfg["id"],
+                "lane": cfg["lane"],
+                "invested": EQUITY, "current": EQUITY, "pnl": 0,
+                "return_pct": 0, "trades": [], "n_trades": 0,
+                "max_dd": 0, "sharpe": 0, "win_rate": 0,
+                "error": str(e),
+            })
+
+    conn.close()
+
+    # Current market prices
+    conn2 = open_store()
+    all_syms = set()
+    for cfg in strategies_config:
+        all_syms.update(cfg["universe"])
+    price_bars = load_bars(
+        conn2, symbols=tuple(all_syms),
+        start=end - dt.timedelta(days=10), end=end,
+    )
+    conn2.close()
+
+    prices = {}
+    labels = {
+        "NIFTYBEES": ("Nippon Nifty 50 ETF", "Index ETF"),
+        "JUNIORBEES": ("Nippon Nifty Next 50 ETF", "Mid-Cap ETF"),
+        "BANKBEES": ("Nippon Bank Nifty ETF", "Banking ETF"),
+        "GOLDBEES": ("Nippon Gold ETF", "Commodity ETF"),
+        "LIQUIDBEES": ("Nippon Liquid ETF", "Debt ETF"),
+        "SETFNIF50": ("SBI Nifty 50 ETF", "Index ETF"),
+        "BTC/INR": ("Bitcoin", "Crypto"),
+        "ETH/INR": ("Ethereum", "Crypto"),
+    }
+    for sym in sorted(all_syms):
+        b = price_bars.get(sym, [])
+        if b:
+            lbl = labels.get(sym, (sym, "Equity"))
+            prices[sym] = {
+                "price": round(b[-1].close, 2),
+                "name": lbl[0],
+                "type": lbl[1],
+                "date": b[-1].bar_date.isoformat(),
+            }
+
+    total_pnl = total_current - total_invested
+
+    return {
+        "period_start": start.isoformat(),
+        "period_end": end.isoformat(),
+        "currency": "INR",
+        "per_strategy_equity": EQUITY,
+        "total_invested": total_invested,
+        "total_current": round(total_current, 2),
+        "total_pnl": round(total_pnl, 2),
+        "total_return_pct": round(
+            (total_current / total_invested - 1) * 100, 2
+        ) if total_invested else 0,
+        "strategies": results,
+        "market_prices": prices,
+    }
+
+
+__all__ = ["build_state", "build_paper_portfolio"]
