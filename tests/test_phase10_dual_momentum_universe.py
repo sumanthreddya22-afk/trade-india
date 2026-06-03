@@ -1,5 +1,9 @@
 """Dual Momentum runner — verify the universe is data-driven, not
-hardcoded, and the discovery payload is captured for the snapshot."""
+hardcoded, and the discovery payload is captured for the snapshot.
+
+Post India migration: the thesis pair is (NIFTYBEES, LIQUIDBEES) —
+Nifty 50 ETF as the equity sleeve, LiquidBees as the treasury / cash
+equivalent sleeve."""
 from __future__ import annotations
 
 import datetime as dt
@@ -28,50 +32,52 @@ def test_discovery_rule_name_is_namespaced() -> None:
 
 
 def test_resolver_returns_thesis_pair_today() -> None:
-    """With SPY most-liquid equity ETF and TLT most-liquid long-treasury
-    ETF (both in the thesis allowlist), the rule returns the pair."""
+    """With NIFTYBEES the most-liquid equity ETF and LIQUIDBEES the
+    most-liquid treasury ETF (both in the thesis allowlist), the rule
+    returns the pair."""
     records = [
-        AssetRecord("SPY", "us_equity", True, True, 70e9,
+        AssetRecord("NIFTYBEES", "nse_equity", True, True, 70e9,
                     attributes=("ETF",)),
-        AssetRecord("QQQ", "us_equity", True, True, 30e9,
+        AssetRecord("JUNIORBEES", "nse_equity", True, True, 30e9,
                     attributes=("ETF",)),
-        AssetRecord("TLT", "us_equity", True, True, 2e9,
+        AssetRecord("LIQUIDBEES", "nse_equity", True, True, 2e9,
                     attributes=("ETF",)),
-        AssetRecord("IEF", "us_equity", True, True, 0.5e9,
+        AssetRecord("GILT5YBEES", "nse_equity", True, True, 0.5e9,
                     attributes=("ETF",)),
     ]
     universe, payload = _resolve_universe_with_fallback(
         asset_fetcher=_make_fetcher(records),
         decision_date=dt.date(2026, 5, 15),
     )
-    assert universe == ("SPY", "TLT")
+    assert universe == ("NIFTYBEES", "LIQUIDBEES")
     assert payload["rule_name"] == "dual_momentum_v1.default"
     assert payload["rule_hash"] != "fallback:static"
 
 
-def test_resolver_picks_qqq_if_qqq_outvolumes_spy() -> None:
-    """Allowlist permits QQQ. If it overtakes SPY in volume the
-    discovery picks it — the strategy is data-driven, not pinned."""
+def test_resolver_picks_juniorbees_if_it_outvolumes_niftybees() -> None:
+    """Allowlist permits JUNIORBEES (Nifty Next 50). If it overtakes
+    NIFTYBEES in volume the discovery picks it — strategy is
+    data-driven, not pinned."""
     records = [
-        AssetRecord("SPY", "us_equity", True, True, 10e9,
+        AssetRecord("NIFTYBEES", "nse_equity", True, True, 10e9,
                     attributes=("ETF",)),
-        AssetRecord("QQQ", "us_equity", True, True, 80e9,
+        AssetRecord("JUNIORBEES", "nse_equity", True, True, 80e9,
                     attributes=("ETF",)),
-        AssetRecord("TLT", "us_equity", True, True, 2e9,
+        AssetRecord("LIQUIDBEES", "nse_equity", True, True, 2e9,
                     attributes=("ETF",)),
     ]
     universe, _ = _resolve_universe_with_fallback(
         asset_fetcher=_make_fetcher(records),
         decision_date=dt.date(2026, 5, 15),
     )
-    assert universe == ("QQQ", "TLT")
+    assert universe == ("JUNIORBEES", "LIQUIDBEES")
 
 
 def test_resolver_falls_back_when_no_fetcher() -> None:
     universe, payload = _resolve_universe_with_fallback(
         asset_fetcher=None, decision_date=dt.date(2026, 5, 15),
     )
-    assert universe == ("SPY", "TLT")
+    assert universe == ("NIFTYBEES", "LIQUIDBEES")
     assert payload["rule_hash"] == "fallback:static"
     assert "_fallback_reason" in payload
 
@@ -84,30 +90,30 @@ def test_resolver_falls_back_when_discovery_unavailable() -> None:
         asset_fetcher=lambda _cls: [],
         decision_date=dt.date(2026, 5, 15),
     )
-    assert universe == ("SPY", "TLT")
+    assert universe == ("NIFTYBEES", "LIQUIDBEES")
     assert payload["rule_hash"] == "fallback:discovery_unavailable"
     assert "_fallback_reason" in payload
 
 
 def test_resolver_uses_volume_provider_to_enrich() -> None:
-    """Alpaca's asset list lacks ADV. The runner wires a volume
-    provider (e.g. yfinance bars) so the ranking is still
-    data-driven, not alphabetic."""
+    """Kite Connect's instrument list lacks ADV. The runner wires a
+    volume provider (e.g. yfinance bars or NSE bhavcopy) so the
+    ranking is data-driven, not alphabetic."""
     records = [
-        AssetRecord("SPY", "us_equity", True, True, None,
+        AssetRecord("NIFTYBEES", "nse_equity", True, True, None,
                     attributes=("ETF",)),
-        AssetRecord("QQQ", "us_equity", True, True, None,
+        AssetRecord("JUNIORBEES", "nse_equity", True, True, None,
                     attributes=("ETF",)),
-        AssetRecord("TLT", "us_equity", True, True, None,
+        AssetRecord("LIQUIDBEES", "nse_equity", True, True, None,
                     attributes=("ETF",)),
     ]
-    advs = {"SPY": 70e9, "QQQ": 30e9, "TLT": 2e9}
+    advs = {"NIFTYBEES": 70e9, "JUNIORBEES": 30e9, "LIQUIDBEES": 2e9}
     universe, payload = _resolve_universe_with_fallback(
         asset_fetcher=_make_fetcher(records),
         decision_date=dt.date(2026, 5, 15),
         volume_provider=lambda s: advs.get(s),
     )
-    assert universe == ("SPY", "TLT")
+    assert universe == ("NIFTYBEES", "LIQUIDBEES")
     assert payload["rule_hash"] not in ("fallback:static",
                                         "fallback:discovery_unavailable")
 

@@ -30,7 +30,7 @@ import click
 def main() -> None:
     """Entry-point invoked by the `bot` console script.
 
-    Loads .env from cwd at startup so subcommands see Alpaca / Gmail
+    Loads .env from cwd at startup so subcommands see Zerodha Kite Connect / Gmail
     credentials without each having to import dotenv themselves.
     """
     try:
@@ -47,7 +47,7 @@ def main() -> None:
 @click.option("--once", is_flag=True, default=False,
               help="Tick every job once and exit (for smoke tests).")
 @click.option("--no-broker", is_flag=True, default=False,
-              help="Skip Alpaca adapter (useful for local dev without creds).")
+              help="Skip Zerodha adapter (useful for local dev without creds).")
 def daemon(once: bool, no_broker: bool) -> None:
     from trading_bot.daemon import DaemonConfig, run_daemon
     from trading_bot.daemon.jobs import DaemonContext
@@ -55,19 +55,23 @@ def daemon(once: bool, no_broker: bool) -> None:
     ctx = DaemonContext()
 
     if not no_broker:
-        broker = os.environ.get("BROKER", "alpaca").strip().lower()
+        broker = os.environ.get("BROKER", "zerodha").strip().lower()
         try:
-            if broker == "webull":
+            if broker == "zerodha":
+                from trading_bot.ingest.zerodha_adapter import ZerodhaAdapter
+                adapter = ZerodhaAdapter()
+                broker_label = "Zerodha Kite Connect"
+            elif broker == "webull":
                 from trading_bot.ingest.webull_adapter import WebullAdapter
                 adapter = WebullAdapter()
                 broker_label = "Webull"
             elif broker == "alpaca":
                 from trading_bot.ingest.alpaca_adapter import AlpacaAdapter
                 adapter = AlpacaAdapter()
-                broker_label = "Alpaca"
+                broker_label = "Alpaca (legacy)"
             else:
                 raise ValueError(
-                    f"Unknown BROKER={broker!r} (expected alpaca | webull)"
+                    f"Unknown BROKER={broker!r} (expected zerodha | webull | alpaca)"
                 )
             ctx.broker_submit = adapter.submit_order
             ctx.positions_fetcher = adapter.fetch_positions

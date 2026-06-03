@@ -15,6 +15,13 @@ from pathlib import Path
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _stub_claude_cli_for_boot_check(monkeypatch):
+    """Boot check includes a `claude_cli` probe — stub the path so the
+    test doesn't require the Claude CLI installed locally."""
+    monkeypatch.setenv("TRADING_BOT_CLAUDE_CLI_PATH", "/bin/echo")
+
 from trading_bot.ledger import (
     SCHEMA_VERSION, connect_writer, ensure_schema,
 )

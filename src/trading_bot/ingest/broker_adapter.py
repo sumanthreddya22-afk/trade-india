@@ -1,13 +1,13 @@
 """BrokerAdapter ABC — the single boundary between the v4 kernel and any
 broker SDK.
 
-Plan WS3: extract a 7-method ABC so the daemon can flip between Alpaca
+Every concrete adapter (``ZerodhaAdapter``, etc.) inherits from this
 paper and Webull live via the ``BROKER`` env var without any other code
 change. Every concrete adapter (``AlpacaAdapter``, ``WebullAdapter``)
 inherits from this class and normalises its broker-specific responses
 into the canonical strings the rest of the codebase expects:
 
-  * ``asset_class``: ``us_equity`` | ``crypto`` | ``us_option``
+    * ``asset_class``: ``nse_equity`` | ``bse_equity`` | ``nse_fo`` | ``crypto``
   * order ``status``: ``accepted`` | ``filled`` | ``canceled`` | ``rejected``
   * ``side``: ``buy`` | ``sell`` (sell-to-close inferred from held qty)
 
@@ -40,7 +40,7 @@ class BrokerAdapter(abc.ABC):
         order_type: str = "market",
         limit_price: Optional[float] = None,
         time_in_force: str = "day",
-        asset_class: str = "us_equity",
+        asset_class: str = "nse_equity",
         **kwargs,
     ) -> dict:
         """Submit an order. Returns:
@@ -93,7 +93,7 @@ class BrokerAdapter(abc.ABC):
         """Subset of ``fetch_positions`` filtered to option contracts only."""
 
     @abc.abstractmethod
-    def list_assets(self, asset_class: str = "us_equity"):
+    def list_assets(self, asset_class: str = "nse_equity"):
         """Return active tradable ``AssetRecord``s in ``asset_class``.
         Returns ``[]`` on transient failure.
         """

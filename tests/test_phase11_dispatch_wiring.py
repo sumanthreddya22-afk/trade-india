@@ -178,20 +178,20 @@ def test_runner_returns_universe_payload_in_decision(tmp_path) -> None:
     conn = open_store(hist_db)
     base = dt.date(2026, 5, 1)
     bars = []
-    for sym in ("SPY", "TLT"):
+    for sym in ("NIFTYBEES", "LIQUIDBEES"):
         for i in range(400):
             d = base - dt.timedelta(days=i)
             bars.append(DailyBar(
                 symbol=sym, bar_date=d, open=100, high=101, low=99,
-                close=100 + (1 if sym == "SPY" else 0),
+                close=100 + (1 if sym == "NIFTYBEES" else 0),
                 volume=1_000_000,
             ))
     upsert_bars(conn, bars)
     conn.close()
 
     records = [
-        AssetRecord("SPY", "us_equity", True, True, 70e9, attributes=("ETF",)),
-        AssetRecord("TLT", "us_equity", True, True, 2e9, attributes=("ETF",)),
+        AssetRecord("NIFTYBEES", "nse_equity", True, True, 70e9, attributes=("ETF",)),
+        AssetRecord("LIQUIDBEES", "nse_equity", True, True, 2e9, attributes=("ETF",)),
     ]
     out = dm_runner.evaluate_strategy(
         historical_db=hist_db, decision_date=dt.date(2026, 5, 15),
@@ -200,7 +200,7 @@ def test_runner_returns_universe_payload_in_decision(tmp_path) -> None:
         account_fetcher=lambda: {"equity": 10_000.0, "cash": 10_000.0,
                                   "buying_power": 10_000.0},
     )
-    assert out.universe == ("SPY", "TLT")
+    assert out.universe == ("NIFTYBEES", "LIQUIDBEES")
     assert out.universe_payload["rule_name"] == "dual_momentum_v1.default"
     assert out.universe_payload["rule_hash"] != "fallback:static"
 

@@ -1,29 +1,31 @@
 {
-  "lock_version": "2026-05-14.v4-phase9",
-  "_source": "Plan v4 \u00a77 Strategy Lanes \u2014 Promotion And Demotion Criteria",
+  "lock_version": "2026-06-03.v5-india",
+  "_source": "India migration 2026-06-03 \u2014 NSE/BSE lane caps. Replaces US SPY/QQQ/IWM benchmark.",
   "_note": "One row per lane. status \u2208 {research_only | shadow | tiny_paper | scaled_paper | live | reduce_only | observe_only | halted}. A lane only emits orders to the kernel when its status is in {tiny_paper, scaled_paper, live}. Transitions are recorded by lane_caps.demote_on_breach (Phase 2) and by the registry promotion path (Phase 4).",
   "lanes": {
     "benchmark": {
       "status": "live",
-      "_status_note": "Always-on yardstick \u2014 SPY/QQQ/IWM passive cash benchmark; no actual orders, used for relative scoring.",
+      "_status_note": "Always-on yardstick \u2014 Nifty 50 (NIFTYBEES) / Bank Nifty (BANKBEES) / Nifty Next 50 (JUNIORBEES) passive cash benchmark; no actual orders, used for relative scoring.",
       "thesis_id": null,
       "demotion_criteria": []
     },
     "etf_momentum": {
       "status": "shadow",
-      "_status_note": "Shadow after research_candidate lock passes. Promotes to tiny_paper when paper_candidate gate passes (Phase 4 + alpha-proof window).",
+      "_status_note": "Shadow after research_candidate lock passes. Promotes to tiny_paper when paper_candidate gate passes. Universe: top NSE ETFs by ADV.",
       "thesis_id": "edge_thesis_v1",
       "demotion_criteria": [
         "any kill criterion in edge_thesis_v1 (24m Sharpe<0; DSR<0.30; asset-class concentration breach)",
-        "any risk_policy.lock tier breach"
+        "any risk_policy.lock tier breach",
+        "India VIX > 25 sustained for 3+ days (high volatility halt)"
       ]
     },
     "crypto_trend": {
       "status": "tiny_paper",
-      "_status_note": "Phase 9 auto-promote 2026-05-14: validation result drove status \u2192 tiny_paper. Previous note preserved in git history.",
+      "_status_note": "Crypto INR pairs via CoinDCX/WazirX. Capped at 15% equity. 1% TDS on sells >\u20b910,000 (Section 194S). 30% flat tax on gains.",
       "thesis_id": null,
       "demotion_criteria": [
-        "asset-class cap breach (>15% crypto)"
+        "asset-class cap breach (>15% crypto)",
+        "SEBI/RBI regulatory restriction on crypto (monitor rbi.org.in)"
       ]
     },
     "mean_reversion": {
@@ -33,7 +35,7 @@
     },
     "options_income_wheel": {
       "status": "tiny_paper",
-      "_status_note": "Phase 9 auto-promote 2026-05-14: validation result drove status \u2192 tiny_paper. Previous note preserved in git history.",
+      "_status_note": "Nifty/BankNifty/FinNifty options wheel. NSE F&O segment (NFO). Weekly Nifty expiry (Thursday), BankNifty (Wednesday).",
       "thesis_id": null,
       "demotion_criteria": []
     },
@@ -45,7 +47,7 @@
     },
     "dual_momentum": {
       "status": "tiny_paper",
-      "_status_note": "Phase 9 auto-create 2026-05-14: lane created at tiny_paper after validation.",
+      "_status_note": "Dual Momentum with Nifty equity sleeve + LIQUIDBEES treasury sleeve.",
       "thesis_id": null,
       "demotion_criteria": [
         "any risk_policy.lock tier breach",

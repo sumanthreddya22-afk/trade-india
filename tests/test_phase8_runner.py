@@ -63,7 +63,7 @@ def test_evaluate_strategy_returns_top_n_intents(tmp_path):
     for intent in decision.intents:
         assert intent["strategy_id"] == "ETF_MOMENTUM_v1"
         assert intent["side"] == "buy"   # no current positions → all buys
-        assert intent["asset_class"] == "us_equity"
+        assert intent["asset_class"] == "nse_equity"
 
 
 def test_evaluate_strategy_skips_held_in_target(tmp_path):

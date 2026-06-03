@@ -1,10 +1,10 @@
 [project]
 name = "trading-bot"
 version = "0.1.0"
-description = "Semi-autonomous algorithmic trading bot for Alpaca paper account"
+description = "Semi-autonomous algorithmic trading bot for Indian markets (NSE/BSE) via Zerodha Kite Connect"
 requires-python = ">=3.11"
 dependencies = [
-    "alpaca-py>=0.30.0",
+    "kiteconnect>=5.0.1",
     "pydantic>=2.5",
     "pydantic-settings>=2.1",
     "pyyaml>=6.0",

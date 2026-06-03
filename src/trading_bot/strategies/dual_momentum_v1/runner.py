@@ -4,7 +4,7 @@ The universe is **not** hardcoded — it is resolved at decision time
 through ``trading_bot.ingest.universe``. The default discovery rule
 returns today's most-liquid US equity ETF + most-liquid long
 Treasury ETF restricted to the seed thesis allowlist. Today that
-returns ("SPY", "TLT"); if Vanguard or BlackRock launch a more liquid
+returns ("NIFTYBEES", "LIQUIDBEES"); if Vanguard or BlackRock launch a more liquid
 broad-market ETF that's already in the allowlist, the rule picks it
 without a code change.
 
@@ -44,19 +44,21 @@ log = logging.getLogger(__name__)
 # The seed-thesis universe lives in docs/edge_thesis_v1.md. We pin the
 # allowlist here so the discovery rule cannot drift outside the
 # validated set without an explicit code + validation-packet change.
-_THESIS_EQUITY_ALLOWLIST = ("SPY", "QQQ", "IWM", "EFA", "EEM")
-_THESIS_TREASURY_ALLOWLIST = ("TLT", "IEF")
+_THESIS_EQUITY_ALLOWLIST = (
+    "NIFTYBEES", "JUNIORBEES", "SETFNIF50", "HDFCNIFETF", "UTINIFTETF",
+)
+_THESIS_TREASURY_ALLOWLIST = ("LIQUIDBEES", "GILT5YBEES")
 
 DISCOVERY_RULE = Composite(
     sub_rules=(
         TopByVolume(
-            asset_class="us_equity", top_n=1,
+            asset_class="nse_equity", top_n=1,
             required_attributes=("ETF",),
             symbol_allowlist=_THESIS_EQUITY_ALLOWLIST,
             name="dual_momentum_v1.equity_top1",
         ),
         TopByVolume(
-            asset_class="us_equity", top_n=1,
+            asset_class="nse_equity", top_n=1,
             required_attributes=("ETF",),
             symbol_allowlist=_THESIS_TREASURY_ALLOWLIST,
             name="dual_momentum_v1.treasury_top1",
@@ -111,7 +113,7 @@ def should_rebalance_today(today: dt.date, last_date: dt.date | None) -> bool:
 # Static fallback universe — used ONLY when no asset_fetcher is wired
 # (unit tests + backtest replay). Production daemons must inject the
 # Alpaca fetcher so the universe is data-driven.
-_STATIC_FALLBACK_UNIVERSE: tuple[str, ...] = ("SPY", "TLT")
+_STATIC_FALLBACK_UNIVERSE: tuple[str, ...] = ("NIFTYBEES", "LIQUIDBEES")
 
 
 def _resolve_universe_with_fallback(
@@ -152,7 +154,7 @@ def _resolve_universe_with_fallback(
             DISCOVERY_RULE,
             asset_fetcher=fetcher,
             decision_date=decision_date,
-            asset_classes=("us_equity",),
+            asset_classes=("nse_equity",),
         )
     except DiscoveryUnavailable as e:
         log.warning(
@@ -262,7 +264,7 @@ def evaluate_strategy(
                 "strategy_id": STRATEGY_ID, "strategy_ver": 1,
                 "symbol": sym, "side": "buy" if diff > 0 else "sell",
                 "qty": abs(diff), "intent_price": close,
-                "asset_class": "us_equity", "lane": "dual_momentum",
+                "asset_class": "nse_equity", "lane": "dual_momentum",
                 "rationale": f"dual-momentum winner: {sym} (weight={w:.3f})",
             })
         # Sell any held symbol not in target.
@@ -275,7 +277,7 @@ def evaluate_strategy(
             intents.append({
                 "strategy_id": STRATEGY_ID, "strategy_ver": 1,
                 "symbol": sym, "side": "sell", "qty": qty,
-                "intent_price": close, "asset_class": "us_equity",
+                "intent_price": close, "asset_class": "nse_equity",
                 "lane": "dual_momentum",
                 "rationale": "dual-momentum: rotate out",
             })

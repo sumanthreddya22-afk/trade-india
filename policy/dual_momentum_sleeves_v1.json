@@ -1,27 +1,38 @@
 {
-  "lock_version": "2026-05-15.v1",
-  "_source": "session-summary-2026-05-15-pure-mochi.md §5.1 (Option 3 sleeves)",
-  "asset_class": "us_equity",
+  "lock_version": "2026-06-03.v2-india",
+  "_source": "India migration 2026-06-03 — Dual Momentum sleeves for NSE",
+  "asset_class": "nse_equity",
+  "exchange": "NSE",
   "sleeves": {
     "equity": {
       "must_have_attributes": ["ETF"],
-      "exclude_attributes": ["LEVERAGED", "INVERSE", "VOLATILITY", "FIXED_INCOME"],
-      "broad_market_keywords": ["SPDR S&P 500", "Russell 1000", "Total Stock Market", "Total Market", "Total US", "Core S&P"],
-      "fallback_classifier_allowlist": ["SPY", "VOO", "IVV", "QQQ", "VTI", "ITOT", "SCHB", "IWM", "DIA", "MDY"],
-      "min_aum_usd": 5000000000,
+      "exclude_attributes": ["LEVERAGED", "INVERSE", "VOLATILITY", "LIQUID"],
+      "broad_market_keywords": ["Nifty 50", "Nifty Next 50", "Nifty 500", "Nifty 100", "Sensex"],
+      "fallback_classifier_allowlist": [
+        "NIFTYBEES", "SETFNIF50", "HDFCNIFETF", "UTINIFTETF",
+        "JUNIORBEES", "ICICIB22"
+      ],
+      "_fallback_note": "Nifty 50 and Nifty Next 50 ETFs — broad Indian equity market exposure.",
+      "min_aum_inr": 10000000000,
+      "_min_aum_inr_note": "₹1000 crore (₹10 billion). Top-tier NSE ETFs by AUM.",
       "min_age_days": 1095,
       "top_n_by_adv": 3
     },
     "treasury": {
-      "must_have_attributes": ["ETF", "FIXED_INCOME"],
-      "exclude_attributes": ["LEVERAGED", "INVERSE"],
-      "duration_keywords": ["20+ Year Treasury", "7-10 Year Treasury", "Long-Term Treasury", "Intermediate Treasury", "Long Bond"],
-      "fallback_classifier_allowlist": ["TLT", "IEF", "VGLT", "TLH", "EDV", "ZROZ", "VGIT", "SPTL"],
-      "min_aum_usd": 1000000000,
+      "must_have_attributes": ["ETF"],
+      "exclude_attributes": ["LEVERAGED", "INVERSE", "EQUITY"],
+      "duration_keywords": ["Gilt", "G-Sec", "Government Securities", "Liquid", "Overnight"],
+      "fallback_classifier_allowlist": [
+        "LIQUIDBEES", "CPSEETF", "GILT5YBEES", "LIQUIDETF",
+        "ICICILIQ", "SBIETFCON"
+      ],
+      "_fallback_note": "Indian Gilt / Liquid ETFs as the safe-haven / cash-equivalent sleeve. LIQUIDBEES tracks overnight rates (CBLO/Repo). Equivalent role to TLT/IEF in the US sleeve.",
+      "min_aum_inr": 5000000000,
       "min_age_days": 1095,
       "top_n_by_adv": 2
     }
   },
-  "_classifier_note": "If Alpaca asset attributes do not include FIXED_INCOME or sleeve-specific tags, the sleeve classifier uses the fallback_classifier_allowlist intersected with the broad ETF filter. This keeps the universe data-driven where Alpaca's metadata is rich and falls back gracefully where it isn't.",
-  "min_universe_size_per_sleeve": 1
+  "_classifier_note": "If Kite Connect asset attributes do not include sleeve-specific tags, use the fallback_classifier_allowlist. LIQUIDBEES pays daily dividends (reinvested as units) — strategy must handle fractional payout units.",
+  "min_universe_size_per_sleeve": 1,
+  "_data_source": "https://www.nseindia.com/market-data/exchange-traded-funds-etf"
 }

@@ -1,50 +1,54 @@
 {
-  "lock_version": "2026-05-25.v3-webull-shakedown",
-  "_source": "Plan v4 §9 — Reality / Execution Model (pessimistic-lens cost formula). Webull recalibration 2026-05-25 per WS4 4d.",
-  "_note": "Backtests report three lenses (raw, broker-paper, pessimistic). The validation gate uses ONLY the pessimistic lens. These parameters feed into research/backtest_runner during Phase 5 and into execution/cost_model.py during Phase 3.",
-
+  "lock_version": "2026-06-03.v4-india",
+  "_source": "India migration 2026-06-03 \u2014 NSE/BSE transaction cost model. Replaces US SEC/FINRA fees with Indian STT/brokerage/exchange charges.",
+  "_note": "Backtests report three lenses (raw, broker-paper, pessimistic). Validation gate uses ONLY the pessimistic lens. All fees in INR or percentage.",
   "stocks": {
     "extra_slippage_bps": 5,
-    "broker_fees_per_share": 0.0,
-    "_broker_fees_per_share_note": "Alpaca commission-free for retail US equity; Webull commission-free for stocks. Both leave the per-share fee at $0.",
-
-    "sec_section_31_rate": 0.0000278,
-    "_sec_section_31_rate_note": "$27.80 per million on sells only; updated yearly per SEC fee order.",
-
-    "finra_taf_per_share": 0.000166,
-    "finra_taf_per_share_note": "FINRA Trading Activity Fee per share on sells only.",
-
-    "finra_taf_cap_per_trade": 8.30
+    "_slippage_note": "NSE large-cap slippage similar to US large-cap. Higher for mid/small-cap.",
+    "zerodha_brokerage": 0.0,
+    "_zerodha_brokerage_note": "Zerodha charges \u20b90 for delivery equity (CNC). \u20b920 flat or 0.03% (whichever lower) for intraday (MIS). For simplicity, \u20b920/trade for intraday.",
+    "zerodha_intraday_flat_inr": 20.0,
+    "stt_delivery_buy_pct": 0.001,
+    "stt_delivery_sell_pct": 0.001,
+    "stt_intraday_sell_pct": 0.00025,
+    "_stt_note": "Securities Transaction Tax per Finance Act. 0.1% each side for delivery; 0.025% on sell for intraday.",
+    "exchange_txn_charge_pct": 3.25e-05,
+    "_exchange_txn_note": "NSE transaction charge: \u20b9325 per crore (\u20b90.00325/\u20b910,000 = 0.00325 bps per rupee). Updated from NSE circular.",
+    "sebi_turnover_fee_pct": 1e-06,
+    "_sebi_note": "SEBI turnover fee: \u20b910 per crore (\u20b91 per million). Very small but included.",
+    "stamp_duty_buy_pct": 0.00015,
+    "_stamp_duty_note": "Stamp duty on buy side: 0.015% for delivery equity. 0.003% for intraday. (Finance Act 2019 amendment, applicable from Jul 2020)",
+    "gst_on_brokerage_pct": 18.0,
+    "_gst_note": "18% GST applies on brokerage + exchange fees (not on STT/stamp duty)."
   },
-
   "crypto": {
-    "taker_bps": 30,
-    "_taker_bps_note": "Pessimistic-lens assumes taker fees; maker mode is permitted only after a 70% fill rate is measured in shadow. Verified 2026-05-25 against Webull crypto fee schedule — within tolerance.",
-
-    "extra_slippage_bps": 10,
-
+    "taker_bps": 20,
+    "_taker_bps_note": "CoinDCX taker fee: 0.2% (20 bps). WazirX: 0.2%. Conservative estimate.",
+    "extra_slippage_bps": 15,
+    "_slippage_note": "Higher slippage for INR crypto pairs vs USD pairs due to lower liquidity.",
+    "tds_pct": 1.0,
+    "_tds_note": "1% TDS (Tax Deducted at Source) on crypto transfers/sales >\u20b910,000 per Section 194S Income Tax Act 2022. TDS is a cost \u2014 it reduces INR received on each sale.",
+    "flat_tax_on_gains_pct": 30.0,
+    "_flat_tax_note": "30% flat tax on crypto gains (Section 115BBH). Cannot be offset against losses from other crypto or any other income. Must be tracked per trade.",
     "fill_mode_default": "taker",
-    "fill_mode_alternative": "maker",
-    "maker_mode_min_fill_rate_pct": 70.0,
-    "_fill_mode_note": "Lane starts in taker mode; switches to maker only after sustained 70% fill rate."
+    "maker_mode_min_fill_rate_pct": 70.0
   },
-
   "options": {
-    "extra_slippage_bps": 25,
-    "per_contract_fee_usd": 0.65,
-    "_per_contract_fee_note": "Webull options $0.65/contract; matches Alpaca.",
-
-    "regulatory_fees": {
-      "orf_per_contract_usd": 0.02925,
-      "_orf_note": "Options Regulatory Fee per OCC; charged per contract on opening + closing (both sides).",
-      "occ_clearing_per_contract_usd": 0.02,
-      "_occ_note": "OCC clearing fee per contract per side."
-    },
-
+    "extra_slippage_bps": 20,
+    "_slippage_note": "Nifty/BankNifty options are extremely liquid; slippage lower than US equity options.",
+    "zerodha_fo_brokerage_flat_inr": 20.0,
+    "_brokerage_note": "Zerodha F&O brokerage: \u20b920 per order (flat, regardless of quantity).",
+    "stt_fo_sell_pct": 0.000125,
+    "_stt_fo_note": "STT on F&O options sell side: 0.0125% of premium. On futures: 0.01% of trade value.",
+    "nse_fo_txn_charge_pct": 5.3e-05,
+    "_nse_fo_note": "NSE F&O transaction charge: \u20b9530 per crore for options.",
+    "sebi_fo_turnover_fee_pct": 1e-06,
+    "stamp_duty_fo_buy_pct": 3e-05,
+    "_stamp_duty_fo_note": "Stamp duty on F&O buy side: 0.003% for options.",
+    "gst_on_brokerage_pct": 18.0,
     "fill_handling": "marketable_limit_per_formula",
-    "_fill_handling_note": "Options entries use a marketable limit at the formula's price; no chasing — no fill cancels the trade."
+    "_fill_handling_note": "F&O entries use a marketable limit; no chasing \u2014 no fill cancels the trade."
   },
-
   "reporting_lenses": {
     "raw": {
       "_description": "Mid-to-mid; assumes fills at midpoint, no spread, no slippage, no fees.",
@@ -59,11 +63,9 @@
       "_gate_eligibility": "THIS is the lens that gates all validation_policy thresholds."
     }
   },
-
   "live_vs_model_drift": {
     "rolling_window_trades": 20,
     "tolerance_multiplier": 1.5,
-    "_tolerance_history": "2.0 -> 1.5 on 2026-05-25 (tighten — first 30 live days). Also reflected as TOLERANCE_MULTIPLIER_DEFAULT in execution/drift_monitor.py.",
     "_breach_action": "lane auto-demoted to observe_only"
   }
 }

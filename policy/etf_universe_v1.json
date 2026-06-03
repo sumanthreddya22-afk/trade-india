@@ -1,15 +1,24 @@
 {
-  "lock_version": "2026-05-15.v1",
-  "_source": "session-summary-2026-05-15-pure-mochi.md §5.1",
-  "_note": "ETF Momentum v3 universe filter. Replaces hardcoded 10-ETF allowlist. Structured filter: no leveraged/inverse, min AUM, min age, top-N by ADV.",
-  "asset_class": "us_equity",
+  "lock_version": "2026-06-03.v2-india",
+  "_source": "India migration 2026-06-03 — NSE ETF universe",
+  "_note": "ETF Momentum v3 universe filter for Indian markets. Covers NSE-listed ETFs. No leveraged/inverse products allowed. Minimum AUM in INR.",
+  "asset_class": "nse_equity",
+  "exchange": "NSE",
   "must_have_attributes": ["ETF"],
   "exclude_attributes": ["LEVERAGED", "INVERSE", "VOLATILITY"],
-  "min_aum_usd": 1000000000,
+  "min_aum_inr": 5000000000,
+  "_min_aum_inr_note": "₹500 crore minimum AUM. Equivalent to ~$60M USD at 83 INR/USD.",
   "min_age_days": 1095,
   "tradable_required": true,
-  "fractionable_preferred": true,
-  "top_n_by_adv": 30,
+  "fractionable_preferred": false,
+  "_fractionable_note": "NSE does not support fractional shares; whole-lot orders only.",
+  "top_n_by_adv": 20,
   "min_universe_size": 5,
-  "_min_universe_size_note": "if fewer than 5 ETFs match, halt strategy for this decision (DiscoveryUnavailable)"
+  "_min_universe_size_note": "If fewer than 5 ETFs match, halt strategy for this decision (DiscoveryUnavailable).",
+  "starter_allowlist": [
+    "NIFTYBEES", "JUNIORBEES", "GOLDBEES", "BANKBEES", "LIQUIDBEES",
+    "SETFNIF50", "MOM100ETF", "ICICIB22", "HDFCNIFETF", "UTINIFTETF"
+  ],
+  "_starter_allowlist_note": "Well-established NSE ETFs used as fallback when live instrument data is unavailable (test/backtest only). Sources: NSE India ETF listings.",
+  "_data_source": "https://www.nseindia.com/market-data/exchange-traded-funds-etf"
 }

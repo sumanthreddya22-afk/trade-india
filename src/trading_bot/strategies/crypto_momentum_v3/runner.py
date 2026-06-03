@@ -25,7 +25,7 @@ STRATEGY_ID = "CRYPTO_MOMENTUM_v3"
 STRATEGY_VER = 3
 POLICY_PATH = DEFAULT_POLICY_DIR / "crypto_universe_v1.json"
 
-_FALLBACK_UNIVERSE: tuple[str, ...] = ("BTC/USD", "ETH/USD")
+_FALLBACK_UNIVERSE: tuple[str, ...] = ("BTC/INR", "ETH/INR")
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,7 @@
 
 The risk kernel's intraday checks (``check_daily_drawdown`` /
 ``check_intraday_pnl_floor``) need ``equity_at_session_start`` — the
-equity at the most recent US equity-session open. Without it those
+equity at the most recent NSE equity-session open. Without it those
 checks always pass.
 
 We reconstruct the anchor from the existing ``account_snapshot`` table
@@ -13,7 +13,7 @@ returning the caller-supplied current equity (which yields a zero DD
 on the first risk check after open — same behaviour as before, but
 documented).
 
-The session anchor for the equity lane is America/New_York 09:30. For
+The session anchor for the equity lane is Asia/Kolkata 09:15 IST. For
 weekends and holidays we fall back to the most recent prior session
 open, which keeps Saturday/Sunday crypto strategies honest about their
 drawdown without forcing the daemon to know the holiday calendar.
@@ -27,9 +27,9 @@ from trading_bot.daemon.market_clock import NY_TZ, RTH_OPEN
 
 
 def _current_session_anchor_utc(now: dt.datetime | None = None) -> dt.datetime:
-    """Return the UTC timestamp of the most recent US-equity 09:30 ET
+    """Return the UTC timestamp of the most recent NSE-equity 09:15 IST
     boundary that is <= ``now`` (default: wall clock). On weekends or
-    before today's 09:30, walks back to the previous weekday's 09:30 so
+    before today's 09:15, walks back to the previous weekday's 09:15 so
     that an anchor always exists."""
     now = now or dt.datetime.now(dt.timezone.utc)
     local = now.astimezone(NY_TZ)

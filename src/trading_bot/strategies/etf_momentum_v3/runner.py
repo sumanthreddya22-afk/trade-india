@@ -20,15 +20,15 @@ from trading_bot.strategies.etf_momentum_v1.signal import (
 
 log = logging.getLogger(__name__)
 
-STRATEGY_ID = "ETF_MOMENTUM_v3"
+STRATEGY_ID = "ETF_MOMENTUM_v3_INDIA"
 STRATEGY_VER = 3
 POLICY_PATH = DEFAULT_POLICY_DIR / "etf_universe_v1.json"
 
 # Fallback universe used only when no asset_fetcher is wired (tests +
 # backtest replay). Production daemons MUST inject the Alpaca fetcher.
 _FALLBACK_UNIVERSE: tuple[str, ...] = (
-    "SPY", "QQQ", "IWM", "DIA", "EFA", "EEM",
-    "XLK", "XLF", "XLE", "XLV",
+    "NIFTYBEES", "JUNIORBEES", "GOLDBEES", "BANKBEES",
+    "SETFNIF50", "LIQUIDBEES", "MOM100ETF", "HDFCNIFETF",
 )
 
 
@@ -138,7 +138,7 @@ def evaluate_strategy(
                 "symbol": sym,
                 "side": "buy" if diff > 0 else "sell",
                 "qty": abs(diff), "intent_price": close,
-                "asset_class": "us_equity", "lane": "etf_momentum",
+                "asset_class": "nse_equity", "lane": "etf_momentum",
                 "rationale": f"etf_momentum_v3: rebalance to weight={w:.3f}",
             })
         for sym, qty in current_qty.items():
@@ -151,7 +151,7 @@ def evaluate_strategy(
                 "strategy_id": STRATEGY_ID,
                 "strategy_ver": STRATEGY_VER,
                 "symbol": sym, "side": "sell", "qty": qty,
-                "intent_price": close, "asset_class": "us_equity",
+                "intent_price": close, "asset_class": "nse_equity",
                 "lane": "etf_momentum",
                 "rationale": "etf_momentum_v3: dropped from target",
             })

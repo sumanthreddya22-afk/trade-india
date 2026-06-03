@@ -4,10 +4,22 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import pytest
+
 from trading_bot.kernel import run_boot_checks
 from trading_bot.ledger import create_ledger, init_mirror
 from trading_bot.ledger.connection import connect_writer
 from trading_bot.risk.policy_loader import DEFAULT_POLICY_DIR
+
+
+@pytest.fixture(autouse=True)
+def _stub_claude_cli_for_boot_check(monkeypatch):
+    """The boot check includes a `claude_cli` probe (binary must exist on
+    PATH or at TRADING_BOT_CLAUDE_CLI_PATH). Tests should not depend on
+    the developer having installed the Claude CLI globally — stub the
+    path to /bin/echo so the probe passes deterministically. The real
+    invocation is exercised separately in llm_transport tests."""
+    monkeypatch.setenv("TRADING_BOT_CLAUDE_CLI_PATH", "/bin/echo")
 
 
 def _init_dbs(tmp_path: Path):

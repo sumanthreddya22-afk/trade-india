@@ -1,27 +1,72 @@
 {
-  "lock_version": "2026-05-13.v4-phase2",
-  "_source": "Plan v4 §6 PDT note + FINRA Notice 25-XX",
-  "_note": "v3 inverts v2's PDT rule: at entry time the risk kernel asks 'if I had to exit this position later today via a stop or emergency, would that be the 4th day-trade in the rolling 5-business-day window?' If yes, the entry is blocked. Once a position exists, ANY exit is permitted regardless of the day-trade count — PDT is treated as a softly-penalty restriction the operator accepts in exchange for honoring stops.",
+  "lock_version": "2026-06-03.v1-india-sebi",
+  "_replaces": "US FINRA PDT rule (pdt_policy.lock v2026-05-13.v4-phase2)",
+  "_source": "SEBI LODR + NSE/BSE Circular — India has NO Pattern Day Trader rule",
+  "_note": "India does not have the US FINRA PDT (Pattern Day Trader) rule. There is no minimum account balance requirement for intraday trading on NSE. This lock file replaces PDT constraints with SEBI-specific intraday and margin rules.",
 
-  "day_trade_threshold": 3,
-  "_day_trade_threshold_note": "PDT triggers on the 4th day-trade in a rolling 5-business-day window when equity is below the boundary below. Current FINRA rule.",
+  "pdt_applies": false,
+  "_pdt_applies_note": "SEBI/NSE has no PDT rule. Indian retail accounts may trade intraday any number of times regardless of account size.",
 
-  "equity_boundary_usd": 25000,
-  "_equity_boundary_note": "Accounts at or above this boundary are not flagged PDT. The boundary stays $25k until FINRA Notice 25-XX completes its transition.",
-
-  "rolling_window_business_days": 5,
-
-  "finra_notice_25xx": {
-    "effective_date": "2026-06-04",
-    "full_transition_date": "2026-10-20",
-    "_note": "FINRA intraday-margin transition (Notice 25-XX). This lock file MUST be re-dated as the FINRA values change so the kernel honors the new boundary without code changes."
+  "sebi_circuit_breakers": {
+    "_source": "SEBI Circular SEBI/HO/MRD/DP/CIR/P/2013/62 (Index-based market-wide circuit breakers)",
+    "market_wide": [
+      {
+        "trigger_pct": 10.0,
+        "halt_duration_minutes": 45,
+        "_note": "If Nifty 50 or Sensex drops 10% before 13:00 IST, market halts for 45 minutes. After 13:00 but before 14:30, halts for 15 minutes. At or after 14:30, no halt."
+      },
+      {
+        "trigger_pct": 15.0,
+        "halt_duration_minutes": 105,
+        "_note": "15% drop before 13:00 IST: halt for 1h 45m. Before 14:00: halt for 45m. At or after 14:00: halt for remainder of day."
+      },
+      {
+        "trigger_pct": 20.0,
+        "halt_duration": "remainder_of_day",
+        "_note": "20% drop at any time: halt for remainder of trading day."
+      }
+    ],
+    "individual_stocks": {
+      "_note": "Individual stock circuit filters: ±5%, ±10%, or ±20% depending on stock category. Applied continuously; stock enters 'No Delivery Period' for T-day if it hits the filter.",
+      "categories": {
+        "category_a": "±20%",
+        "category_b": "±10%",
+        "category_c": "±5%"
+      }
+    }
   },
 
-  "day_trade_count_source": "alpaca_account_endpoint",
-  "_day_trade_count_source_note": "Read on every kernel cycle from the broker (Alpaca exposes day_trade_count on the account endpoint). The bot does NOT maintain a parallel count.",
+  "intraday_margin": {
+    "_source": "SEBI Circular SEBI/HO/MRD1/MIINVIT/CIR/P/2021/665 (Peak Margin Requirements)",
+    "peak_margin_upfront_pct": 100,
+    "_peak_margin_note": "Since Sep 2021, 100% upfront peak margin is required for intraday trades (no intraday leverage on SPAN+Exposure). This replaced the old 20x intraday leverage.",
+    "mis_square_off_time_ist": "15:15",
+    "_mis_square_off_note": "Zerodha auto-squares MIS positions at 15:15 IST if not closed by the trader. This is broker-specific; SEBI mandates square-off before market close.",
+    "overnight_margin": "VAR + ELM",
+    "_overnight_margin_note": "Overnight delivery positions require VAR (Value at Risk) + ELM (Extreme Loss Margin) as per SEBI. Typically 20–30% of trade value for large-cap stocks."
+  },
 
+  "settlement": {
+    "cycle": "T+1",
+    "_settlement_note": "NSE/BSE moved to T+1 rolling settlement for equities in Jan 2023 (SEBI Circular). Funds and shares credited/debited on T+1. F&O settlement is T+1 for mark-to-market, final on expiry.",
+    "stcg_holding_period_days": 365,
+    "_stcg_note": "Short-term capital gains tax (STCG) applies if equity held < 1 year (15% flat). Long-term CGT (LTCG) at 10% above ₹1 lakh/year for holdings ≥ 1 year."
+  },
+
+  "stt": {
+    "_source": "Finance Act — Securities Transaction Tax",
+    "equity_delivery_buy_pct": 0.1,
+    "equity_delivery_sell_pct": 0.1,
+    "equity_intraday_sell_pct": 0.025,
+    "_intraday_buy_note": "No STT on intraday buy side.",
+    "fo_sell_pct": 0.0125,
+    "fo_options_sell_pct": 0.0625,
+    "_stt_note": "STT (Securities Transaction Tax) applies on every NSE/BSE equity and F&O transaction. Must be included in cost_model.lock calculations."
+  },
+
+  "day_trade_count_source": "not_applicable",
   "exit_policy": {
     "exits_always_allowed": true,
-    "_exits_note": "Stops, take-profits, and emergency exits are ALWAYS allowed, regardless of day_trade_count. The plan's exact words: 'Once a position exists, any exit is permitted regardless of the day-trade count.'"
+    "_exits_note": "Stops, take-profits, and emergency exits are ALWAYS allowed. MIS positions MUST be squared off before 15:15 IST or Zerodha auto-squares them."
   }
 }

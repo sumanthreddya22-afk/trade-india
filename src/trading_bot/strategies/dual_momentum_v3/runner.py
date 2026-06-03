@@ -20,13 +20,13 @@ from trading_bot.strategies.dual_momentum_v1.signal import (
 
 log = logging.getLogger(__name__)
 
-STRATEGY_ID = "DUAL_MOMENTUM_v3"
+STRATEGY_ID = "DUAL_MOMENTUM_v3_INDIA"
 STRATEGY_VER = 3
 POLICY_PATH = DEFAULT_POLICY_DIR / "dual_momentum_sleeves_v1.json"
 
 _FALLBACK_PER_SLEEVE: dict[str, tuple[str, ...]] = {
-    "equity": ("SPY",),
-    "treasury": ("TLT",),
+    "equity": ("NIFTYBEES",),
+    "treasury": ("LIQUIDBEES",),
 }
 
 
@@ -143,7 +143,7 @@ def evaluate_strategy(
                 "symbol": sym,
                 "side": "buy" if diff > 0 else "sell",
                 "qty": abs(diff), "intent_price": close,
-                "asset_class": "us_equity", "lane": "dual_momentum",
+                "asset_class": "nse_equity", "lane": "dual_momentum",
                 "rationale": f"dual_momentum_v3 winner: {sym} (weight={w:.3f})",
             })
         for sym, qty in current_qty.items():
@@ -156,7 +156,7 @@ def evaluate_strategy(
                 "strategy_id": STRATEGY_ID,
                 "strategy_ver": STRATEGY_VER,
                 "symbol": sym, "side": "sell", "qty": qty,
-                "intent_price": close, "asset_class": "us_equity",
+                "intent_price": close, "asset_class": "nse_equity",
                 "lane": "dual_momentum",
                 "rationale": "dual_momentum_v3: rotate out",
             })

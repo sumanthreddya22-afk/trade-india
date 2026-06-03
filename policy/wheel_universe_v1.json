@@ -1,18 +1,28 @@
 {
-  "lock_version": "2026-05-15.v1",
-  "_source": "session-summary-2026-05-15-pure-mochi.md §6 (Phase B)",
-  "_note": "Multi-underlying wheel: top-N optionable, liquid ETFs picked dynamically.",
-  "asset_class": "us_equity",
+  "lock_version": "2026-06-03.v2-india",
+  "_source": "India migration 2026-06-03 — Options Wheel universe for NSE F&O",
+  "_note": "Multi-underlying Nifty/BankNifty wheel strategy. NSE F&O segment.",
+  "asset_class": "nse_fo",
+  "exchange": "NFO",
   "must_have_attributes": ["ETF", "OPTIONS_ENABLED"],
   "exclude_attributes": ["LEVERAGED", "INVERSE"],
-  "min_option_volume_30d": 50000,
-  "min_aum_usd": 5000000000,
+  "_nse_fo_note": "NSE F&O index options are cash-settled (European-style). Stock options are American-style. Weekly expiry available for Nifty (every Thursday) and BankNifty (every Wednesday). Monthly expiry last Thursday of month.",
+  "min_option_volume_30d": 100000,
+  "_min_option_volume_note": "Minimum 1 lakh contracts in 30-day window. NSE index options are extremely liquid (top global by volume).",
+  "min_aum_inr": 5000000000,
   "tradable_required": true,
   "top_n_by_option_volume": 3,
   "capital_allocation_method": "equal_weight",
   "max_concurrent_wheels": 3,
   "per_wheel_max_capital_fraction": 0.3333,
   "min_universe_size": 1,
-  "starter_allowlist": ["SPY", "QQQ", "IWM", "DIA"],
-  "_starter_allowlist_note": "Fallback symbols used when no option-volume provider is wired (test/backtest only); production daemons inject a provider."
+  "starter_allowlist": ["NIFTY", "BANKNIFTY", "FINNIFTY"],
+  "_starter_allowlist_note": "Nifty 50 index, Bank Nifty index, Nifty Financial Services index — the three most liquid weekly-expiry F&O contracts on NSE.",
+  "lot_sizes": {
+    "NIFTY": 25,
+    "BANKNIFTY": 15,
+    "FINNIFTY": 40
+  },
+  "_lot_sizes_note": "NSE F&O contracts are in lots, not individual units. Lot sizes are revised by SEBI periodically. Current as of 2026-06-03.",
+  "_data_source": "https://www.nseindia.com/products-services/equity-derivatives-overview"
 }

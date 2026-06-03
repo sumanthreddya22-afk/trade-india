@@ -26,10 +26,10 @@ from trading_bot.strategies.spy_wheel_v3.state_machine import (
 log = logging.getLogger(__name__)
 
 
-STRATEGY_ID = "SPY_WHEEL_v3"
+STRATEGY_ID = "NIFTY_WHEEL_v3"
 STRATEGY_VER = 3
 POLICY_PATH = DEFAULT_POLICY_DIR / "wheel_universe_v1.json"
-_FALLBACK_UNDERLYINGS = ("SPY", "QQQ", "IWM")
+_FALLBACK_UNDERLYINGS = ("NIFTY", "BANKNIFTY", "FINNIFTY")
 
 
 @dataclass(frozen=True)

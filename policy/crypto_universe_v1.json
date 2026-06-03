@@ -1,13 +1,25 @@
 {
-  "lock_version": "2026-05-15.v1",
-  "_source": "session-summary-2026-05-15-pure-mochi.md §5.1",
+  "lock_version": "2026-06-03.v2-india",
+  "_source": "India migration 2026-06-03 — Crypto universe for Indian exchanges",
+  "_note": "Crypto trading in India via regulated exchanges (CoinDCX, WazirX, Binance India). SEBI has not yet formally regulated crypto; RBI's 2022 TDS (1% on transfers >₹10,000) applies. Tax: 30% flat on gains + 1% TDS. Max crypto exposure capped at 15% of equity per risk_policy.lock.",
   "asset_class": "crypto",
+  "quote_currency": "INR",
   "must_have_attributes": [],
   "exclude_attributes": [],
   "exclude_stablecoins": true,
-  "stablecoin_symbol_prefixes": ["USDT", "USDC", "DAI", "BUSD", "TUSD", "FDUSD", "USDP"],
-  "min_30d_dollar_volume_usd": 100000000,
+  "stablecoin_symbol_prefixes": [
+    "USDT", "USDC", "DAI", "BUSD", "TUSD", "FDUSD", "USDP", "RUPX"
+  ],
+  "min_30d_inr_volume": 1000000000,
+  "_min_30d_inr_volume_note": "₹100 crore (₹1 billion) 30-day INR volume. Filters to BTC/INR and ETH/INR at minimum.",
   "tradable_required": true,
-  "top_n_by_dollar_volume": 10,
-  "min_universe_size": 2
+  "top_n_by_inr_volume": 8,
+  "min_universe_size": 2,
+  "starter_allowlist": [
+    "BTC/INR", "ETH/INR", "BNB/INR", "SOL/INR", "MATIC/INR"
+  ],
+  "_tds_note": "Per Section 194S Income Tax Act: 1% TDS on crypto transfers >₹10,000 (₹50,000 for specified persons). Cost model must account for TDS as a transaction cost.",
+  "_tax_note": "Capital gains on crypto taxed at flat 30% (Section 115BBH). Losses from crypto CANNOT be set off against other income. Cost model must track this separately.",
+  "_exchange_note": "Primary exchanges: CoinDCX (https://coindcx.com), WazirX (https://wazirx.com). For production, wire a CoinDCX or WazirX adapter.",
+  "_data_source": "https://coindcx.com/trade/markets"
 }

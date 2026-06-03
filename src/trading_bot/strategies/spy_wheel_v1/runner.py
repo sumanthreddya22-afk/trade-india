@@ -50,7 +50,7 @@ log = logging.getLogger(__name__)
 _WHEEL_UNDERLYING_ALLOWLIST: tuple[str, ...] = (UNDERLYING,)
 
 DISCOVERY_RULE = TopByVolume(
-    asset_class="us_equity",
+    asset_class="nse_fo",
     top_n=1,
     required_attributes=("ETF",),
     symbol_allowlist=_WHEEL_UNDERLYING_ALLOWLIST,
@@ -128,7 +128,7 @@ def _resolve_underlying_with_fallback(
     try:
         res: UniverseResolution = resolve_universe(
             DISCOVERY_RULE, asset_fetcher=fetcher,
-            decision_date=decision_date, asset_classes=("us_equity",),
+            decision_date=decision_date, asset_classes=("nse_fo",),
         )
     except DiscoveryUnavailable as e:
         log.warning(

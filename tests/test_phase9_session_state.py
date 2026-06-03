@@ -14,7 +14,12 @@ from trading_bot.daemon.session_state import (
 
 
 from zoneinfo import ZoneInfo
-NY = ZoneInfo("America/New_York")
+# Post India migration: anchor lives at 09:15 IST (was 09:30 ET).
+# Tests use IST throughout but keep the legacy `NY` alias so the
+# variable name doesn't have to be sed'd everywhere — it now points
+# at Asia/Kolkata.
+IST = ZoneInfo("Asia/Kolkata")
+NY = IST
 
 
 @pytest.fixture
@@ -40,10 +45,10 @@ def test_falls_back_to_current_when_no_snapshot(conn) -> None:
 
 
 def test_returns_first_snapshot_in_session(conn) -> None:
-    # Pin "now" at 14:00 ET; session anchor = today 09:30 ET.
-    now = dt.datetime(2026, 5, 15, 14, 0, tzinfo=NY)
-    snap_at_open = dt.datetime(2026, 5, 15, 9, 31, tzinfo=NY)
-    snap_later = dt.datetime(2026, 5, 15, 13, 0, tzinfo=NY)
+    # Pin "now" at 14:00 IST; session anchor = today 09:15 IST.
+    now = dt.datetime(2026, 5, 15, 14, 0, tzinfo=IST)
+    snap_at_open = dt.datetime(2026, 5, 15, 9, 16, tzinfo=IST)
+    snap_later = dt.datetime(2026, 5, 15, 13, 0, tzinfo=IST)
     _insert_snapshot(conn, snap_at_open, equity=100_000.0)
     _insert_snapshot(conn, snap_later, equity=98_500.0)
     eq = session_start_equity(conn, fallback_equity=999.0, now=now)
@@ -52,9 +57,9 @@ def test_returns_first_snapshot_in_session(conn) -> None:
 
 def test_ignores_prior_session_snapshots(conn) -> None:
     """Snapshots from yesterday must NOT anchor today's session."""
-    now = dt.datetime(2026, 5, 15, 10, 0, tzinfo=NY)
-    yesterday_snap = dt.datetime(2026, 5, 14, 10, 0, tzinfo=NY)
-    today_snap = dt.datetime(2026, 5, 15, 9, 31, tzinfo=NY)
+    now = dt.datetime(2026, 5, 15, 10, 0, tzinfo=IST)
+    yesterday_snap = dt.datetime(2026, 5, 14, 10, 0, tzinfo=IST)
+    today_snap = dt.datetime(2026, 5, 15, 9, 16, tzinfo=IST)
     _insert_snapshot(conn, yesterday_snap, equity=90_000.0)
     _insert_snapshot(conn, today_snap, equity=100_000.0)
     eq = session_start_equity(conn, fallback_equity=999.0, now=now)
@@ -62,22 +67,22 @@ def test_ignores_prior_session_snapshots(conn) -> None:
 
 
 def test_anchor_walks_back_to_friday_on_weekend(conn) -> None:
-    """Sat / Sun → previous Friday 09:30 anchor (crypto strategies must
-    still compute DD on weekends)."""
-    # Saturday 2026-05-16 10:00 ET
-    saturday = dt.datetime(2026, 5, 16, 10, 0, tzinfo=NY)
+    """Sat / Sun → previous Friday 09:15 IST anchor (crypto strategies
+    must still compute DD on weekends)."""
+    # Saturday 2026-05-16 10:00 IST
+    saturday = dt.datetime(2026, 5, 16, 10, 0, tzinfo=IST)
     anchor = _current_session_anchor_utc(saturday.astimezone(dt.timezone.utc))
-    # Anchor must be Friday 2026-05-15 09:30 ET
-    anchor_ny = anchor.astimezone(NY)
-    assert anchor_ny.weekday() == 4    # Friday
-    assert anchor_ny.date() == dt.date(2026, 5, 15)
-    assert (anchor_ny.hour, anchor_ny.minute) == (9, 30)
+    # Anchor must be Friday 2026-05-15 09:15 IST.
+    anchor_ist = anchor.astimezone(IST)
+    assert anchor_ist.weekday() == 4    # Friday
+    assert anchor_ist.date() == dt.date(2026, 5, 15)
+    assert (anchor_ist.hour, anchor_ist.minute) == (9, 15)
 
 
 def test_anchor_walks_back_before_today_open(conn) -> None:
-    """At 08:00 ET (pre-open), anchor should be yesterday's 09:30 — we
-    have not yet entered today's session."""
-    pre_open = dt.datetime(2026, 5, 15, 8, 0, tzinfo=NY)
+    """At 08:00 IST (pre-open), anchor should be yesterday's 09:15 —
+    we have not yet entered today's session."""
+    pre_open = dt.datetime(2026, 5, 15, 8, 0, tzinfo=IST)
     anchor = _current_session_anchor_utc(pre_open.astimezone(dt.timezone.utc))
-    anchor_ny = anchor.astimezone(NY)
-    assert anchor_ny.date() == dt.date(2026, 5, 14)
+    anchor_ist = anchor.astimezone(IST)
+    assert anchor_ist.date() == dt.date(2026, 5, 14)

@@ -1,14 +1,17 @@
 """Operator timezone display helpers.
 
 The ledger + every hash chain stores timestamps in UTC. The operator
-reads them in **America/New_York (EST/EDT)**. This module is the single
-place where UTC → operator-local conversion happens; anything that
-renders to the operator (dashboard, CLI, digest, email) goes through
-``format_et`` / ``now_et_str``.
+reads them in **Asia/Kolkata (IST, UTC+5:30)**. This module is the
+single place where UTC → operator-local conversion happens; anything
+that renders to the operator (dashboard, CLI, digest, email) goes
+through ``format_ist`` / ``now_ist_str``.
 
-Why a module not a magic format string: when DST changes, when the
-operator moves abroad, or when we want to honor a `TRADING_BOT_TZ` env
-override, we change *here only* and nothing else.
+India does not observe daylight saving time — IST is a fixed UTC+5:30
+offset year-round. NSE/BSE session: 09:15–15:30 IST, Monday–Friday.
+
+Why a module not a magic format string: if the operator moves timezone
+or we want to honour a ``TRADING_BOT_TZ`` env override, we change
+*here only* and nothing else.
 """
 from __future__ import annotations
 
@@ -17,7 +20,7 @@ import os
 from zoneinfo import ZoneInfo
 
 OPERATOR_TZ_ENV = "TRADING_BOT_TZ"
-DEFAULT_TZ = "America/New_York"
+DEFAULT_TZ = "Asia/Kolkata"
 
 
 def operator_tz() -> ZoneInfo:
@@ -42,7 +45,7 @@ def to_operator(ts: dt.datetime | str | None) -> dt.datetime | None:
     return ts.astimezone(operator_tz())
 
 
-def format_et(
+def format_ist(
     ts: dt.datetime | str | None,
     *,
     fmt: str = "%Y-%m-%d %H:%M:%S %Z",
@@ -54,11 +57,20 @@ def format_et(
     return out.strftime(fmt)
 
 
-def now_et_str(fmt: str = "%Y-%m-%d %H:%M:%S %Z") -> str:
+# Backward-compat alias (older callsites used format_et).
+format_et = format_ist
+
+
+def now_ist_str(fmt: str = "%Y-%m-%d %H:%M:%S %Z") -> str:
     return dt.datetime.now(operator_tz()).strftime(fmt)
+
+
+# Backward-compat alias.
+now_et_str = now_ist_str
 
 
 __all__ = [
     "DEFAULT_TZ", "OPERATOR_TZ_ENV",
-    "format_et", "now_et_str", "operator_tz", "to_operator",
+    "format_et", "format_ist", "now_et_str", "now_ist_str",
+    "operator_tz", "to_operator",
 ]

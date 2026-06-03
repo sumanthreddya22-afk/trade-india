@@ -45,7 +45,7 @@ log = logging.getLogger(__name__)
 _THESIS_ETF_ALLOWLIST = UNIVERSE
 
 DISCOVERY_RULE = TopByVolume(
-    asset_class="us_equity",
+    asset_class="nse_equity",
     top_n=len(_THESIS_ETF_ALLOWLIST),
     required_attributes=("ETF",),
     symbol_allowlist=_THESIS_ETF_ALLOWLIST,
@@ -125,7 +125,7 @@ def _resolve_universe_with_fallback(
     try:
         res: UniverseResolution = resolve_universe(
             DISCOVERY_RULE, asset_fetcher=fetcher,
-            decision_date=decision_date, asset_classes=("us_equity",),
+            decision_date=decision_date, asset_classes=("nse_equity",),
         )
     except DiscoveryUnavailable as e:
         log.warning(
@@ -249,7 +249,7 @@ def evaluate_strategy(
                 "side": "buy" if diff > 0 else "sell",
                 "qty": abs(diff),
                 "intent_price": close,
-                "asset_class": "us_equity",
+                "asset_class": "nse_equity",
                 "lane": "etf_momentum",
                 "rationale": f"rebalance to weight={w:.3f}",
             })
@@ -267,7 +267,7 @@ def evaluate_strategy(
                 "side": "sell",
                 "qty": qty,
                 "intent_price": close,
-                "asset_class": "us_equity",
+                "asset_class": "nse_equity",
                 "lane": "etf_momentum",
                 "rationale": "rebalance: dropped from target",
             })
