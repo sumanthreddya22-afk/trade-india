@@ -38,14 +38,75 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# NSE / BSE symbol mapping
+# ---------------------------------------------------------------------------
+# yfinance needs an exchange suffix for Indian stocks:
+#   NSE → ".NS"   (e.g. RELIANCE.NS, NIFTYBEES.NS)
+#   BSE → ".BO"   (e.g. 500325.BO for Reliance on BSE)
+# Crypto INR pairs use dash form: BTC-INR, ETH-INR
+# Internally we store bare symbols (RELIANCE, BTC/INR).
+
+def _to_yf_symbol(sym: str, *, exchange: str = "NSE") -> str:
+    """Convert internal symbol → yfinance ticker."""
+    # Crypto INR pairs: BTC/INR → BTC-INR
+    if "/INR" in sym.upper():
+        return sym.upper().replace("/", "-")
+    # Crypto USD pairs (legacy): BTC/USD → BTC-USD
+    if "/USD" in sym.upper():
+        return sym.upper().replace("/", "-")
+    # Already has suffix — pass through
+    if sym.endswith((".NS", ".BO")):
+        return sym
+    # NSE index symbols that yfinance tracks with ^ prefix
+    _INDEX_MAP = {
+        "NIFTY": "^NSEI",
+        "NIFTY50": "^NSEI",
+        "BANKNIFTY": "^NSEBANK",
+        "FINNIFTY": "NIFTY_FIN_SERVICE.NS",
+        "INDIAVIX": "^INDIAVIX",
+    }
+    upper = sym.upper()
+    if upper in _INDEX_MAP:
+        return _INDEX_MAP[upper]
+    # Default: append .NS for NSE
+    suffix = ".NS" if exchange.upper() == "NSE" else ".BO"
+    return f"{sym}{suffix}"
+
+
+def _from_yf_symbol(yf_sym: str) -> str:
+    """Convert yfinance ticker → internal symbol."""
+    # Reverse index map
+    _REVERSE_INDEX = {
+        "^NSEI": "NIFTY",
+        "^NSEBANK": "BANKNIFTY",
+        "NIFTY_FIN_SERVICE.NS": "FINNIFTY",
+        "^INDIAVIX": "INDIAVIX",
+    }
+    if yf_sym in _REVERSE_INDEX:
+        return _REVERSE_INDEX[yf_sym]
+    # Crypto: BTC-INR → BTC/INR
+    if yf_sym.endswith("-INR") or yf_sym.endswith("-USD"):
+        return yf_sym.replace("-", "/")
+    # Strip exchange suffix
+    for sfx in (".NS", ".BO"):
+        if yf_sym.endswith(sfx):
+            return yf_sym[:-len(sfx)]
+    return yf_sym
+
+
+# ---------------------------------------------------------------------------
 # Daily bars
 # ---------------------------------------------------------------------------
 
 def fetch_daily_bars(
     *, symbols: Sequence[str], start: dt.date, end: dt.date,
+    exchange: str = "NSE",
 ) -> list[DailyBar]:
     """Fetch adjusted daily bars for ``symbols`` between ``start`` and
     ``end`` (inclusive). Empty list on error.
+
+    Handles NSE/BSE symbol mapping automatically — callers pass bare
+    symbols (RELIANCE, NIFTYBEES) and get back bars with bare symbols.
 
     yfinance allows batch download; we use it to minimise round-trips.
     """
@@ -57,11 +118,19 @@ def fetch_daily_bars(
         log.error("yfinance not installed")
         return []
 
+    # Build mapping: yf_ticker → internal_symbol
+    yf_to_internal: dict[str, str] = {}
+    yf_tickers: list[str] = []
+    for sym in symbols:
+        yf_sym = _to_yf_symbol(sym, exchange=exchange)
+        yf_to_internal[yf_sym] = sym
+        yf_tickers.append(yf_sym)
+
     try:
         # auto_adjust=True applies split + dividend adjustment to OHLC.
         # progress=False silences the progress bar in scripts.
         df = yf.download(
-            tickers=list(symbols),
+            tickers=yf_tickers,
             start=start.isoformat(),
             # yfinance excludes the end date; +1 day to include it.
             end=(end + dt.timedelta(days=1)).isoformat(),
@@ -79,10 +148,11 @@ def fetch_daily_bars(
         return []
 
     out: list[DailyBar] = []
-    multi = len(symbols) > 1
-    for sym in symbols:
+    multi = len(yf_tickers) > 1
+    for yf_sym in yf_tickers:
+        internal_sym = yf_to_internal[yf_sym]
         try:
-            sub = df[sym] if multi else df
+            sub = df[yf_sym] if multi else df
             for ts, row in sub.iterrows():
                 # ts is a pandas Timestamp (UTC-naive); date() is fine.
                 bar_date = ts.date() if hasattr(ts, "date") else ts
@@ -94,12 +164,12 @@ def fetch_daily_bars(
                 if cl <= 0 or math.isnan(cl):
                     continue
                 out.append(DailyBar(
-                    symbol=sym, bar_date=bar_date,
+                    symbol=internal_sym, bar_date=bar_date,
                     open=op, high=hi, low=lo, close=cl, volume=vol,
-                    vwap=None, source="yfinance:1d:adj",
+                    vwap=None, source=f"yfinance:nse:1d:adj",
                 ))
         except Exception:
-            log.exception("yfinance row parse for %s", sym)
+            log.exception("yfinance row parse for %s (%s)", internal_sym, yf_sym)
             continue
     return out
 
