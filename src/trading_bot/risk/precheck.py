@@ -18,14 +18,19 @@ the adjusted qty.
 """
 from __future__ import annotations
 
+import datetime as dt
 import sqlite3
 from typing import Optional, Sequence
+from zoneinfo import ZoneInfo
+
+_IST = ZoneInfo("Asia/Kolkata")
 
 from trading_bot.ledger.order_master import OrderIntent
 from trading_bot.risk import (
-    account_caps, asset_class_caps, halt_router, kill_switches,
+    account_caps, asset_class_caps, halt_router, india_sebi, kill_switches,
     lane_caps, live_capital, pdt, strategy_caps, symbol_order_caps,
 )
+from trading_bot.risk.india_sebi import IndiaSebiContext
 from trading_bot.risk.limits import RiskLimits, parse_risk_policy
 from trading_bot.risk.policy_loader import PolicyBundle
 from trading_bot.risk.types import AccountState, Position, RiskDecision
@@ -76,6 +81,9 @@ def evaluate(
     stop_loss_price: Optional[float] = None,
     lane_session_pnl_pct: float = 0.0,
     strategy_30d_loss_pct: float = 0.0,
+    sebi: Optional[IndiaSebiContext] = None,
+    fno_lot_size: Optional[int] = None,
+    fno_contracts: Optional[int] = None,
 ) -> RiskDecision:
     """Compose every Phase 2 risk check into one decision.
 
@@ -94,6 +102,46 @@ def evaluate(
     )
     if d.verdict == "halt":
         return d
+
+    # 1a. India / SEBI-specific gates (optional context). Each sub-check
+    # runs only when its inputs are present in ``sebi``; missing data
+    # means "skip" so legacy callers and pure-equity flows are unaffected.
+    if sebi is not None:
+        if sebi.nifty_drop_pct is not None:
+            now_ist = sebi.now_ist or dt.datetime.now(_IST)
+            d = india_sebi.check_nifty_circuit_breaker(
+                drop_pct=sebi.nifty_drop_pct, now_ist=now_ist,
+            )
+            if d.verdict == "halt":
+                return d
+        if sebi.fno_ban_list:
+            d = india_sebi.check_fno_ban_list(
+                intent_symbol=intent.symbol, intent_side=intent.side,
+                ban_list=sebi.fno_ban_list,
+            )
+            if d.verdict == "halt":
+                return d
+        if sebi.price_band_lookup is not None:
+            d = india_sebi.check_per_stock_circuit(
+                intent_symbol=intent.symbol, intent_price=intent_price,
+                intent_side=intent.side, band_lookup=sebi.price_band_lookup,
+            )
+            if d.verdict == "halt":
+                return d
+        if (
+            sebi.available_margin_inr is not None
+            and fno_lot_size is not None and fno_contracts is not None
+            and (intent.asset_class or "").lower() in ("option", "nse_option", "nfo_option")
+            and (intent.side or "").lower() in ("buy", "buy_to_close")
+        ):
+            d = india_sebi.check_fno_margin_available(
+                premium_inr=intent_price, lot_size=fno_lot_size,
+                contracts=fno_contracts,
+                available_margin_inr=sebi.available_margin_inr,
+                buffer_multiplier=sebi.fno_margin_buffer,
+            )
+            if d.verdict == "halt":
+                return d
 
     # 1b. WS5f Layer 4 — operator PAUSE / FLATTEN override.
     # New entries (intent.side == "buy") are halted when the most
