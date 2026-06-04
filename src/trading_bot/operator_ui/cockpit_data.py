@@ -1951,4 +1951,65 @@ def build_paper_portfolio() -> dict:
     }
 
 
-__all__ = ["build_state", "build_paper_portfolio"]
+def build_realtime_portfolio() -> dict:
+    """Build portfolio with LIVE prices from yfinance.
+
+    Combines the backtest-computed positions (what we hold) with
+    real-time prices (what they're worth right now). Returns the
+    same shape as build_paper_portfolio() but with live mark-to-market.
+    """
+    from trading_bot.ingest.live_prices import fetch_live_prices
+
+    # First get the backtest portfolio (positions + trades)
+    base = build_paper_portfolio()
+    if base.get("error"):
+        return base
+
+    # Collect all symbols across strategies
+    all_syms = set()
+    for s in base.get("strategies", []):
+        for t in s.get("trades", []):
+            all_syms.add(t["symbol"])
+    # Also the universe symbols for price display
+    cfg = _load_portfolio_config()
+    for scfg in cfg.get("strategies", []):
+        all_syms.update(scfg.get("universe", []))
+
+    # Fetch live prices
+    live = fetch_live_prices(list(all_syms))
+
+    # Build live price display
+    live_prices = {}
+    labels = {
+        "NIFTYBEES": ("Nippon Nifty 50 ETF", "Index ETF"),
+        "JUNIORBEES": ("Nippon Nifty Next 50 ETF", "Mid-Cap ETF"),
+        "BANKBEES": ("Nippon Bank Nifty ETF", "Banking ETF"),
+        "GOLDBEES": ("Nippon Gold ETF", "Commodity ETF"),
+        "LIQUIDBEES": ("Nippon Liquid ETF", "Debt ETF"),
+        "SETFNIF50": ("SBI Nifty 50 ETF", "Index ETF"),
+        "BTC/INR": ("Bitcoin", "Crypto"),
+        "ETH/INR": ("Ethereum", "Crypto"),
+    }
+    for sym, q in live.items():
+        lbl = labels.get(sym, (sym, "Equity"))
+        live_prices[sym] = {
+            "price": q.price,
+            "prev_close": q.prev_close,
+            "change": q.change,
+            "change_pct": q.change_pct,
+            "market_state": q.market_state,
+            "name": lbl[0],
+            "type": lbl[1],
+            "fetched_at": q.fetched_at,
+        }
+
+    base["market_prices"] = live_prices
+    base["live"] = True
+    base["live_fetched_at"] = (
+        dt.datetime.now(dt.timezone.utc).isoformat()
+    )
+
+    return base
+
+
+__all__ = ["build_state", "build_paper_portfolio", "build_realtime_portfolio"]

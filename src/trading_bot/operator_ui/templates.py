@@ -463,7 +463,7 @@ def _escape(s: str) -> str:
 
 
 def portfolio_page(data: dict) -> str:
-    """Paper trading portfolio page — all amounts in INR."""
+    """Paper trading portfolio page — all amounts in INR, live prices."""
     if data.get("error"):
         body = f"""
 <div class="card">
@@ -474,6 +474,7 @@ def portfolio_page(data: dict) -> str:
 """
         return layout("Portfolio", body)
 
+    is_live = data.get("live", False)
     inception = data.get('inception_date', data.get('period_start', ''))
     period = f"{data.get('period_start', '')} to {data.get('period_end', '')}"
 
@@ -488,7 +489,8 @@ def portfolio_page(data: dict) -> str:
     summary_html = f"""
 <div class="card">
   <h2>Paper Trading Portfolio</h2>
-  <p><small class="muted">Inception: {inception} | Period: {period} | Currency: INR | Mode: Paper (no real money)</small></p>
+  <p><small class="muted">Inception: {inception} | Period: {period} | Currency: INR | Mode: Paper (no real money)
+    {'| <span class="pill ok">LIVE PRICES</span>' if is_live else ''}</small></p>
   <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:1rem; margin-top:1rem;">
     <div style="text-align:center; padding:1rem; background:var(--bg); border-radius:8px;">
       <div style="font-size:0.8rem; color:var(--muted);">Total Invested</div>
@@ -574,22 +576,60 @@ def portfolio_page(data: dict) -> str:
         strat_card += "</div>"
         strategies_html += strat_card
 
-    # Market prices
+    # Market prices — live or EOD
     prices = data.get("market_prices", {})
     if prices:
-        price_rows = "".join(
-            f"<tr><td>{sym}</td><td>{info['name']}</td>"
-            f"<td><span class='pill ok'>{info['type']}</span></td>"
-            f"<td style='text-align:right'>&#8377;{info['price']:,.2f}</td>"
-            f"<td><small class='muted'>{info.get('date', '')}</small></td></tr>"
-            for sym, info in sorted(prices.items())
-        )
+        price_rows = ""
+        for sym, info in sorted(prices.items()):
+            change = info.get("change", 0)
+            change_pct = info.get("change_pct", 0)
+            chg_color = "ok" if change >= 0 else "bad"
+            chg_sign = "+" if change >= 0 else ""
+            mkt_state = info.get("market_state", "")
+            state_pill = ""
+            if mkt_state == "REGULAR":
+                state_pill = '<span class="pill ok">LIVE</span>'
+            elif mkt_state in ("PRE", "PREPRE"):
+                state_pill = '<span class="pill warn">PRE</span>'
+            elif mkt_state in ("POST", "POSTPOST"):
+                state_pill = '<span class="pill warn">POST</span>'
+            elif mkt_state == "CLOSED":
+                state_pill = '<span class="pill" style="background:rgba(102,102,102,0.15);color:var(--muted)">CLOSED</span>'
+
+            if change != 0:
+                change_html = (
+                    f'<span style="color:var(--{chg_color})">'
+                    f'{chg_sign}&#8377;{abs(change):,.2f} ({chg_sign}{change_pct:.2f}%)</span>'
+                )
+            else:
+                change_html = '<span class="muted">-</span>'
+
+            price_rows += (
+                f"<tr><td>{sym}</td><td>{info.get('name', sym)}</td>"
+                f"<td><span class='pill ok'>{info.get('type', '')}</span></td>"
+                f"<td style='text-align:right'><strong>&#8377;{info['price']:,.2f}</strong></td>"
+                f"<td style='text-align:right'>{change_html}</td>"
+                f"<td>{state_pill}</td></tr>"
+            )
+
+        live_label = "Live Market Prices" if is_live else "Market Prices (EOD)"
+        fetched_at = data.get("live_fetched_at", "")
+        if fetched_at:
+            try:
+                fetched_short = fetched_at.split("T")[1][:8]
+            except Exception:
+                fetched_short = fetched_at[:19]
+        else:
+            fetched_short = ""
+
         prices_html = f"""
 <div class="card" style="margin-top:1rem;">
-  <h2>Current Market Prices</h2>
+  <h2>{live_label} {'<small class="muted">updated ' + fetched_short + ' UTC</small>' if fetched_short else ''}</h2>
   <table>
     <thead><tr><th>Symbol</th><th>Name</th><th>Type</th>
-      <th style="text-align:right">Last Price (INR)</th><th>Date</th></tr></thead>
+      <th style="text-align:right">Price (INR)</th>
+      <th style="text-align:right">Day Change</th>
+      <th>Status</th></tr></thead>
     <tbody>{price_rows}</tbody>
   </table>
 </div>
@@ -601,13 +641,15 @@ def portfolio_page(data: dict) -> str:
     body += f"""
 <p style="margin-top:1rem;"><small class="muted">
   Paper trading mode — no real money involved. All amounts in INR.
-  Data source: yfinance (NSE adjusted daily bars). Inception: {inception}.<br>
+  {'Live prices from yfinance — auto-refreshes every 30s.' if is_live else 'Data source: yfinance (NSE adjusted daily bars).'}
+  Inception: {inception}.<br>
   Refresh: <a href="/portfolio">reload</a> |
   JSON API: <a href="/api/portfolio">/api/portfolio</a> |
   Reset: <code>python tools/reset_paper_portfolio.py</code>
 </small></p>
 """
-    return layout("Paper Portfolio", body)
+    refresh = 30 if is_live else 0
+    return layout("Paper Portfolio", body, auto_refresh_seconds=refresh)
 
 
 __all__ = [
