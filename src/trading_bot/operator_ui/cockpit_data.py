@@ -1951,6 +1951,95 @@ def build_paper_portfolio() -> dict:
     }
 
 
+def _build_positions_from_trades(
+    trades: list[dict], live_prices: dict,
+) -> tuple[list[dict], list[dict]]:
+    """Convert a flat trade log into open + closed positions.
+
+    Open positions:  buy_price → current live price → unrealised P&L
+    Closed positions: buy_price → sell_price → realised P&L
+
+    Uses FIFO matching: first buy is paired with first sell.
+    """
+    # Build per-symbol buy queue (FIFO)
+    buys: dict[str, list[dict]] = {}   # symbol -> [remaining buy lots]
+    closed: list[dict] = []
+
+    for t in trades:
+        sym = t["symbol"]
+        if t["side"] == "BUY":
+            buys.setdefault(sym, []).append({
+                "date": t["date"],
+                "qty": t["qty"],
+                "price": t["price"],
+                "remaining_qty": t["qty"],
+            })
+        elif t["side"] == "SELL":
+            sell_qty = t["qty"]
+            sell_price = t["price"]
+            sell_date = t["date"]
+            # FIFO match against buys
+            lots = buys.get(sym, [])
+            while sell_qty > 0.0001 and lots:
+                lot = lots[0]
+                matched = min(sell_qty, lot["remaining_qty"])
+                if matched > 0.0001:
+                    buy_value = matched * lot["price"]
+                    sell_value = matched * sell_price
+                    pnl = sell_value - buy_value
+                    pnl_pct = (sell_price / lot["price"] - 1) * 100 if lot["price"] > 0 else 0
+                    closed.append({
+                        "symbol": sym,
+                        "qty": round(matched, 4),
+                        "buy_date": lot["date"],
+                        "buy_price": lot["price"],
+                        "sell_date": sell_date,
+                        "sell_price": sell_price,
+                        "buy_value": round(buy_value, 2),
+                        "sell_value": round(sell_value, 2),
+                        "pnl": round(pnl, 2),
+                        "pnl_pct": round(pnl_pct, 2),
+                        "status": "closed",
+                    })
+                    lot["remaining_qty"] -= matched
+                    sell_qty -= matched
+                if lot["remaining_qty"] < 0.0001:
+                    lots.pop(0)
+
+    # Remaining buys are open positions
+    open_pos: list[dict] = []
+    for sym, lots in buys.items():
+        for lot in lots:
+            if lot["remaining_qty"] < 0.0001:
+                continue
+            qty = lot["remaining_qty"]
+            buy_price = lot["price"]
+            buy_value = qty * buy_price
+            # Get live price
+            live_q = live_prices.get(sym)
+            if live_q:
+                current_price = live_q.get("price", buy_price)
+            else:
+                current_price = buy_price  # fallback
+            current_value = qty * current_price
+            pnl = current_value - buy_value
+            pnl_pct = (current_price / buy_price - 1) * 100 if buy_price > 0 else 0
+            open_pos.append({
+                "symbol": sym,
+                "qty": round(qty, 4),
+                "buy_date": lot["date"],
+                "buy_price": buy_price,
+                "current_price": round(current_price, 2),
+                "buy_value": round(buy_value, 2),
+                "current_value": round(current_value, 2),
+                "pnl": round(pnl, 2),
+                "pnl_pct": round(pnl_pct, 2),
+                "status": "open",
+            })
+
+    return open_pos, closed
+
+
 def build_realtime_portfolio() -> dict:
     """Build portfolio with LIVE prices from yfinance.
 
@@ -2008,6 +2097,42 @@ def build_realtime_portfolio() -> dict:
     base["live_fetched_at"] = (
         dt.datetime.now(dt.timezone.utc).isoformat()
     )
+
+    # Build open/closed positions per strategy
+    for s in base.get("strategies", []):
+        open_pos, closed_pos = _build_positions_from_trades(
+            s.get("trades", []), live_prices,
+        )
+        s["open_positions"] = open_pos
+        s["closed_positions"] = closed_pos
+        # Recalc current value using live prices for open positions
+        if open_pos:
+            live_value = sum(p["current_value"] for p in open_pos)
+            realised = sum(p["pnl"] for p in closed_pos)
+            # Cash = starting equity - total buy cost + total sell proceeds
+            total_bought = sum(p["buy_value"] for p in open_pos)
+            total_sold = sum(p["sell_value"] for p in closed_pos)
+            total_bought_closed = sum(p["buy_value"] for p in closed_pos)
+            cash = s["invested"] - total_bought - total_bought_closed + total_sold
+            s["live_value"] = round(live_value + cash, 2)
+            s["live_pnl"] = round(s["live_value"] - s["invested"], 2)
+            s["live_return_pct"] = round(
+                (s["live_value"] / s["invested"] - 1) * 100, 2
+            ) if s["invested"] else 0
+            s["unrealised_pnl"] = round(sum(p["pnl"] for p in open_pos), 2)
+            s["realised_pnl"] = round(realised, 2)
+            s["cash"] = round(cash, 2)
+
+    # Recalc total with live values
+    total_live = sum(
+        s.get("live_value", s.get("current", s.get("invested", 0)))
+        for s in base.get("strategies", [])
+    )
+    base["total_current_live"] = round(total_live, 2)
+    base["total_pnl_live"] = round(total_live - base["total_invested"], 2)
+    base["total_return_pct_live"] = round(
+        (total_live / base["total_invested"] - 1) * 100, 2
+    ) if base["total_invested"] else 0
 
     return base
 
