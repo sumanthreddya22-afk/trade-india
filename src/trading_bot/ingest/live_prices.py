@@ -62,12 +62,11 @@ def fetch_live_prices(symbols: Sequence[str]) -> dict[str, LiveQuote]:
         try:
             yf_sym = _to_yf(sym)
             tk = yf.Ticker(yf_sym)
-            info = tk.fast_info
 
-            price = getattr(info, "last_price", None)
-            prev = getattr(info, "previous_close", None) or getattr(
-                info, "regular_market_previous_close", None
-            )
+            # fast_info for price (fast, no full API call)
+            fi = tk.fast_info
+            price = getattr(fi, "last_price", None)
+            prev = getattr(fi, "previous_close", None)
 
             if price is None or price <= 0:
                 continue
@@ -76,11 +75,15 @@ def fetch_live_prices(symbols: Sequence[str]) -> dict[str, LiveQuote]:
             change = price - prev
             change_pct = (price / prev - 1.0) * 100.0 if prev > 0 else 0.0
 
-            # Market state
-            market_state = getattr(info, "market_state", None) or "CLOSED"
-            if isinstance(market_state, str):
-                market_state = market_state.upper()
-            else:
+            # Market state — fast_info doesn't have it; use tk.info
+            # which does a full API call. Cache-friendly since yfinance
+            # caches internally per session.
+            try:
+                full_info = tk.info
+                market_state = (
+                    full_info.get("marketState", "CLOSED") or "CLOSED"
+                ).upper()
+            except Exception:
                 market_state = "CLOSED"
 
             out[sym] = LiveQuote(
