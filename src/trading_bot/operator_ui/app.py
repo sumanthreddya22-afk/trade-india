@@ -151,17 +151,17 @@ def api_cockpit_data_overlay():
 
 @app.get("/portfolio", response_class=HTMLResponse)
 def portfolio_page():
-    """Paper trading portfolio — shows all strategies, trades, and P&L in INR."""
-    from trading_bot.operator_ui.cockpit_data import build_paper_portfolio
-    data = build_paper_portfolio()
+    """Paper trading portfolio with LIVE prices — auto-refreshes every 30s."""
+    from trading_bot.operator_ui.cockpit_data import build_realtime_portfolio
+    data = build_realtime_portfolio()
     return tmpl.portfolio_page(data)
 
 
 @app.get("/api/portfolio")
 def api_portfolio():
-    """Paper portfolio as JSON — for programmatic access."""
-    from trading_bot.operator_ui.cockpit_data import build_paper_portfolio
-    return JSONResponse(build_paper_portfolio())
+    """Paper portfolio with live prices as JSON."""
+    from trading_bot.operator_ui.cockpit_data import build_realtime_portfolio
+    return JSONResponse(build_realtime_portfolio())
 
 
 @app.get("/digest", response_class=HTMLResponse)

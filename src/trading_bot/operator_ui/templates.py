@@ -463,7 +463,7 @@ def _escape(s: str) -> str:
 
 
 def portfolio_page(data: dict) -> str:
-    """Paper trading portfolio page — all amounts in INR."""
+    """Paper trading portfolio page — all amounts in INR, live prices."""
     if data.get("error"):
         body = f"""
 <div class="card">
@@ -474,21 +474,23 @@ def portfolio_page(data: dict) -> str:
 """
         return layout("Portfolio", body)
 
+    is_live = data.get("live", False)
     inception = data.get('inception_date', data.get('period_start', ''))
     period = f"{data.get('period_start', '')} to {data.get('period_end', '')}"
 
-    # Summary cards
+    # Summary cards — prefer live values when available
     total_inv = data.get("total_invested", 0)
-    total_cur = data.get("total_current", 0)
-    total_pnl = data.get("total_pnl", 0)
-    total_ret = data.get("total_return_pct", 0)
+    total_cur = data.get("total_current_live", data.get("total_current", 0))
+    total_pnl = data.get("total_pnl_live", data.get("total_pnl", 0))
+    total_ret = data.get("total_return_pct_live", data.get("total_return_pct", 0))
     pnl_color = "ok" if total_pnl >= 0 else "bad"
     pnl_sign = "+" if total_pnl >= 0 else ""
 
     summary_html = f"""
 <div class="card">
   <h2>Paper Trading Portfolio</h2>
-  <p><small class="muted">Inception: {inception} | Period: {period} | Currency: INR | Mode: Paper (no real money)</small></p>
+  <p><small class="muted">Inception: {inception} | Period: {period} | Currency: INR | Mode: Paper (no real money)
+    {'| <span class="pill ok">LIVE PRICES</span>' if is_live else ''}</small></p>
   <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:1rem; margin-top:1rem;">
     <div style="text-align:center; padding:1rem; background:var(--bg); border-radius:8px;">
       <div style="font-size:0.8rem; color:var(--muted);">Total Invested</div>
@@ -513,8 +515,9 @@ def portfolio_page(data: dict) -> str:
     # Per-strategy cards
     strategies_html = ""
     for s in data.get("strategies", []):
-        s_pnl = s.get("pnl", 0)
-        s_ret = s.get("return_pct", 0)
+        s_pnl = s.get("live_pnl", s.get("pnl", 0))
+        s_ret = s.get("live_return_pct", s.get("return_pct", 0))
+        s_current = s.get("live_value", s.get("current", s.get("invested", 0)))
         s_color = "ok" if s_pnl >= 0 else "bad"
         s_sign = "+" if s_pnl >= 0 else ""
         lane_pill = {"stocks": "ok", "crypto": "warn", "options": ""}.get(s.get("lane", ""), "")
@@ -525,7 +528,7 @@ def portfolio_page(data: dict) -> str:
   <h2>{s['name']} <span class="pill {lane_pill}">{s.get('lane', '')}</span></h2>
   <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap:0.5rem; margin-bottom:1rem;">
     <div><small class="muted">Invested</small><br><strong>&#8377;{s.get('invested', 0):,.0f}</strong></div>
-    <div><small class="muted">Current</small><br><strong>&#8377;{s.get('current', 0):,.0f}</strong></div>
+    <div><small class="muted">Current Value</small><br><strong>&#8377;{s_current:,.0f}</strong></div>
     <div><small class="muted">P&amp;L</small><br><strong style="color:var(--{s_color})">{s_sign}&#8377;{abs(s_pnl):,.0f}</strong></div>
     <div><small class="muted">Return</small><br><strong style="color:var(--{s_color})">{s_sign}{s_ret:.1f}%</strong></div>
     <div><small class="muted">Trades</small><br><strong>{s.get('n_trades', 0)}</strong></div>
@@ -566,6 +569,106 @@ def portfolio_page(data: dict) -> str:
         else:
             strat_card += '<p><em>No trades executed.</em></p>'
 
+        # Open positions — buy price vs current live price
+        open_pos = s.get("open_positions", [])
+        if open_pos:
+            op_rows = ""
+            for p in open_pos:
+                pc = "ok" if p["pnl"] >= 0 else "bad"
+                ps = "+" if p["pnl"] >= 0 else ""
+                op_rows += (
+                    f"<tr>"
+                    f"<td><strong>{p['symbol']}</strong></td>"
+                    f"<td>{p['qty']:,.4f}</td>"
+                    f"<td>{p['buy_date']}</td>"
+                    f"<td style='text-align:right'>&#8377;{p['buy_price']:,.2f}</td>"
+                    f"<td style='text-align:right'><strong>&#8377;{p['current_price']:,.2f}</strong></td>"
+                    f"<td style='text-align:right'>&#8377;{p['buy_value']:,.2f}</td>"
+                    f"<td style='text-align:right'><strong>&#8377;{p['current_value']:,.2f}</strong></td>"
+                    f"<td style='text-align:right;color:var(--{pc})'><strong>{ps}&#8377;{abs(p['pnl']):,.2f}</strong></td>"
+                    f"<td style='text-align:right;color:var(--{pc})'>{ps}{p['pnl_pct']:.2f}%</td>"
+                    f"</tr>"
+                )
+            total_unrealised = sum(p["pnl"] for p in open_pos)
+            uc = "ok" if total_unrealised >= 0 else "bad"
+            us = "+" if total_unrealised >= 0 else ""
+            strat_card += f"""
+  <h3 style="margin-top:0.8rem; font-size:0.95rem;">Open Positions <span class="pill ok">HOLDING</span></h3>
+  <table>
+    <thead><tr><th>Symbol</th><th>Qty</th><th>Buy Date</th>
+      <th style="text-align:right">Buy Price</th>
+      <th style="text-align:right">Live Price</th>
+      <th style="text-align:right">Invested</th>
+      <th style="text-align:right">Current Value</th>
+      <th style="text-align:right">P&amp;L</th>
+      <th style="text-align:right">Return</th></tr></thead>
+    <tbody>{op_rows}
+    <tr style="border-top:2px solid var(--border);">
+      <td colspan="7" style="text-align:right"><strong>Unrealised P&amp;L</strong></td>
+      <td style="text-align:right;color:var(--{uc})"><strong>{us}&#8377;{abs(total_unrealised):,.2f}</strong></td>
+      <td></td>
+    </tr></tbody>
+  </table>
+"""
+            # Show cash balance
+            cash = s.get("cash", 0)
+            live_val = s.get("live_value", 0)
+            strat_card += f"""
+  <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:0.5rem; margin-top:0.5rem;">
+    <div style="padding:0.5rem; background:var(--bg); border-radius:6px; text-align:center;">
+      <small class="muted">Cash Balance</small><br><strong>&#8377;{cash:,.2f}</strong>
+    </div>
+    <div style="padding:0.5rem; background:var(--bg); border-radius:6px; text-align:center;">
+      <small class="muted">Holdings Value</small><br><strong>&#8377;{sum(p['current_value'] for p in open_pos):,.2f}</strong>
+    </div>
+    <div style="padding:0.5rem; background:var(--bg); border-radius:6px; text-align:center;">
+      <small class="muted">Total (Cash + Holdings)</small><br><strong>&#8377;{live_val:,.2f}</strong>
+    </div>
+  </div>
+"""
+
+        # Closed positions — buy price vs sell price
+        closed_pos = s.get("closed_positions", [])
+        if closed_pos:
+            cl_rows = ""
+            for p in closed_pos:
+                pc = "ok" if p["pnl"] >= 0 else "bad"
+                ps = "+" if p["pnl"] >= 0 else ""
+                cl_rows += (
+                    f"<tr>"
+                    f"<td>{p['symbol']}</td>"
+                    f"<td>{p['qty']:,.4f}</td>"
+                    f"<td>{p['buy_date']}</td>"
+                    f"<td style='text-align:right'>&#8377;{p['buy_price']:,.2f}</td>"
+                    f"<td>{p['sell_date']}</td>"
+                    f"<td style='text-align:right'>&#8377;{p['sell_price']:,.2f}</td>"
+                    f"<td style='text-align:right;color:var(--{pc})'>{ps}&#8377;{abs(p['pnl']):,.2f}</td>"
+                    f"<td style='text-align:right;color:var(--{pc})'>{ps}{p['pnl_pct']:.2f}%</td>"
+                    f"</tr>"
+                )
+            total_realised = sum(p["pnl"] for p in closed_pos)
+            rc = "ok" if total_realised >= 0 else "bad"
+            rs = "+" if total_realised >= 0 else ""
+            strat_card += f"""
+  <details style="margin-top:0.5rem;">
+    <summary style="cursor:pointer; color:var(--accent);">Closed Positions ({len(closed_pos)} trades) — Realised P&amp;L: <span style="color:var(--{rc})">{rs}&#8377;{abs(total_realised):,.2f}</span></summary>
+    <table style="margin-top:0.3rem;">
+      <thead><tr><th>Symbol</th><th>Qty</th><th>Buy Date</th>
+        <th style="text-align:right">Buy Price</th>
+        <th>Sell Date</th>
+        <th style="text-align:right">Sell Price</th>
+        <th style="text-align:right">P&amp;L</th>
+        <th style="text-align:right">Return</th></tr></thead>
+      <tbody>{cl_rows}
+      <tr style="border-top:2px solid var(--border);">
+        <td colspan="6" style="text-align:right"><strong>Total Realised</strong></td>
+        <td style="text-align:right;color:var(--{rc})"><strong>{rs}&#8377;{abs(total_realised):,.2f}</strong></td>
+        <td></td>
+      </tr></tbody>
+    </table>
+  </details>
+"""
+
         if s.get("status") == "waiting":
             strat_card += f'<p><span class="pill ok">{s.get("message", "Waiting for first trading day")}</span></p>'
         elif s.get("message"):
@@ -574,22 +677,60 @@ def portfolio_page(data: dict) -> str:
         strat_card += "</div>"
         strategies_html += strat_card
 
-    # Market prices
+    # Market prices — live or EOD
     prices = data.get("market_prices", {})
     if prices:
-        price_rows = "".join(
-            f"<tr><td>{sym}</td><td>{info['name']}</td>"
-            f"<td><span class='pill ok'>{info['type']}</span></td>"
-            f"<td style='text-align:right'>&#8377;{info['price']:,.2f}</td>"
-            f"<td><small class='muted'>{info.get('date', '')}</small></td></tr>"
-            for sym, info in sorted(prices.items())
-        )
+        price_rows = ""
+        for sym, info in sorted(prices.items()):
+            change = info.get("change", 0)
+            change_pct = info.get("change_pct", 0)
+            chg_color = "ok" if change >= 0 else "bad"
+            chg_sign = "+" if change >= 0 else ""
+            mkt_state = info.get("market_state", "")
+            state_pill = ""
+            if mkt_state == "REGULAR":
+                state_pill = '<span class="pill ok">LIVE</span>'
+            elif mkt_state in ("PRE", "PREPRE"):
+                state_pill = '<span class="pill warn">PRE</span>'
+            elif mkt_state in ("POST", "POSTPOST"):
+                state_pill = '<span class="pill warn">POST</span>'
+            elif mkt_state == "CLOSED":
+                state_pill = '<span class="pill" style="background:rgba(102,102,102,0.15);color:var(--muted)">CLOSED</span>'
+
+            if change != 0:
+                change_html = (
+                    f'<span style="color:var(--{chg_color})">'
+                    f'{chg_sign}&#8377;{abs(change):,.2f} ({chg_sign}{change_pct:.2f}%)</span>'
+                )
+            else:
+                change_html = '<span class="muted">-</span>'
+
+            price_rows += (
+                f"<tr><td>{sym}</td><td>{info.get('name', sym)}</td>"
+                f"<td><span class='pill ok'>{info.get('type', '')}</span></td>"
+                f"<td style='text-align:right'><strong>&#8377;{info['price']:,.2f}</strong></td>"
+                f"<td style='text-align:right'>{change_html}</td>"
+                f"<td>{state_pill}</td></tr>"
+            )
+
+        live_label = "Live Market Prices" if is_live else "Market Prices (EOD)"
+        fetched_at = data.get("live_fetched_at", "")
+        if fetched_at:
+            try:
+                fetched_short = fetched_at.split("T")[1][:8]
+            except Exception:
+                fetched_short = fetched_at[:19]
+        else:
+            fetched_short = ""
+
         prices_html = f"""
 <div class="card" style="margin-top:1rem;">
-  <h2>Current Market Prices</h2>
+  <h2>{live_label} {'<small class="muted">updated ' + fetched_short + ' UTC</small>' if fetched_short else ''}</h2>
   <table>
     <thead><tr><th>Symbol</th><th>Name</th><th>Type</th>
-      <th style="text-align:right">Last Price (INR)</th><th>Date</th></tr></thead>
+      <th style="text-align:right">Price (INR)</th>
+      <th style="text-align:right">Day Change</th>
+      <th>Status</th></tr></thead>
     <tbody>{price_rows}</tbody>
   </table>
 </div>
@@ -601,13 +742,15 @@ def portfolio_page(data: dict) -> str:
     body += f"""
 <p style="margin-top:1rem;"><small class="muted">
   Paper trading mode — no real money involved. All amounts in INR.
-  Data source: yfinance (NSE adjusted daily bars). Inception: {inception}.<br>
+  {'Live prices from yfinance — auto-refreshes every 30s.' if is_live else 'Data source: yfinance (NSE adjusted daily bars).'}
+  Inception: {inception}.<br>
   Refresh: <a href="/portfolio">reload</a> |
   JSON API: <a href="/api/portfolio">/api/portfolio</a> |
   Reset: <code>python tools/reset_paper_portfolio.py</code>
 </small></p>
 """
-    return layout("Paper Portfolio", body)
+    refresh = 30 if is_live else 0
+    return layout("Paper Portfolio", body, auto_refresh_seconds=refresh)
 
 
 __all__ = [
