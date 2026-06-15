@@ -1841,7 +1841,7 @@ def build_paper_portfolio() -> dict:
                 start=start, end=end,
                 starting_equity=EQUITY,
                 cost_lens=lens,
-                rebalance_freq="monthly",
+                rebalance_freq=scfg.get("rebalance_freq", "monthly"),
             )
 
             pnl = r.final_equity - r.starting_equity

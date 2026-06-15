@@ -17,7 +17,7 @@
       ],
       "lane": "stocks",
       "signal_module": "trading_bot.strategies.etf_momentum_v1.signal",
-      "rebalance_freq": "monthly"
+      "rebalance_freq": "weekly"
     },
     {
       "id": "dual_momentum",
@@ -28,7 +28,7 @@
       ],
       "lane": "stocks",
       "signal_module": "trading_bot.strategies.dual_momentum_v1.signal",
-      "rebalance_freq": "monthly"
+      "rebalance_freq": "weekly"
     },
     {
       "id": "crypto_momentum",
@@ -39,7 +39,7 @@
       ],
       "lane": "crypto",
       "signal_module": "trading_bot.strategies.crypto_momentum_v1.signal",
-      "rebalance_freq": "monthly"
+      "rebalance_freq": "weekly"
     }
   ]
 }
